@@ -627,6 +627,24 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     private val spotifyPageJobs = java.util.concurrent.ConcurrentHashMap<String, Job>()
 
+    /**
+     * Keeps [job] as [browseId]'s Spotify load, cancelling any earlier one:
+     * its rows and matches are written by browse id, so a load left running
+     * after its page closed would fill a later opening of the same page.
+     * Main thread; the loads write only between suspensions, so a cancelled
+     * one writes nothing more.
+     */
+    private fun trackSpotifyLoad(browseId: String, job: Job) {
+        spotifyPageJobs.put(browseId, job)?.cancel()
+        job.invokeOnCompletion { spotifyPageJobs.remove(browseId, job) }
+    }
+
+    /** Cancels the Spotify loads of pages no longer on the stack. */
+    private fun cancelClosedSpotifyLoads() {
+        val open = _detailStack.value.mapTo(HashSet()) { it.browseId }
+        spotifyPageJobs.forEach { (browseId, job) -> if (browseId !in open) job.cancel() }
+    }
+
     private data class SearchCacheEntry(
         val rows: List<SearchResult>,
         val continuation: String?,
@@ -1358,7 +1376,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * page's continuation) wait for it to end before they capture whose
      * credentials they go out with.
      */
-    private val credentialsInValidation = CandidateValidation()
+    private val credentialsInValidation = CandidateValidation.session
+
+    /**
+     * Waits until no candidate validation is running and the session scope
+     * is in. A validation can start while the scope is being read, so the two
+     * repeat until neither is pending; the caller then reads the listener and
+     * the credentials with no suspension in between.
+     */
+    private suspend fun settleCredentials() {
+        do {
+            credentialsInValidation.awaitSettled()
+            Innertube.ensureSessionScope()
+        } while (credentialsInValidation.active)
+    }
 
     private fun cancelRowRatings() {
         // A cancelled tap was never sent: put each row back to what the server
@@ -2727,6 +2758,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Tapping a tab should leave any pushed page behind. */
     fun clearDetail() {
         if (_detailStack.value.isNotEmpty()) _detailStack.value = emptyList()
+        cancelClosedSpotifyLoads()
     }
 
     fun loadHome() {
@@ -3213,14 +3245,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // A candidate account under validation signs requests before
         // [listenerKey] moves, so wait it out: then the credentials read below
         // are the listener's own.
-        credentialsInValidation.awaitSettled()
-        // Validation that switched the account reloads the library itself.
-        if (identity != listenerKey()) return
         // The scope too, before the credentials are read: installing it can
         // change them for the same listener (a restored profile with no stored
         // account index), which would then drop this page's cache write and
         // the Liked Music sync. Returns at once when it is already in.
-        Innertube.ensureSessionScope()
+        settleCredentials()
+        // Validation that switched the account reloads the library itself.
         if (identity != listenerKey()) return
         val credentials = Innertube.listenerGeneration
         // Hearts before bytes: the persistent liked list seeds LikeState
@@ -4294,14 +4324,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // candidate account under validation is waited out first: until it
             // ends, the credentials are not the listener's.
             val remotePage = localPlaylist == null && remote == null && !browseId.startsWith("local:")
-            if (remotePage) credentialsInValidation.awaitSettled()
+            // Captured before any wait: it names whoever the page was opened for.
             val openedFor = listenerKey()
             // The credentials, though, are read once the session scope is in:
             // installing it right after an account switch can change them for
             // the same listener, and the page's own browse waits for it anyway —
-            // reading them earlier would drop its continuation. Already-resolved
-            // scopes return at once; on-device pages skip it.
-            if (remotePage) Innertube.ensureSessionScope()
+            // reading them earlier would drop its continuation. A validation can
+            // start during the scope wait, so both repeat until none is active.
+            // Already-resolved scopes return at once; on-device pages skip it.
+            if (remotePage) settleCredentials()
             val credentials = Innertube.listenerGeneration
             val state = when {
                 localPlaylist != null -> {
@@ -4387,7 +4418,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         }
                     }
                     YtMusicRepository.browseSongs(browseId).fold(
-                        onSuccess = { page ->
+                        onSuccess = onSuccess@{ page ->
+                            // Answered for someone else (a switch, or a candidate
+                            // under validation, while it was out): nothing of it
+                            // is written, and the page says it failed rather
+                            // than staying on its spinner.
+                            if (listenerKey() != openedFor || Innertube.listenerGeneration != credentials) {
+                                return@onSuccess UiState.Error(text(R.string.failed))
+                            }
                             // Free here — the page that returned these rows is
                             // the one thing that states who made the playlist,
                             // so its own menu never has to go and ask. Recorded
@@ -4515,7 +4553,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
             matchSpotifyTracks(browseId, tracks, ::setSongs)
         }
-        spotifyPageJobs[browseId] = job
+        trackSpotifyLoad(browseId, job)
     }
 
     /**
@@ -4582,7 +4620,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 else -> BrowseType.OTHER
             },
         )
-        viewModelScope.launch {
+        val job = viewModelScope.launch {
             fun setSongs(songs: UiState<List<Song>>) {
                 _detailStack.value = _detailStack.value.map {
                     if (it.browseId == browseId) it.copy(songs = songs) else it
@@ -4621,6 +4659,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
             matchSpotifyTracks(browseId, page.tracks, ::setSongs)
         }
+        trackSpotifyLoad(browseId, job)
     }
 
     /**
@@ -5070,6 +5109,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val stack = _detailStack.value
         if (stack.isEmpty()) return false
         _detailStack.value = stack.dropLast(1)
+        cancelClosedSpotifyLoads()
         return true
     }
 
@@ -5157,7 +5197,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         oldProfileId: String?,
         onComplete: (Boolean) -> Unit,
     ) {
-        run {
+        // Set once the candidate becomes the listener. Every other exit —
+        // cancellation included, the ViewModel cleared mid-request — puts the
+        // previous session back before the validation reports settled.
+        var accepted = false
+        try { run {
             Innertube.cookie = session.cookie
             Innertube.adoptSessionScope(
                 pageId = session.pageId,
@@ -5229,6 +5273,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             authStore.upsertSession(stored)
             authStore.cookie = session.cookie // legacy compatibility only
             _googleAccounts.value = authStore.sessions
+            accepted = true
             _activeAccountId.value = accountId
             _activeProfileId.value = profile.profileId
             _selectedChannelKey.value = profile.profileId
@@ -5244,6 +5289,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             reloadForAccount()
             loadChannels(force = true)
             onComplete(true)
+        } } finally {
+            if (!accepted) restoreActiveSession(oldAccountId, oldProfileId)
         }
     }
 

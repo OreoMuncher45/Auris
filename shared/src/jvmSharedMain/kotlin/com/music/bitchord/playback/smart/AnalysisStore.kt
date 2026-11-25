@@ -363,7 +363,7 @@ class AnalysisStore(
                         if (value.isNaN()) return@map 0
                         val stored = (value.coerceIn(0f, 1f) * 100).roundToInt()
                         when {
-                            threshold == null -> stored
+                            keepingSidesOf == null || threshold == null -> stored
                             value >= keepingSidesOf && stored < threshold -> threshold
                             value < keepingSidesOf && stored >= threshold -> threshold - 1
                             else -> stored

@@ -1145,7 +1145,9 @@ object AudioCache {
         // track with no round yet cannot be given one while this runs: no
         // request is admitted for it until the bytes are gone.
         val round = synchronized(analysisAdmission) {
-            removing.add(mediaId)
+            // Counted: two removals of one track share the reservation, and it
+            // holds until the last of them is done deleting.
+            removing[mediaId] = (removing[mediaId] ?: 0) + 1
             analysisJobs[mediaId]
         }
         var removed = 0
@@ -1167,7 +1169,10 @@ object AudioCache {
                     .onFailure { TrackLog.d(TAG, "cache entry $key still in use: ${it.message}", about = mediaId) }
             }
         } finally {
-            synchronized(analysisAdmission) { removing.remove(mediaId) }
+            synchronized(analysisAdmission) {
+                val left = (removing[mediaId] ?: 1) - 1
+                if (left > 0) removing[mediaId] = left else removing.remove(mediaId)
+            }
         }
         TrackLog.d(TAG, "removed $removed cache entries at the listener's request", about = mediaId)
         if (removed > 0) _contentsChanged.value++
@@ -2357,7 +2362,7 @@ object AudioCache {
     private var wipesRunning = 0
 
     /** Tracks [remove] is taking off disk; no round starts for one of them meanwhile. Guarded by [analysisAdmission]. */
-    private val removing = HashSet<String>()
+    private val removing = HashMap<String, Int>()
 
     /**
      * Rounds that ended short, per video id, and when the next may start
@@ -2960,6 +2965,13 @@ object AudioCache {
                     // calls incomplete, with nothing to ask for the rest.
                     // Same stream, same encoding, so the rest continues the
                     // bytes already there.
+                    // A whole copy shorter than the guess: the round's target is
+                    // its measured length, or the analyser would wait on a
+                    // target the copy can never reach and throw it away.
+                    if (measured > 0L && measured < target && cachedBytesOf(filled, measured) >= measured) {
+                        target = measured
+                        publishWant(filled, target)
+                    }
                     if (measured > 0L) {
                         val grown = analysisHeadSize(measured)
                         if (grown > target && cachedBytesOf(filled, target) >= target) {

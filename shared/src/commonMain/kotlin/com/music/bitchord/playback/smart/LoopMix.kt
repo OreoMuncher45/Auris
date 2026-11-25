@@ -436,45 +436,56 @@ object LoopMix {
      * run; null when its windows cover under [MIN_MASK_COVERAGE] of it.
      */
     fun maskStats(windows: List<CurveWindow>, from: Double, to: Double): MaskStats? {
-        // One merged timeline: windows overlap at their seams, so a frame time an
-        // earlier window already measured is not counted again, and a sung run
-        // ends where nothing was measured.
-        var sungSec = 0.0
-        var measuredSec = 0.0
-        var runSec = 0.0
-        var longestSec = 0.0
-        var reach = Double.NEGATIVE_INFINITY
-        for (window in windows.sortedBy { it.startTime }) {
+        // Windows overlap at their seams and come from separate model runs, so
+        // the same instant can have two values. One timeline: time counts once
+        // as measured, it is sung if any window measuring it says so (a quiet
+        // value never hides a sung one), and a sung run is one unbroken
+        // stretch of sung time, ending at any gap nothing measured.
+        val measured = ArrayList<DoubleArray>()
+        val sung = ArrayList<DoubleArray>()
+        for (window in windows) {
             val frameSec = 1 / window.frameRate
-            // Frames straddling either edge count for the part inside it.
             val a = max(0, floor((from - window.startTime) * window.frameRate).toInt())
             val b = min(window.values.size, ceil((to - window.startTime) * window.frameRate).toInt())
             for (i in a until b) {
                 val t = window.startTime + i * frameSec
+                val start = max(t, from)
                 val end = min(t + frameSec, to)
-                // Only the part of a frame past what is already measured counts:
-                // windows overlap at their seams, and not always on the same grid.
-                if (end <= reach + 1e-9 || end <= from) continue
-                if (t > reach + frameSec * 0.5) runSec = 0.0
-                val added = end - max(max(t, from), reach)
-                if (added <= 0.0) continue
-                measuredSec += added
+                if (end <= start) continue
+                val span = doubleArrayOf(start, end)
+                measured += span
                 // Inclusive, as the transition policy reads the same threshold.
-                if (window.values[i] >= VOCAL_ACTIVE_THRESHOLD) {
-                    sungSec += added
-                    runSec += added
-                    longestSec = max(longestSec, runSec)
-                } else {
-                    runSec = 0.0
-                }
-                reach = end
+                if (window.values[i] >= VOCAL_ACTIVE_THRESHOLD) sung += span
             }
         }
+        val measuredSec = union(measured).sumOf { it[1] - it[0] }
+        val sungRuns = union(sung)
+        val sungSec = sungRuns.sumOf { it[1] - it[0] }
+        val longestSec = sungRuns.maxOfOrNull { it[1] - it[0] } ?: 0.0
         return if (measuredSec > 0 && measuredSec >= (to - from) * MIN_MASK_COVERAGE - 1e-9) {
             MaskStats(sungSec / measuredSec, longestSec)
         } else {
             null
         }
+    }
+
+    /** [spans] merged where they overlap or touch (to within rounding), in order. */
+    private fun union(spans: List<DoubleArray>): List<DoubleArray> {
+        if (spans.isEmpty()) return emptyList()
+        val sorted = spans.sortedBy { it[0] }
+        val out = ArrayList<DoubleArray>()
+        var cur = doubleArrayOf(sorted[0][0], sorted[0][1])
+        for (i in 1 until sorted.size) {
+            val s = sorted[i]
+            if (s[0] <= cur[1] + 1e-9) {
+                cur[1] = max(cur[1], s[1])
+            } else {
+                out += cur
+                cur = doubleArrayOf(s[0], s[1])
+            }
+        }
+        out += cur
+        return out
     }
 
     /**
