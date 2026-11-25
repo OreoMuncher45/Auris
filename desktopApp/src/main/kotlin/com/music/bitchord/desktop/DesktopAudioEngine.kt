@@ -14,7 +14,6 @@ import com.music.bitchord.playback.smart.TrackAnalysis
 import com.music.bitchord.playback.smart.TransitionPlan
 import com.music.bitchord.playback.smart.TransitionStyle
 import com.music.bitchord.playback.smart.TransitionTrackInfo
-import com.music.bitchord.playback.smart.automixEligible
 import com.music.bitchord.playback.smart.echoTailSeconds
 import com.music.bitchord.playback.smart.planTransition
 import java.util.concurrent.ConcurrentHashMap
@@ -486,10 +485,8 @@ class DesktopPlaybackEngine(
         nextLocalStream = local
         // Measured on YouTube Opus (or the file) whatever will end up serving it, so Automix has
         // its analysis without anything being fetched from the source that will play it.
-        // Actual video playback only: a music-video row converted to an
-        // audio-only stream is still video-origin, but it is audio now and
-        // Automix measures it like any other audio.
-        if (automixEnabled && automixEligible(song.isVideo, song.isVideoOrigin)) {
+        // Not a video-origin row, the same rule Android's crossfade controller applies.
+        if (automixEnabled && !song.isVideoOrigin) {
             analyzer.request(song, local, song.durationText.durationSeconds())
         }
         if (local == null && DesktopMusicSources.mayServeFromAddon(song)) {
@@ -1316,12 +1313,9 @@ class DesktopPlaybackEngine(
         // A track held back from read-ahead has no decoder yet, but is measured all the same.
         val held = if (next == null) nextSong else null
         val upcomingSong = next?.song
-        // Video playback has no beat grid to measure; a converted video-origin
-        // track does, and is measured like any other audio.
-        if (!automixEligible(track.song.isVideo, track.song.isVideoOrigin) ||
-            !automixEligible(upcomingSong?.isVideo == true, upcomingSong?.isVideoOrigin == true) ||
-            !automixEligible(held?.isVideo == true, held?.isVideoOrigin == true)
-        ) return
+        // Video-origin rows are not measured, the same rule Android's crossfade
+        // controller applies before it asks for an analysis.
+        if (track.song.isVideoOrigin || upcomingSong?.isVideoOrigin == true || held?.isVideoOrigin == true) return
         requestAnalysis(track)
         next?.let(::requestAnalysis)
         held?.let { analyzer.request(it, nextLocalStream, it.durationText.durationSeconds()) }
@@ -1463,7 +1457,7 @@ class DesktopPlaybackEngine(
             next = nextState,
             currentFacts = factsOf(analyzer.analysisFor(track.song.videoId), currentState),
             nextFacts = factsOf(analyzer.analysisFor(nextId), nextState),
-            plannedBars = activePlan?.transitionBars ?: 0,
+            plannedBars = (activePlan?.transitionBeats ?: 0) / 4,
             style = activePlan?.transitionStyle?.name.orEmpty(),
         )
     }

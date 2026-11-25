@@ -37,10 +37,10 @@ import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.FileUpload
 import androidx.compose.material.icons.rounded.Groups
-import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.HighQuality
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Image
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Radio
@@ -56,6 +56,8 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -237,12 +239,6 @@ fun SongActionsSheet(
      * create/join page otherwise. Player-only.
      */
     onOpenListenTogether: (() -> Unit)? = null,
-    /**
-     * Opens the Automix panel for this track: what was measured about it, what
-     * was planned for the handoff, and the listener's own answer to both.
-     * Player-only, and null everywhere else.
-     */
-    onOpenAutomix: (() -> Unit)? = null,
     /** Party size while listening together, or null when there is no party. */
     listenTogetherMembers: Int? = null,
     /**
@@ -262,6 +258,10 @@ fun SongActionsSheet(
     presentation: SongActionsPresentation = SongActionsPresentation.Menu,
 ) {
     var pickingSleepTimer by remember { mutableStateOf(false) }
+    // The dialog is its own window, so it shows over the menu wherever the
+    // menu hangs — the player's included — and the menu stays as it was.
+    var showingSongInfo by remember(song.videoId) { mutableStateOf(false) }
+    if (showingSongInfo) SongInfoDialog(song) { showingSongInfo = false }
     val glass = presentation == SongActionsPresentation.Glass
     // A menu over a page stays in the theme's colours: it floats over
     // whatever the page is, and an accent pitched against one sleeve is not
@@ -329,27 +329,32 @@ fun SongActionsSheet(
             GroupSeparator(palette)
         }
 
-        if (signedIn && !isOffline) {
-            ActionRow(
-                icon = if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                label = if (liked) stringResource(R.string.remove_from_liked) else stringResource(R.string.like),
-                tint = if (liked) palette.accent else null,
-                accent = palette.accent,
-                onClick = onToggleLike,
-            )
-            ActionRow(
-                icon = if (disliked) Icons.Rounded.ThumbDown else Icons.Rounded.ThumbDownOffAlt,
-                label = if (disliked) stringResource(R.string.undo_dislike) else stringResource(R.string.dislike),
-                tint = if (disliked) palette.accent else null,
-                accent = palette.accent,
-                onClick = onToggleDislike,
-            )
-            ActionRow(
-                icon = Icons.AutoMirrored.Rounded.PlaylistAdd,
-                label = stringResource(R.string.add_to_playlist),
-                accent = palette.accent,
-                onClick = onAddToPlaylist,
-            )
+        // Remove stands without an account too: a playlist imported onto this
+        // device is the listener's to edit while signed out or offline.
+        val accountRows = signedIn && !isOffline
+        if (accountRows || onRemoveFromPlaylist != null) {
+            if (accountRows) {
+                ActionRow(
+                    icon = if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                    label = if (liked) stringResource(R.string.remove_from_liked) else stringResource(R.string.like),
+                    tint = if (liked) palette.accent else null,
+                    accent = palette.accent,
+                    onClick = onToggleLike,
+                )
+                ActionRow(
+                    icon = if (disliked) Icons.Rounded.ThumbDown else Icons.Rounded.ThumbDownOffAlt,
+                    label = if (disliked) stringResource(R.string.undo_dislike) else stringResource(R.string.dislike),
+                    tint = if (disliked) palette.accent else null,
+                    accent = palette.accent,
+                    onClick = onToggleDislike,
+                )
+                ActionRow(
+                    icon = Icons.AutoMirrored.Rounded.PlaylistAdd,
+                    label = stringResource(R.string.add_to_playlist),
+                    accent = palette.accent,
+                    onClick = onAddToPlaylist,
+                )
+            }
             onRemoveFromPlaylist?.let {
                 ActionRow(
                     icon = Icons.Rounded.PlaylistRemove,
@@ -438,6 +443,9 @@ fun SongActionsSheet(
                 accent = palette.accent,
             ) { onOpenArtist(id) }
         }
+        ActionRow(Icons.Rounded.Info, stringResource(R.string.song_info), accent = palette.accent) {
+            showingSongInfo = true
+        }
         if (showSleepTimer) {
             ActionRow(
                 icon = Icons.Rounded.Bedtime,
@@ -493,18 +501,6 @@ fun SongActionsSheet(
                 icon = Icons.Rounded.Groups,
                 label = stringResource(R.string.listen_together),
                 value = listenTogetherMembers?.toString(),
-                accent = palette.accent,
-                onClick = it,
-            )
-        }
-        // Automix analysis: what the app measured about this track and what it
-        // planned for the handoff into the next one, and the listener's own
-        // answer to both. Player-only for the same reason the four above are:
-        // it is about the track playing right now.
-        onOpenAutomix?.let {
-            ActionRow(
-                icon = Icons.Rounded.GraphicEq,
-                label = stringResource(R.string.automix_analysis_menu),
                 accent = palette.accent,
                 onClick = it,
             )
@@ -839,6 +835,15 @@ private fun SleepTimerPicker(
                 onBack()
             }
         }
+        // Under the durations because it is about them: the timer's last
+        // half-minute, not a choice of when it ends.
+        val fadeOut by AppSettings.sleepTimerFadeOut.collectAsStateWithLifecycle()
+        SleepFadeOption(
+            checked = fadeOut,
+            accent = palette.accent,
+            mutedInk = mutedInk,
+            onCheckedChange = AppSettings::setSleepTimerFadeOut,
+        )
         if (chosen != null || afterTrack) {
             ActionRow(Icons.Rounded.Close, stringResource(R.string.turn_off_timer), accent = palette.accent) {
                 SleepTimer.cancel()
@@ -878,6 +883,48 @@ private fun SleepOption(
                 modifier = Modifier.size(22.dp),
             )
         }
+    }
+}
+
+/** The fade-out switch under the sleep timer's durations, in the same row shape as [SleepOption]. */
+@Composable
+private fun SleepFadeOption(
+    checked: Boolean,
+    accent: Color,
+    mutedInk: Color,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    val ink = LocalMenuInk.current ?: MaterialTheme.colorScheme.onSurface
+    val interactive = LocalMenuInteractive.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = interactive) { onCheckedChange(!checked) }
+            .padding(start = 22.dp, end = 16.dp, top = 11.dp, bottom = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = stringResource(R.string.sleep_timer_fade_out),
+                style = MaterialTheme.typography.bodyLarge,
+                color = ink,
+            )
+            Text(
+                text = stringResource(R.string.sleep_timer_fade_out_subtitle),
+                style = MaterialTheme.typography.bodyMedium,
+                color = mutedInk,
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            enabled = interactive,
+            colors = SwitchDefaults.colors(
+                checkedTrackColor = accent,
+                checkedBorderColor = accent,
+            ),
+        )
     }
 }
 

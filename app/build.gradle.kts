@@ -218,9 +218,14 @@ android {
     }
     androidResources {
         // Compress everything aapt would otherwise store raw (fonts, flow
-        // videos, ONNX models). resources.arsc stays aligned/uncompressed
+        // videos). resources.arsc stays aligned/uncompressed
         // automatically; jniLibs are governed by packaging.jniLibs above.
         noCompress.clear()
+        // Automix's models stay in src/main/assets (the desktop build reads
+        // them from there) but are not packaged: the app downloads them on
+        // first use, see AutomixModels. The rest is AGP's default pattern,
+        // which setting this replaces. Ported from BitChord.
+        ignoreAssetsPattern = "!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~:!*.onnx"
     }
     buildFeatures {
         compose = true

@@ -97,7 +97,14 @@ object LrcRed {
      * Of the hits that pass, the closest in length wins, and the search's own
      * rank breaks a tie.
      */
-    fun best(hits: List<Hit>, title: String, artist: String, durationMs: Long): Hit? {
+    fun best(
+        hits: List<Hit>,
+        title: String,
+        artist: String,
+        durationMs: Long,
+        /** Off for a caller that finds the document some other way than by ISRC. */
+        needsIsrc: Boolean = true,
+    ): Hit? {
         val wantedTitle = coreOf(title)
         val wantedVersion = versionOf(title)
         val wantedArtists = artistsOf(artist)
@@ -109,7 +116,7 @@ object LrcRed {
         return hits
             .filter { hit ->
                 val name = hit.title ?: return@filter false
-                hit.isrc?.let(::documentUrl) != null &&
+                (!needsIsrc || hit.isrc?.let(::documentUrl) != null) &&
                     coreOf(name) == wantedTitle &&
                     versionOf(name) == wantedVersion &&
                     (wantedArtists.isEmpty() || artistsOf(hit.artist.orEmpty()).any { it in wantedArtists }) &&

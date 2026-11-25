@@ -3,6 +3,7 @@ package com.music.bitchord.ui.screens
 import com.music.bitchord.sharedui.resources.*
 import org.jetbrains.compose.resources.stringResource
 import androidx.compose.foundation.background
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -43,20 +44,26 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
+import com.music.bitchord.data.model.CARD_ART_PX
 import com.music.bitchord.data.model.MoodGenre
 import com.music.bitchord.data.model.MoodGenreSection
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.UiState
+import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER
 import com.music.bitchord.ui.components.PullToRefresh
 import com.music.bitchord.ui.components.ShelfRow
 import com.music.bitchord.ui.components.ShimmerBox
+import com.music.bitchord.ui.components.contextClick
+import com.music.bitchord.ui.components.longPressMenuClickable
+import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.icons.BitChordIcons
 import com.music.bitchord.ui.player.CanvasArtworkPlayer
 import com.music.bitchord.ui.player.CanvasContentMode
 import com.music.bitchord.ui.player.PlayerSettings
 import com.music.bitchord.ui.player.rememberFlowVideo
+import com.music.bitchord.ui.theme.rememberArtworkPalette
 
 /**
  * The Radio tab, built the way Apple Music's is: one featured station at the
@@ -86,6 +93,15 @@ fun RadioScreen(
     pullState: PullToRefreshState,
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
+    /**
+     * The signed-in listener's "Mixed for you" cards; empty hides the
+     * section, which is what signed out always is.
+     */
+    mixes: List<ShelfItem> = emptyList(),
+    /** Tapping a mix: plays it. */
+    onMixClick: (ShelfItem) -> Unit = {},
+    /** Holding a mix: the playlist menu, as on Home. */
+    onMixLongPress: ((ShelfItem) -> Unit)? = null,
 ) {
     PullToRefresh(
         refreshing = refreshing,
@@ -122,6 +138,11 @@ fun RadioScreen(
             }
             item(key = "genres") {
                 GenresRow(onClick = onGenresClick)
+            }
+            if (mixes.isNotEmpty()) {
+                item(key = "mixes") {
+                    MixesCarousel(mixes = mixes, onClick = onMixClick, onLongPress = onMixLongPress)
+                }
             }
             if (seeds.isNotEmpty()) {
                 item(key = "seeds_header") {
@@ -273,6 +294,92 @@ private fun RadioFeatureCard(item: ShelfItem?, onClick: () -> Unit) {
         }
     }
 }
+
+/**
+ * "Your Mixes": the listener's own mixes and the named ones, as cards a size
+ * up from Home's, each captioned on a band tinted from its own artwork.
+ *
+ * One item of the page's list holding a lazy row, so only the cards on screen
+ * are composed. The tint is read once per cover from the same small artwork
+ * the card draws, which the image cache already holds; nothing is blurred.
+ */
+@Composable
+private fun MixesCarousel(
+    mixes: List<ShelfItem>,
+    onClick: (ShelfItem) -> Unit,
+    onLongPress: ((ShelfItem) -> Unit)?,
+) {
+    Column(Modifier.padding(top = 8.dp, bottom = 8.dp)) {
+        SectionHeader(stringResource(Res.string.mixes_yours))
+        ShelfRow(
+            contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            items(mixes, key = { it.browseId ?: it.title }) { item ->
+                MixCard(
+                    item = item,
+                    onClick = { onClick(item) },
+                    onLongPress = onLongPress?.let { { it(item) } },
+                    modifier = Modifier.width(MIX_CARD_WIDTH),
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun MixCard(
+    item: ShelfItem,
+    onClick: () -> Unit,
+    onLongPress: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+) {
+    val art = remember(item.thumbnailUrl) { item.thumbnailUrl.artworkAt(CARD_ART_PX) }
+    val palette = rememberArtworkPalette(item.thumbnailUrl, artPx = CARD_ART_PX)
+    val shape = RoundedCornerShape(MIX_CARD_CORNER)
+    Column(
+        modifier = modifier
+            .clip(shape)
+            .thumbnailBorder(shape)
+            .background(palette.wash)
+            .longPressMenuClickable(onClick = onClick, onLongClick = onLongPress)
+            .contextClick(onLongPress),
+    ) {
+        AsyncImage(
+            model = art,
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(1f)
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+        )
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+            Text(
+                text = item.title,
+                style = MaterialTheme.typography.titleMedium,
+                color = palette.onBackground,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = localizeCardSubtitle(item.subtitle),
+                style = MaterialTheme.typography.bodyMedium,
+                color = palette.onBackgroundVariant,
+                // Two lines held even when the credit is short, so every card
+                // in the row stands the same height.
+                minLines = 2,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+/** One fixed width on every screen: about one and a half of Home's cards. */
+private val MIX_CARD_WIDTH = 240.dp
+private val MIX_CARD_CORNER = 14.dp
 
 /**
  * The way into moods and genres.

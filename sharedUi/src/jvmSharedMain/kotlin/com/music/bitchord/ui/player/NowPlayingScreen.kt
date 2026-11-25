@@ -1214,6 +1214,20 @@ private fun SlidingPlayerDeck(
                         // this component's origin as its reported height changes.
                         placeable.placeRelative(0, 0)
                     }
+                }
+                // A hit target across the whole deck, gaps included. The queue
+                // and the lyrics are laid out full height, running on behind
+                // the deck, and Compose hands a touch nothing on top claims to
+                // whatever sits under it — so a tap in the space round the
+                // transport went straight through to a queue row hidden there
+                // and played a song five or six places down. Only observed,
+                // never consumed: the glyphs and sliders inside still take
+                // their own taps, and the player's tap and swipe handlers
+                // further up still see every gesture that starts here.
+                .pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        while (true) awaitPointerEvent()
+                    }
                 },
         ) {
             content()
@@ -1363,8 +1377,6 @@ fun NowPlayingScreen(
      * seekbar's long-press have to agree about whether the panel is already
      * showing.
      */
-    automixPanelOpen: Boolean = false,
-    onAutomixPanelOpenChange: (Boolean) -> Unit = {},
     /** Opens the Sing vocal-level sheet. A no-op on hosts without one. */
     onOpenSing: () -> Unit = {},
     /** Whether the vocal cut is currently engaged, for the lyrics mic disc. */
@@ -1656,8 +1668,6 @@ fun NowPlayingScreen(
         overlays = overlays,
         lyricsOffsetOpen = lyricsOffsetOpen,
         onDismissLyricsOffset = onDismissLyricsOffset,
-        automixPanelOpen = automixPanelOpen,
-        onAutomixPanelOpenChange = onAutomixPanelOpenChange,
         lyricPicker = lyricPicker,
     )
 
@@ -1811,6 +1821,22 @@ fun NowPlayingScreen(
     // never fires again. Keyed on the cover there is nothing to reset: the
     // bitmap really is still loaded, so the state stays true.
     val art = rememberPlayerArtwork(remoteArt, artPx)
+    // Automix's artwork transition: the next cover spreads over this one in
+    // step with the audio blend, when the listener has it switched on. See
+    // [AutoMixCoverState].
+    val coverEntry = remember(song.videoId, song.queueEntryId, queue, queueIndex) {
+        coverOccurrence(song, queue, queueIndex)
+    }
+    val autoMixGate = autoMixStillArtworkGate(coverEntry, canvasShown = canvas != null)
+    val autoMixCover = rememberAutoMixCover(coverEntry, art, autoMixGate)
+    val autoMixFrames: () -> AutoMixCoverFrames? = remember(autoMixCover, coverEntry, autoMixGate) {
+        { autoMixCover.framesFor(coverEntry, autoMixGate) }
+    }
+    // The backdrops follow that reveal — see [AutoMixAmbientMix]. A lambda, read
+    // by the backdrops alone, so the mix's two ends recompose them and not this.
+    val autoMixAmbient: () -> AutoMixAmbientMix? = remember(autoMixCover, coverEntry, autoMixGate) {
+        { autoMixCover.ambientFor(coverEntry, autoMixGate) }
+    }
     // Sticky, unlike [PlayerArtwork.loaded]: the banner is the shape of the player rather
     // than a property of the track in it. Waiting on each new cover would
     // collapse the banner into a card and blow it back out on every skip —
@@ -2047,6 +2073,7 @@ fun NowPlayingScreen(
         pipelineOpen = overlays.audioPipeline,
         castOpen = overlays.cast,
         panelScrolling = panelScrolling,
+        queueOpen = panels.queueOpen,
         controlsLocked = controlsLocked,
         swipeThreshold = swipeThreshold,
         haptics = haptics,
@@ -2058,7 +2085,11 @@ fun NowPlayingScreen(
 
     // The scrubber's two halves, shared by both layouts so a drop point is held
     // the same way in each — see [PlayerScrub.pendingSeek].
-    val onScrub: (Float) -> Unit = scrub::drag
+    val scrubControlsLocked = rememberUpdatedState(controlsLocked)
+    val onScrub: (Float) -> Unit = { fraction ->
+        if (!scrubControlsLocked.value) PlayerPlatform.host.onAutoMixScrubIntent()
+        scrub.drag(fraction)
+    }
     val onScrubFinished: () -> Unit = {
         // On release only. Ticking the whole way along the bar turns a scrub
         // into a rattle, and the beat that matters is the one that says where
@@ -2105,8 +2136,6 @@ fun NowPlayingScreen(
             onSelectLyricsProvider = onSelectLyricsProvider,
             lyricsOffsetOpen = lyricsOffsetOpen,
             onDismissLyricsOffset = onDismissLyricsOffset,
-            automixPanelOpen = automixPanelOpen,
-            onAutomixPanelOpenChange = onAutomixPanelOpenChange,
             onAddToQueue = onAddToQueue,
             onPlayNext = onPlayNext,
         )
@@ -2159,6 +2188,9 @@ fun NowPlayingScreen(
             playerPrewarmStage >= 1,
         darkTheme = darkTheme,
     )
+    // The next cover's mesh or colours, and its blur, made while an Automix
+    // reveal is armed, so the backdrops can follow it from its first frame.
+    AutoMixAmbientPrefetch(artPx, darkTheme, legacyPalette = legacyMeshBackdrop)
     // Where the backdrops publish what they show under the chrome — see
     // [resolveInk]. Written by the backdrops' own effects and read only by the
     // ink's, so neither recomposes this screen.
@@ -2257,6 +2289,10 @@ fun NowPlayingScreen(
     // between the portrait and landscape players; only the cached bitmap
     // changes when the artwork preparation above completes for another song.
     val currentFullArtworkBlurImage = rememberUpdatedState(fullArtworkBlurImage)
+    // Only the portrait sleeve draws the cover reveal, so only there does the
+    // blur follow it: in landscape the sleeve changes at the track change and
+    // the blur keeps its ordinary crossfade with it.
+    val currentAutoMixAmbient = rememberUpdatedState(if (landscape) NoAutoMixAmbient else autoMixAmbient)
     val currentDarkTheme = rememberUpdatedState(darkTheme)
     // The frame off a playing cover, when there is one — so the blur behind
     // an animated cover is that cover, moving, rather than the still sleeve
@@ -2284,6 +2320,7 @@ fun NowPlayingScreen(
                 whiteWash = { inkStates.panelWhiteWash.value },
                 onShown = publishPanelInk,
                 darkTheme = currentDarkTheme.value,
+                mix = currentAutoMixAmbient.value(),
             )
         }
     }
@@ -2356,13 +2393,17 @@ fun NowPlayingScreen(
                 lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
         }
     }
+    val trackMotionAllowed: () -> Boolean = remember(trackMotionVisible, autoMixCover) {
+        { trackMotionVisible() && !autoMixCover.holdsCover() }
+    }
     val trackCoverLoaded: () -> Boolean = remember(art) { { art.loaded } }
     SideEffect {
         trackMotion.widthPx = with(density) { windowWidth.toPx() }
         trackMotion.banner = heroMode && !landscape
         trackMotion.reduced = reduceAnimation
         trackMotion.hasNext = hasNext
-        trackMotion.canAnimate = trackMotionVisible
+        // A track change the Automix reveal is drawing needs no slide of its own.
+        trackMotion.canAnimate = trackMotionAllowed
         trackMotion.coverLoaded = trackCoverLoaded
     }
     LaunchedEffect(song.videoId, queueIndex) { trackMotion.onTrackChanged(song.videoId, queueIndex) }
@@ -2457,8 +2498,6 @@ fun NowPlayingScreen(
                 onOpenArtist = onOpenArtist,
                 lyrics = lyrics,
                 lyricsUnavailable = lyricsUnavailable,
-                automixPanelOpen = automixPanelOpen,
-                onAutomixPanelOpenChange = onAutomixPanelOpenChange,
                 playerHaze = playerHaze,
                 overlays = overlays,
                 controlsLocked = controlsLocked,
@@ -2501,6 +2540,18 @@ fun NowPlayingScreen(
                 sleeveLayer = sleeveLayer,
                 dockHost = dockHost,
                 modifier = modifier,
+                bestPart = { pillModifier ->
+                    BestPartPill(
+                        song = song,
+                        position = position,
+                        isLoading = isLoading,
+                        durationMs = durationMs,
+                        lyrics = { lyrics },
+                        lyricsUnavailable = { lyricsUnavailable },
+                        onSeek = onSeek,
+                        modifier = pillModifier,
+                    )
+                },
             )
         }
         return
@@ -2558,6 +2609,7 @@ fun NowPlayingScreen(
             inkBlackWash = { inkStates.mainBlackWash.value },
             inkWhiteWash = { inkStates.mainWhiteWash.value },
             darkTheme = darkTheme,
+            ambientMix = autoMixAmbient,
         )
 
         // Mount once, behind the controls. A known portrait aspect changes the
@@ -3183,6 +3235,21 @@ fun NowPlayingScreen(
                     song = song,
                     spotifyChromeAlpha = { spotifyChromeAlpha },
                     onDismissBandTop = { measures.dismissBandTop = it },
+                    autoMixFrames = autoMixFrames,
+                    bestPart = { pillModifier ->
+                        BestPartPill(
+                            song = song,
+                            position = position,
+                            isLoading = isLoading,
+                            durationMs = durationMs,
+                            lyrics = { lyrics },
+                            lyricsUnavailable = { lyricsUnavailable },
+                            onSeek = onSeek,
+                            // Faded out with Spotify's controls, it must not take taps.
+                            interactive = { spotifyChromeAlpha > 0f },
+                            modifier = pillModifier,
+                        )
+                    },
                 )
 
                 // ---- Title + menu ----
@@ -3399,8 +3466,6 @@ fun NowPlayingScreen(
                 versionSwitching = versionSwitching,
                 mixing = mixing,
                 scrub = scrub,
-                automixPanelOpen = automixPanelOpen,
-                onAutomixPanelOpenChange = onAutomixPanelOpenChange,
                 onScrub = onScrub,
                 onScrubFinished = onScrubFinished,
                 isLoading = isLoading,

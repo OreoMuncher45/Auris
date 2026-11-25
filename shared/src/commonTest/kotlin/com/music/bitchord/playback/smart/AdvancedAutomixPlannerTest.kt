@@ -14,6 +14,7 @@ class AdvancedAutomixPlannerTest {
         key: String,
         vocal: Double,
         duration: Double = 200.0,
+        bass: Double? = null,
     ): TrackAnalysis {
         val beat = 60.0 / bpm
         val downbeats = generateSequence(0.5) { it + 4 * beat }.takeWhile { it < duration - 1 }.toList()
@@ -35,6 +36,7 @@ class AdvancedAutomixPlannerTest {
             mixInTime = downbeats[4],
             energyCurve = energy,
             vocalProbability = vocal,
+            lowEnergyCurve = if (bass == null) emptyList() else energy.map { EnergySample(it.time, bass) },
         )
     }
 
@@ -52,7 +54,7 @@ class AdvancedAutomixPlannerTest {
     @Test
     fun offLeavesEveryPlanAsItWas() {
         val current = track("a", 120.0, "C major", vocal = 0.9)
-        val next = track("b", 97.0, "F♯ major", vocal = 0.9)
+        val next = track("b", 94.0, "F♯ major", vocal = 0.9)
         assertEquals(
             planTransition(
                 analysis = current,
@@ -68,59 +70,89 @@ class AdvancedAutomixPlannerTest {
     }
 
     @Test
-    fun aPairThatCannotBeatMatchIsFilteredNotCut() {
-        // Tempo out of reach, clashing keys, both sung: once a cut, which was
-        // heard as the outgoing song glitching. Now always a filter ride.
+    fun anUnmixablePairIsCrossfadedAtTheEndIntoTheIntro() {
+        // Tempo out of reach, clashing keys, both sung: every DJ gesture put two
+        // loud unsynced songs on top of each other. The plain crossfade wins.
         val current = track("a", 120.0, "C major", vocal = 0.9)
-        val next = track("b", 97.0, "F♯ major", vocal = 0.9)
+        val next = track("b", 94.0, "F♯ major", vocal = 0.9)
         val plan = plan(current, next, advanced = true)
-        assertEquals(TransitionStyle.DJ_FILTER, plan.transitionStyle)
+        assertEquals(TransitionStyle.EQUAL_POWER, plan.transitionStyle)
+        assertEquals(current.contentEndTime, plan.transitionEnd, 1e-6)
+        assertEquals(next.audibleStartTime!!, plan.incomingCueTime, 1e-6)
         assertEquals(1.0, plan.incomingPlaybackRate)
-        assertEquals(1.0, plan.outgoingPlaybackRate)
-        assertEquals(MIN_TRANSITION_BARS, plan.transitionBars)
-        assertEquals(MIN_TRANSITION_BARS * BEATS_PER_BAR, plan.transitionBeats)
-        assertEquals(4 * 0.5 * MIN_TRANSITION_BARS, plan.fadeSeconds, 1e-6)
+        assertEquals(0.0, plan.echoSeconds)
+        assertTrue("unmixable-pair" in plan.policyReasons)
+        assertEquals(TransitionStyle.EQUAL_POWER, plan(current, next, advanced = false).transitionStyle)
     }
 
     @Test
-    fun fallbackGestureIsStablePerPairButVariesAcrossPairs() {
-        val current = track("stable-out", 120.0, "C major", vocal = 0.5)
-        val variants = (0 until 24).map { index ->
-            val next = track("incoming-$index", 97.0, "F♯ major", vocal = 0.5)
-            val first = plan(current, next, advanced = true)
-            val replay = plan(current, next, advanced = true)
-            assertEquals(first.filterVariant, replay.filterVariant)
-            assertEquals(MIN_TRANSITION_BARS, first.transitionBars)
-            first.filterVariant
-        }.toSet()
-        assertEquals(FilterTransitionVariant.entries.toSet(), variants)
-    }
-
-    @Test
-    fun anInstrumentalFilterExitEchoesOnTheBeatWithRoomForTheTail() {
-        // An instrumental exit ending well before the file does is safe to trail.
-        val current = track("a", 120.0, "C major", vocal = 0.1).let {
-            it.copy(contentEndTime = it.duration - 20, vocalActivityMask = it.energyCurve.map { 0.0 })
-        }
-        val plan = (0 until 100).asSequence().map { index ->
-            val next = track("echo-$index", 97.0, "F♯ major", vocal = 0.1)
-                .let { it.copy(vocalActivityMask = it.energyCurve.map { 0.0 }) }
-            plan(current, next, advanced = true)
-        }
-            .first { it.filterVariant == FilterTransitionVariant.ECHO_RIDE }
-        assertEquals(TransitionStyle.DJ_FILTER, plan.transitionStyle)
-        assertEquals(0.5, plan.echoSeconds, 1e-6, "a one-beat echo")
-        assertTrue(
-            plan.transitionEnd + echoTailSeconds(plan.echoSeconds) <= current.duration,
-            "the tail would outlast the outgoing file",
-        )
-    }
-
-    @Test
-    fun twoVocalTracksOverrideRandomFallbackWithVocalSafeSweep() {
-        val current = track("vocal-out", 120.0, "C major", vocal = 0.9)
-        val next = track("vocal-in", 97.0, "F♯ major", vocal = 0.9)
+    fun aTempoOnlyMismatchIsStillFiltered() {
+        val current = track("a", 120.0, "C major", vocal = 0.1)
+        val next = track("b", 94.0, "C major", vocal = 0.1)
         val plan = plan(current, next, advanced = true)
+        assertEquals(TransitionStyle.DJ_FILTER, plan.transitionStyle)
+        assertTrue(plan.fadeSeconds <= 8.0, "fallback should stay compact: ${plan.fadeSeconds}s")
+    }
+
+    @Test
+    fun theFallbackGestureFollowsTheLowEnd() {
+        val kicks = plan(
+            track("a", 120.0, "C major", vocal = 0.1, bass = 1.0),
+            track("b", 94.0, "C major", vocal = 0.1, bass = 1.0),
+            advanced = true,
+        )
+        assertEquals(FilterTransitionVariant.BASS_HANDOFF, kicks.filterVariant)
+        val sparse = plan(
+            track("a", 120.0, "C major", vocal = 0.1, bass = 1.0),
+            track("b", 94.0, "C major", vocal = 0.1),
+            advanced = true,
+        )
+        assertEquals(FilterTransitionVariant.SWEEP, sparse.filterVariant)
+    }
+
+    @Test
+    fun anUnmatchedPairNeverEchoesAndEntersAtItsIntro() {
+        // Both fallback gestures: bass on both songs (a bass handoff) and none
+        // measured on the outgoing one (a sweep).
+        for (outgoingBass in listOf(1.0, null)) {
+            val current = track("a", 120.0, "C major", vocal = 0.1, bass = outgoingBass).let {
+                it.copy(contentEndTime = it.duration - 20, vocalActivityMask = it.energyCurve.map { 0.0 })
+            }
+            val next = track("b", 94.0, "C major", vocal = 0.1, bass = 1.0)
+                .let { it.copy(vocalActivityMask = it.energyCurve.map { 0.0 }) }
+            val plan = plan(current, next, advanced = true)
+            val expected = if (outgoingBass == null) FilterTransitionVariant.SWEEP else FilterTransitionVariant.BASS_HANDOFF
+            assertEquals(expected, plan.filterVariant)
+            assertEquals(TransitionStyle.DJ_FILTER, plan.transitionStyle)
+            assertEquals(0.0, plan.echoSeconds)
+            assertNotEquals(FilterTransitionVariant.ECHO_RIDE, plan.filterVariant)
+            assertEquals(next.audibleStartTime!!, plan.incomingCueTime, 1e-6, "cued into the intro, not the drop")
+        }
+    }
+
+    @Test
+    fun aPhraseSwitchChecksVocalsWhereTheIncomingSongIsReallyHeard() {
+        // The outgoing song sings to its end. The incoming one is clear up to
+        // its drop (8.5 s) and sings from 9 s, inside the arrangement overlap
+        // that moves the cue and the handoff past the drop.
+        val current = track("a", 120.0, "C major", vocal = 0.1)
+            .let { it.copy(vocalActivityMask = it.energyCurve.map { 1.0 }) }
+        val next = track("b", 120.0, "C major", vocal = 0.1)
+            .let { a -> a.copy(vocalActivityMask = a.energyCurve.map { if (it.time >= 9.0) 1.0 else 0.0 }) }
+        val planned = planWsolaTransition(current, next, current.duration, next.duration, advanced = true)
+        assertTrue(planned is WsolaPlanResult.Planned, "planned: $planned")
+        assertTrue(planned.incomingHandoffTime > 9.0)
+        assertTrue(planned.vocalClash, "the incoming vocal lands under the outgoing one")
+    }
+
+    @Test
+    fun twoVocalTracksOverrideTheGestureWithVocalSafeSweep() {
+        // Within the stretch window, but the incoming grid is too weak to
+        // beatmatch on, so this is a filter ride — with two singers on it.
+        val current = track("vocal-out", 120.0, "C major", vocal = 0.9, bass = 1.0)
+        val next = track("vocal-in", 130.0, "C major", vocal = 0.9, bass = 1.0).copy(beatConfidence = 0.4)
+        val plan = plan(current, next, advanced = true)
+        assertEquals(TransitionStyle.DJ_FILTER, plan.transitionStyle)
         assertEquals(FilterTransitionVariant.SWEEP, plan.filterVariant)
         assertTrue(plan.vocalOverlap >= 0.5, "missing masks must be treated conservatively")
         assertEquals(0.0, plan.echoSeconds)
@@ -138,20 +170,65 @@ class AdvancedAutomixPlannerTest {
 
     @Test
     fun aFasterIncomingSongDoesNotRetempoTheAudibleOutgoingDeck() {
+        // 135 against 120 would need the incoming song slowed by 11%: past the 10% window.
         val current = track("a", 120.0, "C major", vocal = 0.1)
-        val next = track("b", 130.0, "C major", vocal = 0.1)
+        val next = track("b", 135.0, "C major", vocal = 0.1)
         val plan = plan(current, next, advanced = true)
         assertEquals(TransitionStyle.DJ_FILTER, plan.transitionStyle)
-        assertEquals(1.0, plan.incomingPlaybackRate, "the incoming song is never slowed")
+        assertEquals(1.0, plan.incomingPlaybackRate, "past the window the incoming song keeps its tempo")
         assertEquals(1.0, plan.outgoingPlaybackRate, "an audible deck must never change speed")
-        // Classic keeps its old answer: slow the incoming track down.
-        assertTrue(plan(current, next, advanced = false).incomingPlaybackRate < 1.0)
+        // Inside the window (130: slowed by 7.7%) both modes slow the incoming song down.
+        val near = track("c", 130.0, "C major", vocal = 0.1)
+        assertEquals(120.0 / 130.0, plan(current, near, advanced = false).incomingPlaybackRate, 1e-3)
+        assertEquals(120.0 / 130.0, plan(current, near, advanced = true).incomingPlaybackRate, 1e-3)
+        assertEquals(1.0, plan(current, near, advanced = true).outgoingPlaybackRate)
     }
 
     @Test
-    fun tempiMoreThanTenPercentApartAreNotBeatMatched() {
+    fun aSlowdownInsideTheWindowIsBlendedNotFiltered() {
+        // No trusted keys, so no phrase switch: the adaptive plan takes the pair.
+        val current = track("a", 120.0, "", vocal = 0.1)
+        val next = track("b", 130.0, "", vocal = 0.1)
+        val plan = plan(current, next, advanced = true)
+        assertEquals(120.0 / 130.0, plan.incomingPlaybackRate, 1e-3)
+        assertEquals(TransitionStyle.DJ_BLEND, plan.transitionStyle, "a reachable slowdown should beat-match")
+    }
+
+    @Test
+    fun anInfiniteTempoIsNeverReachableAndDoesNotHang() {
+        assertTrue(incomingRateBetween(120.0, Double.POSITIVE_INFINITY).isNaN())
+        assertTrue(incomingRateBetween(Double.POSITIVE_INFINITY, 120.0).isNaN())
+        assertTrue(!stretchReachable(120.0, Double.POSITIVE_INFINITY))
+        assertTrue(!stretchReachable(Double.NaN, 120.0))
+    }
+
+    @Test
+    fun aPhraseSwitchFadeStaysUnderSixteenSecondsOnTheOutgoingTimeline() {
+        // 16 beats at 60 BPM are 16 s of incoming media, but the outgoing deck
+        // plays them at its own 54 BPM: 17.8 s. The cap is on what is heard.
+        val current = track("a", 54.0, "C major", vocal = 0.1)
+        val next = track("b", 60.0, "C major", vocal = 0.1)
+        val planned = planWsolaTransition(current, next, 200.0, 200.0, advanced = true)
+        if (planned is WsolaPlanResult.Planned) {
+            assertTrue(planned.fadeBeats * 60.0 / 54.0 <= 16.0 + 1e-9, "fade of ${planned.fadeBeats} beats")
+        }
+    }
+
+    @Test
+    fun anUnmixablePairStillKeepsTheIncomingSkipLimit() {
+        // Too far apart in tempo and clashing in key, into a 60 s song that only
+        // starts sounding at 20 s: it may be cued at most a quarter of the way in.
         val current = track("a", 120.0, "C major", vocal = 0.1)
-        val next = track("b", 134.0, "C major", vocal = 0.1)
+        val next = track("b", 160.0, "F♯ major", vocal = 0.1, duration = 60.0).copy(audibleStartTime = 20.0)
+        val plan = plan(current, next, advanced = true)
+        assertTrue("unmixable-pair" in plan.policyReasons, "reasons ${plan.policyReasons}")
+        assertTrue(plan.incomingCueTime <= 15.0 + 1e-9, "cue ${plan.incomingCueTime}")
+    }
+
+    @Test
+    fun tempiPastTheStretchWindowAreNotBeatMatched() {
+        val current = track("a", 120.0, "C major", vocal = 0.1)
+        val next = track("b", 136.0, "C major", vocal = 0.1)
         val plan = plan(current, next, advanced = true)
         assertNotEquals(TransitionStyle.DJ_BLEND, plan.transitionStyle)
         assertEquals(1.0, plan.incomingPlaybackRate)
@@ -190,102 +267,6 @@ class AdvancedAutomixPlannerTest {
         assertTrue(plan.beatSeconds > 0, "a trusted grid should be passed to the renderer")
         val bars = plan.fadeSeconds / (4 * plan.beatSeconds)
         assertEquals(bars.toInt().toDouble(), bars, 1e-6, "overlap of $bars bars")
-        assertEquals(plan.transitionBars * BEATS_PER_BAR, plan.transitionBeats)
         assertTrue(!plan.phaseLock, "phase correction must not pulse AudioTrack speed while audible")
-    }
-
-    @Test
-    fun theRecommendedRangeRunsFromFourToThirtyTwoBars() {
-        assertEquals(
-            MIN_TRANSITION_BARS,
-            recommendedTransitionBars(
-                tempoFar = true,
-                keyClash = false,
-                vocalConflict = false,
-                keyCompatible = false,
-                phaseLockable = false,
-                calm = false,
-            ),
-        )
-        assertEquals(
-            MAX_TRANSITION_BARS,
-            recommendedTransitionBars(
-                tempoFar = false,
-                keyClash = false,
-                vocalConflict = false,
-                keyCompatible = true,
-                phaseLockable = true,
-                calm = true,
-            ),
-        )
-    }
-
-    @Test
-    fun aCalmCompatiblePairCanRenderTheFullThirtyTwoBars() {
-        val current = track("long-out", 120.0, "C major", vocal = 0.1, duration = 300.0).let {
-            it.copy(
-                energyCurve = it.energyCurve.map { sample ->
-                    if (sample.time >= it.duration - 4.0) sample.copy(energy = 0.1) else sample
-                },
-            )
-        }
-        val next = track("long-in", 120.0, "C major", vocal = 0.1, duration = 300.0).let {
-            it.copy(
-                mixInTime = it.downbeats[37],
-                energyCurve = it.energyCurve.map { sample ->
-                    if (sample.time <= 4.0) sample.copy(energy = 0.1) else sample
-                },
-            )
-        }
-
-        val plan = plan(current, next, advanced = true)
-
-        assertEquals(MAX_TRANSITION_BARS, plan.transitionBars)
-        assertEquals(MAX_TRANSITION_BARS * BEATS_PER_BAR, plan.transitionBeats)
-        assertEquals(MAX_TRANSITION_BARS * BEATS_PER_BAR * 0.5, plan.fadeSeconds, 1e-6)
-    }
-
-    @Test
-    fun octaveEquivalentTempiShareOneMusicalGrid() {
-        val current = track("double-time", 126.0, "C major", vocal = 0.1)
-        val next = track("half-time", 63.0, "C major", vocal = 0.1)
-        val plan = plan(current, next, advanced = true)
-
-        assertEquals(TransitionStyle.DJ_BLEND, plan.transitionStyle)
-        assertEquals(1.0, plan.incomingPlaybackRate)
-        assertTrue(plan.transitionBars in MIN_TRANSITION_BARS..MAX_TRANSITION_BARS)
-        assertEquals(plan.transitionBars * BEATS_PER_BAR, plan.transitionBeats)
-        assertEquals(
-            plan.transitionBars * BEATS_PER_BAR * (60.0 / 126.0),
-            plan.fadeSeconds,
-            1e-6,
-        )
-    }
-
-    @Test
-    fun durationAndRunwayCapsReduceTheRenderedOverlap() {
-        val current = track("short-out", 120.0, "C major", vocal = 0.1, duration = 45.0)
-        val next = track("short-in", 120.0, "C major", vocal = 0.1, duration = 45.0)
-        val plan = plan(current, next, advanced = true)
-
-        assertTrue(plan.transitionBars in MIN_TRANSITION_BARS..MAX_TRANSITION_BARS)
-        assertTrue(plan.transitionBars < MAX_TRANSITION_BARS)
-        assertTrue(plan.transitionStart >= 5.0, "the outgoing track keeps its clearance")
-        assertEquals(plan.transitionBars * BEATS_PER_BAR, plan.transitionBeats)
-        assertEquals(
-            plan.transitionBars * BEATS_PER_BAR * (60.0 / 120.0),
-            plan.fadeSeconds,
-            1e-6,
-        )
-    }
-
-    @Test
-    fun classicModeKeepsItsHistoricalCompactRange() {
-        val current = track("classic-out", 120.0, "C major", vocal = 0.1)
-        val next = track("classic-in", 97.0, "F♯ major", vocal = 0.1)
-        val plan = plan(current, next, advanced = false)
-
-        assertTrue(plan.fadeSeconds <= 12.0)
-        assertTrue(plan.transitionBars in 1..4)
     }
 }

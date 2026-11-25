@@ -70,6 +70,7 @@ import com.music.bitchord.data.podcast.ItunesShow
 import com.music.bitchord.data.podcast.PodcastShelfCache
 import com.music.bitchord.data.podcast.PodcastShelfCache.toHomeShelves
 import com.music.bitchord.data.model.ShelfItem
+import com.music.bitchord.data.model.yourMixes
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.SongMenu
 import com.music.bitchord.data.model.SubscriptionState
@@ -729,7 +730,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val key = LyricsLookupKey(
             videoId, sources, AppSettings.lyricsSourceOrder.value, AppSettings.prioritizeSyllableSync.value,
         )
-        if (lyricsFor == key) return
+        if (lyricsFor == key) {
+            // The lookup is already running, perhaps still reading the file
+            // without a length; keep the length for when it needs one.
+            if (durationMs > 0L) currentLyricsRequest = currentLyricsRequest
+                ?.takeIf { it.videoId == videoId && it.durationMs <= 0L }?.copy(durationMs = durationMs)
+                ?: currentLyricsRequest
+            return
+        }
         // The duration lands a beat after the track, and a database match needs
         // it. Turned away here rather than inside the job below: claiming the
         // lookup first and giving it up asynchronously means the very re-trigger
@@ -764,6 +772,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // only needed to *match* a track against a stranger's database, and
             // nothing is being matched here — these lyrics were written into
             // this exact file, for this exact recording.
+            // Plain words from the file: shown at once, but they only stand in
+            // until a source answers with timing. Most taggers store lyrics
+            // untimed (an MP3's USLT nearly always is), and ending the lookup
+            // on them would cost every such file the synced lyrics it got
+            // before the file's own words were read at all.
+            var embeddedPlain: List<LyricLine>? = null
             if (localUri != null) {
                 EmbeddedLyrics.forUri(getApplication(), localUri)?.let { embedded ->
                     _lyrics.value = embedded
@@ -771,16 +785,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     // not which of the eight services they came from months ago.
                     _lyricsSource.value = null
                     _lyricsChecked.value = true
-                    return@launch
+                    if (EmbeddedLyrics.isSynced(embedded)) return@launch
+                    embeddedPlain = embedded
                 }
             }
-            if (durationMs <= 0L) {
+            // A length that came in while the file was read.
+            val lengthMs = durationMs.takeIf { it > 0L }
+                ?: currentLyricsRequest?.takeIf { it.videoId == videoId }?.durationMs ?: 0L
+            if (lengthMs <= 0L) {
                 // Duration arrives a beat after the track does; wait for it.
                 lyricsFor = null
                 return@launch
             }
             val found = LyricsRepository.lyrics(
-                videoId, title, artist, durationMs, album, sources,
+                videoId, title, artist, lengthMs, album, sources,
                 AppSettings.lyricsSourceOrder.value, AppSettings.prioritizeSyllableSync.value,
                 onSourceStarted = { source -> providerStarted(generation, source) },
                 onSourceResult = { source, result ->
@@ -788,9 +806,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 },
                 onSourceCancelled = { source -> providerCancelled(generation, source) },
             )
-            val selected = selectedLyricsSource?.let(lyricsProviderResults::get) ?: found
-            _lyrics.value = selected?.lines
-            _lyricsSource.value = selected?.source
+            val picked = selectedLyricsSource?.let(lyricsProviderResults::get)
+            // The file's own words beat a stranger's untimed copy; only timing,
+            // or a provider the listener picked by hand, displaces them.
+            val selected = picked
+                ?: found?.takeIf { embeddedPlain == null || EmbeddedLyrics.isSynced(it.lines) }
+            if (selected == null && embeddedPlain != null) {
+                _lyrics.value = embeddedPlain
+                _lyricsSource.value = null
+            } else {
+                _lyrics.value = selected?.lines
+                _lyricsSource.value = selected?.source
+            }
             _lyricsChecked.value = true
         }
     }
@@ -942,6 +969,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * album page and pressing back returns to the album, not to search.
      */
     private val _detailStack = MutableStateFlow<List<DetailPage>>(emptyList())
+
+    /** Which opening of each browse id is the current one; see [markDetailOpened]. Main thread only. */
+    private val detailOpenings = HashMap<String, Long>()
+    private var detailOpeningCount = 0L
+
+    /** Records that [browseId] was just pushed, returning that opening's number. */
+    private fun markDetailOpened(browseId: String): Long =
+        (++detailOpeningCount).also { detailOpenings[browseId] = it }
+
+    /** Whether the page opened as [opening] is still on the stack, not closed or reopened since. */
+    private fun isDetailOpen(browseId: String, opening: Long): Boolean =
+        detailOpenings[browseId] == opening && _detailStack.value.any { it.browseId == browseId }
     val detailStack: StateFlow<List<DetailPage>> = _detailStack.asStateFlow()
 
     private val _releaseLibrary = MutableStateFlow<Map<String, LibraryState>>(emptyMap())
@@ -2412,7 +2451,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (feed in _refreshing.value) return
         if (feed == Feed.LIBRARY && !_signedIn.value) return
         val identity = listenerKey()
-        if (feed == Feed.EXPLORE) exploreRequested = true
+        if (feed == Feed.EXPLORE) {
+            exploreRequested = true
+            // Radio's pull refreshes its Your Mixes too, alongside the
+            // stations rather than after them.
+            refreshRadioMixes()
+        }
         _refreshing.value = _refreshing.value + feed
         viewModelScope.launch {
             when (feed) {
@@ -2618,6 +2662,102 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private var exploreRequested = false
+
+    /**
+     * Radio's "Your Mixes" carousel: the signed-in listener's own mixes and
+     * the named ones (Discover, New Release, Replay) out of YouTube Music's
+     * "Mixed for you" page. Empty, and so hidden, when signed out or before
+     * anything has arrived.
+     *
+     * Fetched the first time Radio is shown for a listener (account and
+     * profile), and again on a pull to refresh. Last launch's cards for the
+     * same listener are drawn from disk while the fresh ones are fetched, the
+     * way Home's page is, so the carousel is usually there on the first visit
+     * and never holds up Radio's first frame.
+     */
+    private val _radioMixes = MutableStateFlow<List<ShelfItem>>(emptyList())
+    val radioMixes: StateFlow<List<ShelfItem>> = _radioMixes.asStateFlow()
+
+    /** Whether Radio is the tab on screen; set by the page. */
+    private val radioShown = MutableStateFlow(false)
+
+    /** The listener the carousel holds, or was last asked for; null for no one. */
+    private var radioMixesFor: String? = null
+
+    /** Each listener's cards fetched this session, so switching back shows them at once. */
+    private val radioMixesByListener = mutableMapOf<String, List<ShelfItem>>()
+    private var radioMixesJob: Job? = null
+
+    fun setRadioShown(shown: Boolean) {
+        radioShown.value = shown
+    }
+
+    init {
+        // A sign-in, sign-out or account switch while Radio is up is a
+        // different listener's mixes, so this watches the listener as well.
+        viewModelScope.launch {
+            combine(radioShown, _signedIn, _activeAccountId, _activeProfileId) { shown, signedIn, _, _ ->
+                shown to signedIn
+            }.collect { (shown, signedIn) ->
+                when {
+                    !signedIn || listenerKey() == null -> clearRadioMixes()
+                    radioMixesFor != listenerKey() -> {
+                        // Never another listener's cards, even for a frame.
+                        _radioMixes.value = radioMixesByListener[listenerKey()].orEmpty()
+                        if (shown) loadRadioMixes()
+                        else radioMixesFor = null
+                    }
+                }
+            }
+        }
+    }
+
+    private fun clearRadioMixes() {
+        radioMixesJob?.cancel()
+        radioMixesFor = null
+        _radioMixes.value = emptyList()
+    }
+
+    private fun refreshRadioMixes() {
+        if (_signedIn.value && listenerKey() != null) loadRadioMixes()
+    }
+
+    private fun loadRadioMixes() {
+        val identity = listenerKey() ?: return
+        radioMixesFor = identity
+        radioMixesJob?.cancel()
+        val seen = radioMixesByListener[identity]
+        if (seen != null) _radioMixes.value = seen
+        radioMixesJob = viewModelScope.launch {
+            // The disk copy is read beside the request rather than before it,
+            // and only drawn into a carousel nothing fresher has filled.
+            val restore = if (seen == null) launch {
+                val kept = withContext(Dispatchers.IO) {
+                    HomeFeedCache.load(getApplication(), RADIO_MIXES_CACHE, identity)
+                }?.shelves?.firstOrNull()?.items ?: return@launch
+                if (identity == listenerKey() && _radioMixes.value.isEmpty()) _radioMixes.value = kept
+            } else null
+            val fresh = YtMusicRepository.mixedForYouKeyed().getOrNull()?.let(::yourMixes)
+            if (identity != listenerKey()) return@launch
+            if (fresh == null) {
+                // A failure keeps what is on screen, last launch's cards
+                // included, and the next visit asks again.
+                radioMixesFor = null
+                return@launch
+            }
+            restore?.cancel()
+            radioMixesByListener[identity] = fresh
+            _radioMixes.value = fresh
+            if (fresh.isNotEmpty()) withContext(Dispatchers.IO) {
+                HomeFeedCache.save(
+                    getApplication(),
+                    RADIO_MIXES_CACHE,
+                    identity,
+                    HomeFeedCache.Snapshot(listOf(HomeShelf(title = RADIO_MIXES_CACHE, items = fresh))),
+                )
+            }
+        }
+    }
 
     private suspend fun fetchExplore() {
         val state = YtMusicRepository.moodAndGenres().fold(
@@ -3170,6 +3310,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun fetchLibrary(identity: String?) {
+        // The credentials the request goes out with: a candidate account under
+        // validation changes them before [listenerKey] moves.
+        val credentials = Innertube.listenerGeneration
         // Hearts before bytes: the persistent liked list seeds LikeState
         // instantly, so nothing waits on the network to read as liked.
         identity?.let { id ->
@@ -3185,8 +3328,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // a liked track past the first page still reads as liked.
                 // The cache takes the first page now; the walk below appends
                 // the rest as it lands, so a force-stop never loses the list.
-                identity?.let { id -> LikedCache.write(id, page.likedSongs) }
-                page.likedContinuation?.let { token -> syncLikedMusic(identity, token) }
+                if (Innertube.listenerGeneration == credentials) {
+                    identity?.let { id -> LikedCache.write(id, page.likedSongs) }
+                    page.likedContinuation?.let { token -> syncLikedMusic(identity, credentials, token) }
+                }
                 if (page.isEmpty) UiState.Error(text(R.string.library_empty))
                 else UiState.Success(page.copy(likedContinuation = null))
             },
@@ -3207,15 +3352,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * page: [LikeState] is a single shared map, not scoped per account, so a
      * sync still in flight when the listener switches must stop rather than
      * go on seeding the old account's likes into the new one's session.
+     * [credentials] is the [Innertube.listenerGeneration] the token was read
+     * under; a page fetched across a change of it is dropped.
      */
-    private fun syncLikedMusic(identity: String?, token: String) {
+    private fun syncLikedMusic(identity: String?, credentials: Long, token: String) {
         likedSyncJob?.cancel()
         likedSyncJob = viewModelScope.launch {
+            fun stillOurs() = identity == listenerKey() && Innertube.listenerGeneration == credentials
             YtMusicRepository.syncLikedMusic(token) { next ->
-                if (identity != listenerKey()) {
+                if (!stillOurs()) {
                     null
                 } else {
-                    YtMusicRepository.moreSongs(next).getOrNull()?.also { page ->
+                    YtMusicRepository.moreSongs(next).getOrNull()?.takeIf { stillOurs() }?.also { page ->
                         identity?.let { id -> LikedCache.mergeBottom(id, page.songs) }
                     }
                 }
@@ -3462,7 +3610,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // Spotify has no videos tab, and a filter the request does
                 // not honour is a filter that lies: the pill says one thing
                 // and the list answers another.
-                if (_filter.value == SearchFilter.VIDEOS) _filter.value = SearchFilter.ALL
+                if (_filter.value == SearchFilter.VIDEOS || _filter.value == SearchFilter.LIBRARY) {
+                    _filter.value = SearchFilter.ALL
+                }
                 submitSearch()
             }
         }
@@ -3574,6 +3724,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun startSearchPipeline() = viewModelScope.launch {
         searchRequests
             .collectLatest { request ->
+                // Library is the account's own songs: signed out there is
+                // nothing to search, so it says why rather than asking. Ahead
+                // of the cache, so a signed-out page can't show an earlier
+                // account's library.
+                if (request.filter.requiresAuth && !_signedIn.value) {
+                    _results.value = UiState.Error(text(R.string.library_sign_in_description))
+                    return@collectLatest
+                }
                 val key = cacheKey(request.query, request.filter, request.source)
                 // Something to look at immediately: the exact answer if this
                 // query has been run before, otherwise the closest earlier
@@ -3997,6 +4155,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     companion object {
+        /** [HomeFeedCache]'s name for Radio's Your Mixes: kept like a page of one shelf. */
+        private const val RADIO_MIXES_CACHE = "radio_mixes"
+
         /** How many tracks YouTube's edit endpoint takes in one request. */
         private const val ADD_TO_PLAYLIST_BATCH = 50
 
@@ -4152,6 +4313,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             songs = UiState.Loading,
             type = resolved,
         )
+        val opened = markDetailOpened(browseId)
         viewModelScope.launch {
             var sections = emptyList<HomeShelf>()
             // Callers that open an artist from a track — the player, the
@@ -4213,6 +4375,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     browseId,
                 )
             }
+            // Who the page was opened for: its continuation walk belongs to that
+            // listener, even when the first response lands after a switch. Read
+            // once the session scope is in: installing it right after an account
+            // switch can move the listener, and the page's own browse waits for
+            // it anyway — capturing earlier would drop its continuation.
+            // Already-resolved scopes return at once; on-device pages skip it.
+            if (localPlaylist == null && remote == null && !browseId.startsWith("local:")) {
+                Innertube.ensureSessionScope()
+            }
+            val openedFor = listenerKey()
+            val credentials = Innertube.listenerGeneration
             val state = when {
                 localPlaylist != null -> {
                     name = localPlaylist.title
@@ -4368,7 +4541,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
             // Only once the first page is on screen: [fillIn] appends to it,
             // and has nothing to append to before this.
-            more?.let { fillIn(browseId, it, thumbnailUrl ?: artwork) }
+            if (listenerKey() == openedFor) {
+                more?.let { fillIn(browseId, opened, it, thumbnailUrl ?: artwork, openedFor, credentials) }
+            }
         }
     }
 
@@ -4747,7 +4922,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * and asked for as the listener scrolls to the end of the list — see
      * [loadMoreDetail].
      */
-    private fun fillIn(browseId: String, token: String, artworkFallback: String?) {
+    private fun fillIn(
+        browseId: String,
+        opened: Long,
+        token: String,
+        artworkFallback: String?,
+        listener: String?,
+        credentials: Long,
+    ) {
         val endless = browseId.isEndlessMix()
         // Every id the chain has produced so far, first page included, for the
         // loop guard below. Only the request side touches it, one page at a time.
@@ -4759,10 +4941,25 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             (page.songs as? UiState.Success)?.data?.mapTo(seen) { it.videoId }
             page.suggestedSongs.mapTo(seenSuggested) { it.videoId }
         }
+        // The page stays on the stack across a profile or account switch, so a
+        // walk (and its retries) still running then must neither ask for the
+        // new listener nor publish into its page or Liked Music cache. The
+        // credentials too: validating another account swaps them before the
+        // listener key moves. And only into the page instance it was started
+        // for: closed, or closed and opened again, ends it.
+        fun stillOurs() = listenerKey() == listener &&
+            Innertube.listenerGeneration == credentials &&
+            isDetailOpen(browseId, opened)
         viewModelScope.launch {
             followContinuations(
                 token = token,
-                fetch = { next -> YtMusicRepository.moreSongs(next).getOrNull() },
+                // One dropped request used to end the walk for good, leaving a
+                // long playlist cut short on screen and in its menu.
+                fetch = { next ->
+                    retryingOrNull(FILL_IN_RETRIES_MS, stop = { !stillOurs() }) {
+                        YtMusicRepository.moreSongs(next).getOrNull()
+                    }?.takeIf { stillOurs() }
+                },
                 nextToken = { fetched ->
                     // A page with nothing new on it means the feed has looped
                     // back rather than run dry with a token still attached.
@@ -4777,6 +4974,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // this no longer adds to the time the full list takes.
                 holdFirstMillis = 150,
             ) { batch ->
+                if (!stillOurs()) return@followContinuations false
                 val stack = _detailStack.value
                 val index = stack.indexOfFirst { it.browseId == browseId }
                 if (index < 0) return@followContinuations false
@@ -4800,7 +4998,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     addedSuggested += rawSuggested.withoutBlockedArtists().withArtwork(artworkFallback)
                 }
                 if (browseId == YtMusicRepository.LIKED_MUSIC && added.isNotEmpty()) {
-                    LikedCache.mergeBottom(listenerKey(), added)
+                    LikedCache.mergeBottom(listener, added)
                 }
                 if (anyNew) {
                     _detailStack.value = stack.toMutableList().also {
@@ -5769,3 +5967,25 @@ internal data class LyricsLookupKey(
     val order: List<LyricsSource>,
     val prioritizeSyllableSync: Boolean,
 )
+
+/** Waits before each retry of a page's fill-in, as the service's own loader waits. */
+private val FILL_IN_RETRIES_MS = longArrayOf(2_000L, 5_000L, 15_000L)
+
+/**
+ * [attempt], then again after each of [waitsMs] while it answers null; null if
+ * it never answers, or as soon as [stop] says there is no one left to answer for.
+ */
+internal suspend fun <T : Any> retryingOrNull(
+    waitsMs: LongArray,
+    stop: () -> Boolean = { false },
+    attempt: suspend () -> T?,
+): T? {
+    if (stop()) return null
+    attempt()?.let { return it }
+    for (wait in waitsMs) {
+        delay(wait)
+        if (stop()) return null
+        attempt()?.let { return it }
+    }
+    return null
+}

@@ -34,6 +34,7 @@ import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.artworkAt
+import com.music.bitchord.data.model.youTubeThumbnailFallback
 import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.TrackMatcher
@@ -440,10 +441,11 @@ fun rememberPlayerReads(controller: MediaController?): PlayerReads {
             }
             // Synced here too, so seeking while paused or buffering still moves
             // the scrubber (the poll loop only runs on play).
-            position.report(player.currentPosition.coerceAtLeast(0L))
+            val playing = player.isPlaying
+            position.report(player.currentPosition.coerceAtLeast(0L), isPlaying = playing)
             state = state.copy(
                 song = item?.toSong(),
-                isPlaying = player.isPlaying,
+                isPlaying = playing,
                 durationMs = playbackDurationMs(
                     player.duration,
                     item?.claimedDurationMs() ?: 0L,
@@ -512,7 +514,7 @@ fun rememberPlayerReads(controller: MediaController?): PlayerReads {
     LaunchedEffect(controller, foreground) {
         if (controller == null || !foreground) return@LaunchedEffect
         pollWhilePlaying(isPlaying = { state.isPlaying }, intervalMs = 500) {
-            position.report(controller.currentPosition.coerceAtLeast(0L))
+            position.report(controller.currentPosition.coerceAtLeast(0L), isPlaying = controller.isPlaying)
             val duration = playbackDurationMs(
                 controller.duration,
                 controller.currentMediaItem?.claimedDurationMs() ?: 0L,
@@ -913,7 +915,14 @@ fun Song.toMediaItem(parentBrowseId: String? = null, playLocalFile: Boolean = tr
             // reach for the app's own full-colour icon, and the whole old
             // logo ends up drawn where a sleeve should be. See
             // [FallbackArtwork].
-            .setArtworkUri(artworkAt(NOTIFICATION_ART_PX)?.toUri() ?: FallbackArtwork.uri())
+            // Media3 loads this itself, with no way to try a second URL, so a
+            // YouTube cover goes at the size every video has: a larger one is a
+            // 404 for an old upload, and a blank lock screen. It is also read
+            // back as the queue row's thumbnail, which wants no 1280px copy.
+            .setArtworkUri(
+                artworkAt(NOTIFICATION_ART_PX)?.let { youTubeThumbnailFallback(it) ?: it }?.toUri()
+                    ?: FallbackArtwork.uri(),
+            )
             // System media surfaces (One UI's Now Bar, Android Auto, Assistant)
             // classify a session by its media type; untyped sessions get treated
             // as generic audio and lose the music-specific card.
@@ -1075,7 +1084,8 @@ fun mediaIdIn(uri: Uri): String? = if (uri.authority == "source") {
 }
 
 /**
- * Replaces the queue with [songs] and starts it.
+ * Replaces the queue with [songs] and starts it. Returns false when nothing
+ * was installed: [songs] was empty or a newer play request superseded this one.
  *
  * Suspending because of the mapping: [toMediaItem] is not the cheap struct copy
  * it looks like — it builds a URI and a metadata bundle per track, and asks
@@ -1086,8 +1096,13 @@ fun mediaIdIn(uri: Uri): String? = if (uri.authority == "source") {
  * starts. Built off the main thread and handed to the player back on it, which
  * is where Media3 requires the call to be made.
  */
-suspend fun MediaController.playSongs(songs: List<Song>, startIndex: Int) {
-    if (songs.isEmpty()) return
+suspend fun MediaController.playSongs(
+    songs: List<Song>,
+    startIndex: Int,
+    /** False once a newer play request has started; the queue is then left to it. */
+    stillCurrent: () -> Boolean = { true },
+): Boolean {
+    if (songs.isEmpty()) return false
     // A queue started while shuffle is on goes in shuffled rather than being
     // played out of order — see [QueueShuffle]. The track the user picked still
     // leads, so it ends up at the top instead of at [startIndex].
@@ -1100,9 +1115,12 @@ suspend fun MediaController.playSongs(songs: List<Song>, startIndex: Int) {
         }
         queue.map { it.toMediaItem() }
     }
+    if (!stillCurrent()) return false
+    if (shuffled) QueueShuffle.rememberStartingOrder(songs)
     setMediaItems(items, queueStartIndex(startIndex, items.size, shuffled), 0L)
     prepare()
     play()
+    return true
 }
 
 /**

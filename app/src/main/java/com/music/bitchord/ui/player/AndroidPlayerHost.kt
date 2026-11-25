@@ -20,6 +20,8 @@ import com.music.bitchord.data.canvas.CanvasRepository
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsTranslation
+import com.music.bitchord.ui.replay.year.BestPartStart
+import com.music.bitchord.ui.replay.year.BestParts
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.Song
@@ -28,17 +30,14 @@ import com.music.bitchord.data.settings.LastPlayerScreen
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.playback.AudioOutputStatus
+import com.music.bitchord.playback.AutoMixVisualFeed
 import com.music.bitchord.playback.AudioRouting
 import com.music.bitchord.playback.audio.ListenerVolumePolicy
 import com.music.bitchord.playback.audio.MediaVolumeProbe
-import com.music.bitchord.playback.AutomixAnalysisDemand
-import com.music.bitchord.playback.AutomixPreview
-import com.music.bitchord.playback.AutomixProfiles
 import com.music.bitchord.playback.QueueSearch
 import com.music.bitchord.playback.youtubeSeedFor
 import com.music.bitchord.playback.QueueSuggestion
 import com.music.bitchord.playback.cast.CastController
-import com.music.bitchord.playback.smart.AutomixOverride
 import dev.chrisbanes.haze.HazeState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -64,6 +63,18 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val main = Handler(Looper.getMainLooper())
 
+    override val autoMixVisualState get() = AutoMixVisualFeed.state
+
+    override fun onAutoMixScrubIntent() = AutoMixVisualFeed.cancel()
+
+    @Composable
+    override fun autoMixIncomingReveal(
+        eased: () -> Float,
+        reducedMotion: () -> Boolean,
+        generation: Long,
+        blur: Boolean,
+    ): Modifier = androidAutoMixIncomingReveal(eased, reducedMotion, generation, blur)
+
     override val settings: PlayerSettingsSource = object : PlayerSettingsSource {
         override val animatedCanvas get() = AppSettings.animatedCanvas
         override val audioQualityCellular get() = AppSettings.audioQualityCellular
@@ -71,6 +82,7 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
         override val canvasOverCellular get() = AppSettings.canvasOverCellular
         override val fullBleedArtwork get() = AppSettings.fullBleedArtwork
         override val zoomOutAlbumArt get() = AppSettings.zoomOutAlbumArt
+        override val showTotalDuration get() = AppSettings.showTotalDuration
         override val hideSongStatus get() = AppSettings.hideSongStatus
         override val hideStatusBar get() = AppSettings.hideStatusBarInPlayer
         override val hideVolumeBar get() = AppSettings.hideVolumeBar
@@ -88,13 +100,14 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
         override val reduceAnimation get() = AppSettings.reduceAnimation
         override val reduceDynamicBlur get() = AppSettings.reduceDynamicBlur
         override val showNerdStats get() = AppSettings.showNerdStats
+        override val showBestPart get() = AppSettings.showBestPart
         override val showNextTrackStatus get() = AppSettings.showNextTrackStatus
         override val showUpgradeBadge get() = AppSettings.showUpgradeBadge
         override val showLosslessBadge get() = AppSettings.showLosslessBadge
         override val showHiResBadge get() = AppSettings.showHiResBadge
         override val smartAnalysis get() = AppSettings.smartAnalysis
-        override val automixPanel get() = AppSettings.automixPanel
         override val smartFadeEnabled get() = AppSettings.smartFadeEnabled
+        override val autoMixArtwork get() = AppSettings.autoMixArtwork
         override val smartMixInProgress get() = AppSettings.smartMixInProgress
         override val smartMixBlend get() = AppSettings.smartMixBlend
         override val smartTransitionWindow get() = AppSettings.smartTransitionWindow
@@ -109,29 +122,24 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
         override fun setFullBleedArtwork(value: Boolean) = AppSettings.setFullBleedArtwork(value)
         override fun setZoomOutAlbumArt(value: Boolean) = AppSettings.setZoomOutAlbumArt(value)
 
-        // The listener's own choice, kept with the song. The store is the
-        // one place it lives, so the panel and the planner cannot disagree
-        // about what was chosen.
-        override fun setAutomixProfile(trackId: String, override: AutomixOverride) =
-            AutomixProfiles.set(trackId, override)
-
-        override fun clearAutomixProfile(trackId: String) = AutomixProfiles.clear(trackId)
-
-        // The panel's preview of the transition. The engine that can play it
-        // lives in the playback service, which leaves a handler for the panel
-        // to ask.
-        override fun previewAutomix(start: Boolean) = AutomixPreview.request(start)
-
-        // The panel's demand for the analysis it is waiting on. The engine
-        // that can fetch and measure it lives in the playback service, which
-        // leaves a handler for the panel to ask — the same arrangement as the
-        // preview above.
-        override fun forceAutomixAnalysis() = AutomixAnalysisDemand.request()
     }
 
     override fun cachedCanvas(song: Song): CanvasArtwork? = CanvasRepository.cached(song)
 
     override suspend fun canvasFor(song: Song): CanvasArtwork? = CanvasRepository.canvasFor(song)
+
+    override suspend fun bestPartMs(
+        song: Song,
+        durationMs: Long,
+        lyrics: suspend () -> List<LyricLine>?,
+    ): Long? {
+        // A file on the phone has no replay curve, and its own chorus is not
+        // what the button promises.
+        if (song.localUri != null) return null
+        return BestParts.startFor(app, song, durationMs, lyrics)
+            .takeIf { it.source != BestPartStart.Source.FALLBACK }
+            ?.startMs
+    }
 
     @Composable
     override fun CanvasVideo(spec: CanvasVideoSpec, modifier: Modifier) = AndroidCanvasVideo(spec, modifier)

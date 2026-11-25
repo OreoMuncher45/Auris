@@ -110,13 +110,27 @@ class DspChain(
         }
 
         sing.process(block)
-        spatial.process(block)
+        val widened = spatial.process(block)
         simAtmos.process(block)
         equalizer.process(block)
         jamesDsp.process(block)
         transition.process(block)
+        // The spatial widener's makeup gain does not cover every widened peak,
+        // and it leaves those overs for the stages after it to see; the
+        // loudness stage's limiter is what catches whatever survives, so it
+        // stays engaged for every widened block even when normalization has
+        // nothing to do. Taken from the block itself rather than re-reading
+        // the switch, which can flip while the stages in between run.
+        loudness.holdLimiter = widened || mixing
         loudness.process(block)
     }
+
+    /**
+     * Set by the sink for each block of an Automix loop mix: the renderer sums
+     * two songs with no peak limit of its own, so the limiter has to stay on
+     * for those blocks too. Audio thread only.
+     */
+    var mixing = false
 
     @Suppress("DEPRECATION")
     override fun flush() {

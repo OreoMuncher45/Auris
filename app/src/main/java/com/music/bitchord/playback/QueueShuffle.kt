@@ -65,18 +65,38 @@ object QueueShuffle {
     }
 
     /**
+     * [enableForNextQueue]'s counterpart, for the Play button beside it: an
+     * album or playlist played from the top plays in its own order, whatever
+     * shuffle was left on from the last queue.
+     */
+    fun disableForNextQueue() {
+        original = emptyList()
+        _enabled.value = false
+        AppSettings.setShuffleEnabled(false)
+    }
+
+    /**
      * The order a queue should go in when it is started while shuffle is on:
-     * the track the user picked leads, the rest follow at random. The order it
-     * arrived in is remembered, so turning shuffle off restores it.
+     * the track the user picked leads, the rest follow at random. Pure: the
+     * caller saves the order it arrived in with [rememberStartingOrder] once
+     * that queue is actually installed, so a superseded build can't overwrite
+     * the order shuffle-off restores.
      */
     fun startingOrder(songs: List<Song>, startIndex: Int): List<Song> {
-        original = songs.map { it.queueEntryId ?: it.videoId }
         val rest = songs.filterIndexed { i, _ -> i != startIndex }
         val userQueue = rest.filter { it.queueTier == QueueTier.USER_QUEUE }
         val context = rest.filter { it.queueTier == QueueTier.CONTEXT }.shuffled()
         val autoplay = rest.filter { it.queueTier == QueueTier.AUTOPLAY }.shuffled()
         return listOf(songs[startIndex]) + userQueue + context + autoplay
     }
+
+    /** Remembers [songs]' own order as the one turning shuffle off restores. */
+    fun rememberStartingOrder(songs: List<Song>) {
+        original = songs.map { it.queueEntryId ?: it.videoId }
+    }
+
+    /** The saved pre-shuffle order, for tests. */
+    internal val savedOrder: List<String> get() = original
 
     /**
      * Rearranges everything after the playing track. That track keeps playing,

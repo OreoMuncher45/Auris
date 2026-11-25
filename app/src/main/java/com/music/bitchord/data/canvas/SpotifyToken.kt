@@ -31,6 +31,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.Base64
+import com.music.bitchord.data.web.QuietWebChromeClient
 
 /**
  * The bearer token behind Spotify's own web player, minted from the
@@ -449,6 +450,7 @@ internal object SpotifyToken {
                 settings.userAgentString = CANVAS_UA
                 cookieManager.setAcceptThirdPartyCookies(this, true)
                 addJavascriptInterface(TokenBridge(deferred, acceptAnonymous), BRIDGE_NAME)
+                webChromeClient = QuietWebChromeClient()
 
                 webViewClient = object : WebViewClient() {
                     override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {

@@ -593,7 +593,7 @@ object TrackMatcher {
             }
             coreText.replace(Regex("""[\s\p{Punct}・～〜ー-]+"""), "")
         } else {
-            words.joinToString("")
+            foldLatin(words.joinToString(""))
         }
 
         return TitleParts(
@@ -682,6 +682,39 @@ object TrackMatcher {
             .replace("&", " and ")
             .replace(CJK_OPEN, "(")
             .replace(CJK_CLOSE, ")")
+
+    /**
+     * Latin letters without their accents, for comparing only: "Şımarık" and
+     * the "Simarik" an upload without a Turkish keyboard files it under are
+     * one title, and "Müslüm Gürses" is "Muslum Gurses". Turkish dotless ı has
+     * no decomposition, so it is mapped by hand.
+     *
+     * Latin only. Other scripts carry vowels as combining marks (Hindi's
+     * matras), and dropping those would make different words equal. Queries
+     * keep the accents; this is never sent anywhere.
+     */
+    internal fun foldLatin(text: String): String = buildString(text.length) {
+        // Whether the last letter was Latin: a mark already split off it (the
+        // dot lowercasing leaves after "İ") goes too, a mark on another
+        // script's letter stays.
+        var afterLatin = false
+        text.forEach { c ->
+            val mark = Character.getType(c) == Character.NON_SPACING_MARK.toInt()
+            when {
+                mark && afterLatin -> Unit
+                mark -> append(c)
+                c == 'ı' -> { append('i'); afterLatin = true }
+                c.code < 0x80 -> { append(c); afterLatin = c.isLetter() }
+                Character.UnicodeScript.of(c.code) != Character.UnicodeScript.LATIN -> { append(c); afterLatin = false }
+                else -> {
+                    Normalizer.normalize(c.toString(), Normalizer.Form.NFD).forEach {
+                        if (Character.getType(it) != Character.NON_SPACING_MARK.toInt()) append(it)
+                    }
+                    afterLatin = true
+                }
+            }
+        }
+    }
 
     /**
      * Latin that actually files the track. A head holding nothing but a take
@@ -816,9 +849,11 @@ object TrackMatcher {
      * act genuinely called "... Cover ..." still matches itself.
      */
     internal fun isImitationCredit(wanted: String, got: String): Boolean {
-        val have = normalize(got)
+        // Folded as [artistNames] is, or an unaccented "Muslum Gurses Cover"
+        // would share a credit with "Müslüm Gürses" yet not be named after it.
+        val have = foldLatin(normalize(got))
         if (have.isBlank()) return false
-        val want = normalize(wanted)
+        val want = foldLatin(normalize(wanted))
         // Longest first, so "Cover Drive" is taken off before a shorter
         // requested "Drive" could leave a stray "cover" behind.
         val wantNames = want.split(ARTIST_SEPARATORS).map(::creditWords).filter { it.isNotEmpty() }
@@ -866,7 +901,7 @@ object TrackMatcher {
      * "Atif Aslam, Tulsi Kumar". Single letters go — an initialled
      * "A. R. Rahman" and a plain "AR Rahman" are the same person.
      */
-    internal fun artistNames(value: String): Set<List<String>> = normalize(value)
+    internal fun artistNames(value: String): Set<List<String>> = foldLatin(normalize(value))
         .split(ARTIST_SEPARATORS)
         .map { name ->
             name.split(WORD_SPLIT)

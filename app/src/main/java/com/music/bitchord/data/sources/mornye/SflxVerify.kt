@@ -1,5 +1,6 @@
 package com.music.bitchord.data.sources.mornye
 
+import com.music.bitchord.data.web.QuietWebChromeClient
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
@@ -223,6 +224,8 @@ class SflxVerifyActivity : AppCompatActivity() {
             settings.loadWithOverviewMode = true
             settings.useWideViewPort = true
             settings.setSupportMultipleWindows(true)
+            // The page's console stays out of logcat, as on every WebView here.
+            webChromeClient = QuietWebChromeClient()
             settings.javaScriptCanOpenWindowsAutomatically = true
             CookieManager.getInstance().setAcceptCookie(true)
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)

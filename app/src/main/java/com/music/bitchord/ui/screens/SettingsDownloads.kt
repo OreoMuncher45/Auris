@@ -14,6 +14,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -24,6 +25,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -31,6 +33,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.R
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.DownloadQuality
+import com.music.bitchord.data.YtMusicRepository
+import com.music.bitchord.download.DownloadedPlaylistSync
+import com.music.bitchord.download.Downloads
 
 /** The Downloads category. */
 @Composable
@@ -43,11 +48,15 @@ internal fun DownloadsSettings(
     val concurrentDownloads by AppSettings.concurrentDownloads.collectAsStateWithLifecycle()
     val wifiOnlyDownloads by AppSettings.wifiOnlyDownloads.collectAsStateWithLifecycle()
     val exportDownloads by AppSettings.exportDownloads.collectAsStateWithLifecycle()
+    val downloadLikedSongs by AppSettings.downloadLikedSongs.collectAsStateWithLifecycle()
+    val collections by Downloads.collections.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     SearchableSettingsGroup(search, SettingsCategory.DOWNLOADS) {
         // Keeping a playlist whole is asked for on the playlist's own page —
         // a switch beside its tracks, off unless the listener turns it on —
-        // so there is no global row for it here. What is here is how a
-        // download is made and where it is allowed to happen.
+        // so there is no global row for it here. Liked Music is the one
+        // exception, below. What else is here is how a download is made and
+        // where it is allowed to happen.
         val downloadQualityTitle = stringResource(R.string.download_quality)
         row(downloadQualityTitle, "offline", "lossless") {
             SettingsRow(
@@ -77,6 +86,27 @@ internal fun DownloadsSettings(
                 checked = exportDownloads,
                 onCheckedChange = AppSettings::setExportDownloads,
                 subtitle = "Music/Auris".takeIf { exportDownloads },
+            )
+        }
+        // The one playlist that gets a row here: it is the one every listener
+        // has, and the one whose new songs arrive by a tap on a heart anywhere
+        // in the app rather than on its page. On while either this or the
+        // Liked Music page's own switch says so — they are the same promise.
+        val likedRecord = Downloads.collectionFor(YtMusicRepository.LIKED_MUSIC, collections)
+        val keepLiked = downloadLikedSongs || likedRecord?.autoDownload == true
+        val downloadLikedTitle = stringResource(R.string.download_liked_songs)
+        row(downloadLikedTitle, "liked", "favorites", "offline", "automatic") {
+            SettingsRow(
+                icon = Icons.Rounded.Favorite,
+                title = downloadLikedTitle,
+                subtitle = stringResource(R.string.download_liked_songs_subtitle),
+                trailing = {
+                    SettingsSwitch(
+                        checked = keepLiked,
+                        onCheckedChange = { DownloadedPlaylistSync.setKeepLiked(context, it) },
+                    )
+                },
+                onClick = { DownloadedPlaylistSync.setKeepLiked(context, !keepLiked) },
             )
         }
         // How many of them run at once. The width used to be a constant,

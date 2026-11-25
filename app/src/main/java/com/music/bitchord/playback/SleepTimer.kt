@@ -57,4 +57,27 @@ object SleepTimer {
     /** How long is left, or null when no timer is running. */
     fun remainingMs(): Long? =
         deadline.value?.let { (it - SystemClock.elapsedRealtime()).coerceAtLeast(0L) }
+
+    /** How long the fade-out before a timed pause lasts, when it is on. */
+    const val FADE_OUT_DURATION_MS = 30_000L
+
+    /**
+     * Whether the timer's fade-out is running. While it is, Automix and the
+     * crossfade start no new blend: the fade owns the player's volume, and a
+     * blend would bring the next track in at full volume over it. Written by
+     * [PlaybackService], read on the crossfade's tick, so a plain flag.
+     */
+    @Volatile
+    var fadingOut: Boolean = false
+
+    /**
+     * The volume for [remainingMs] before the deadline, over a fade lasting
+     * [fadeMs]: full until the fade starts, then down in a straight line to
+     * silence at the deadline.
+     */
+    fun fadeVolume(remainingMs: Long, fadeMs: Long = FADE_OUT_DURATION_MS): Float {
+        if (remainingMs >= fadeMs) return 1f
+        if (remainingMs <= 0L || fadeMs <= 0L) return 0f
+        return (remainingMs.toFloat() / fadeMs).coerceIn(0f, 1f)
+    }
 }

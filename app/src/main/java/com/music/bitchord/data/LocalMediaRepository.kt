@@ -88,7 +88,6 @@ object LocalMediaRepository {
                     MediaStore.Audio.Media.DISPLAY_NAME,
                     MediaStore.Audio.Media.RELATIVE_PATH,
                     MediaStore.Audio.Media.ALBUM,
-                    MediaStore.Audio.Media.ALBUM_ID,
                     MediaStore.Audio.Media.DATE_ADDED,
                     MediaStore.Audio.Media.DATE_MODIFIED,
                 )
@@ -105,23 +104,16 @@ object LocalMediaRepository {
                     val idCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
                     val nameCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DISPLAY_NAME)
                     val albumCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM)
-                    val albumIdCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM_ID)
                     val dateAddedCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_ADDED)
                     val dateModifiedCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_MODIFIED)
-                    val albumArtBaseUri = Uri.parse("content://media/external/audio/albumart")
 
                     while (cursor.moveToNext()) {
                         val id = cursor.getLong(idCol)
                         val name = cursor.getString(nameCol) ?: continue
                         val contentUri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id).toString()
-                        val albumId = cursor.getLong(albumIdCol)
                         val tags = ScannedTags(
                             albumName = cursor.getString(albumCol).cleanTag(),
-                            artworkUrl = if (albumId > 0) {
-                                ContentUris.withAppendedId(albumArtBaseUri, albumId).toString()
-                            } else {
-                                null
-                            },
+                            artworkUrl = trackArtworkUrl(contentUri),
                             dateAddedSeconds = cursor.getLong(dateAddedCol),
                             dateModifiedSeconds = cursor.getLong(dateModifiedCol),
                         )
@@ -210,11 +202,11 @@ object LocalMediaRepository {
             MediaStore.Audio.Media.TITLE,
             MediaStore.Audio.Media.ARTIST,
             MediaStore.Audio.Media.ALBUM,
-            MediaStore.Audio.Media.ALBUM_ID,
             MediaStore.Audio.Media.DURATION,
             MediaStore.Audio.Media.DATA,
             MediaStore.Audio.Media.DATE_ADDED,
             MediaStore.Audio.Media.DATE_MODIFIED,
+            MediaStore.Audio.Media.TRACK,
         )
 
         val filterNonMusic = AppSettings.filterNonMusicAudio.value
@@ -261,13 +253,11 @@ object LocalMediaRepository {
                 val titleCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
                 val artistCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)
                 val albumCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM)
-                val albumIdCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM_ID)
                 val durationCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
                 val dataCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATA)
                 val dateAddedCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_ADDED)
                 val dateModifiedCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_MODIFIED)
-
-                val albumArtBaseUri = Uri.parse("content://media/external/audio/albumart")
+                val trackCol = cursor.getColumnIndex(MediaStore.Audio.Media.TRACK)
 
                 while (cursor.moveToNext()) {
                     val id = cursor.getLong(idCol)
@@ -275,7 +265,6 @@ object LocalMediaRepository {
                     val rawTitle = cursor.getString(titleCol)
                     val rawArtist = cursor.getString(artistCol)
                     val rawAlbum = cursor.getString(albumCol)
-                    val albumId = cursor.getLong(albumIdCol)
                     val durationMs = cursor.getLong(durationCol)
                     val path = cursor.getString(dataCol)
 
@@ -288,8 +277,9 @@ object LocalMediaRepository {
                         ?: "Track $id"
                     val artist = rawArtist.takeUnless { it.isNullOrBlank() || it == "<unknown>" } ?: "Unknown Artist"
                     val albumName = rawAlbum.takeUnless { it.isNullOrBlank() || it == "<unknown>" }
-                    val artworkUrl = if (albumId > 0) ContentUris.withAppendedId(albumArtBaseUri, albumId).toString() else null
+                    val artworkUrl = trackArtworkUrl(contentUri)
                     val durationText = durationMs.takeIf { it > 0 }?.let(::formatDuration)
+                    val rawTrack = if (trackCol >= 0 && !cursor.isNull(trackCol)) cursor.getInt(trackCol) else null
 
                     songs.add(
                         Song(
@@ -303,6 +293,8 @@ object LocalMediaRepository {
                             localPath = path,
                             localDateAddedSeconds = cursor.getLong(dateAddedCol),
                             localDateModifiedSeconds = cursor.getLong(dateModifiedCol),
+                            trackNumber = trackNumberFromMediaStore(rawTrack),
+                            discNumber = discNumberFromMediaStore(rawTrack),
                         )
                     )
                 }
@@ -311,6 +303,16 @@ object LocalMediaRepository {
 
         songs
     }
+
+    /**
+     * The cover for one track, not its album. MediaStore files every untagged
+     * song under an album named after its folder ("Music", "Download"), so
+     * `audio/albumart/<albumId>` handed every one of them the first file's
+     * picture. `audio/media/<id>/albumart` reads the art embedded in that very
+     * file, falling back to a cover image in its folder as the album URI did.
+     * Plain string work, so the unit tests' stub Uri never gets in the way.
+     */
+    internal fun trackArtworkUrl(contentUri: String): String = "$contentUri/albumart"
 
     /** Human-readable path for the folder setting without exposing provider internals. */
     fun selectedFolderLabel(treeUri: String): String? = selectedFolder(treeUri)?.label
@@ -401,6 +403,8 @@ object LocalMediaRepository {
         var artist = "Unknown Artist"
         var albumName: String? = null
         var durationText: String? = null
+        var trackNumber: Int? = null
+        var discNumber: Int? = null
 
         runCatching {
             val retriever = MediaMetadataRetriever()
@@ -409,6 +413,8 @@ object LocalMediaRepository {
             val metaArtist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
             val metaAlbum = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)
             val metaDur = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
+            trackNumber = numberFromTag(retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER))
+            discNumber = numberFromTag(retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DISC_NUMBER))
 
             if (!metaTitle.isNullOrBlank()) title = metaTitle
             if (!metaArtist.isNullOrBlank()) artist = metaArtist
@@ -427,7 +433,34 @@ object LocalMediaRepository {
             localUri = uriStr,
             localDateAddedSeconds = scanned?.dateAddedSeconds,
             localDateModifiedSeconds = scanned?.dateModifiedSeconds,
+            trackNumber = trackNumber,
+            discNumber = discNumber,
         )
+    }
+
+    /**
+     * MediaStore packs the disc into the same int (`disc * 1000 + track`), so
+     * 1003 is disc 1 track 3 rather than track 1003. The track half; null when
+     * the scanner wrote nothing usable.
+     */
+    internal fun trackNumberFromMediaStore(raw: Int?): Int? {
+        if (raw == null || raw <= 0) return null
+        return (raw % 1000).takeIf { it in 1..999 }
+    }
+
+    /** The disc half of MediaStore's packed `TRACK`; null when it names no disc. */
+    internal fun discNumberFromMediaStore(raw: Int?): Int? {
+        if (raw == null || raw < 1000) return null
+        return (raw / 1000).takeIf { it >= 1 }
+    }
+
+    /**
+     * A track or disc tag as the retriever gives it, `"3"` or `"3/12"`. The
+     * head; null when it isn't a number.
+     */
+    internal fun numberFromTag(raw: String?): Int? {
+        val head = raw?.substringBefore('/')?.trim() ?: return null
+        return head.toIntOrNull()?.takeIf { it in 1..999 }
     }
 
     private fun formatDuration(ms: Long): String {

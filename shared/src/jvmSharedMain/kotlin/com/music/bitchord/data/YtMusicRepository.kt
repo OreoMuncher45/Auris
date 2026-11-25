@@ -20,6 +20,7 @@ import com.music.bitchord.data.model.PlaylistPrivacy
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.ShelfItem
+import com.music.bitchord.data.model.KeyedMix
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.withQuickPicks
 import com.music.bitchord.data.model.withoutRepeatedRecordings
@@ -27,6 +28,9 @@ import com.music.bitchord.data.model.SongMenu
 import com.music.bitchord.data.model.UserPlaylist
 import com.music.bitchord.data.sources.TrackMatcher
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -276,6 +280,49 @@ object YtMusicRepository {
     }
 
     /**
+     * The cards of the signed-in "Mixed for you" page, each beside its English
+     * title.
+     *
+     * The page says what kind of mix a card is only in its title ("Discover
+     * Mix", "Chill Mix 2"), and YouTube translates those titles. So in another
+     * app language the page is read twice, side by side: once in that language
+     * to show, and once in English to sort by, matched up by the mix's
+     * playlist id, which is the same in both. In English one request serves
+     * for both. If the English read fails, or a card is missing from it, that
+     * card's own title stands in.
+     *
+     * Signed out there are no mixes, and nothing is asked.
+     */
+    suspend fun mixedForYouKeyed(): Result<List<KeyedMix>> = call("mixed-for-you") {
+        if (Innertube.cookie == null) return@call emptyList()
+        coroutineScope {
+            val shown = async {
+                InnertubeParser.parseTwoRowItemsDeep(Innertube.browse(MIXED_FOR_YOU))
+            }
+            val english = if (Innertube.currentLanguage.startsWith("en")) {
+                null
+            } else {
+                async {
+                    try {
+                        InnertubeParser.parseTwoRowItemsDeep(Innertube.browse(MIXED_FOR_YOU, language = "en"))
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Log.w(TAG, "mixedForYou in English failed; sorting by shown titles: ${e.message}")
+                        null
+                    }
+                }
+            }
+            val items = shown.await()
+            val englishTitles = english?.await().orEmpty()
+                .associate { (it.browseId ?: it.title) to it.title }
+            items.map { KeyedMix(it, englishTitles[it.browseId ?: it.title] ?: it.title) }
+        }
+    }
+
+    private const val MIXED_FOR_YOU = "FEmusic_mixed_for_you"
+
+    /**
      * The playlist shelves behind one mood/genre category. This result also
      * supplies its tile artwork, so caching it avoids a second request when a
      * user taps a category whose cover has already appeared.
@@ -347,23 +394,86 @@ object YtMusicRepository {
      */
     suspend fun searchSuggestions(input: String): Result<List<String>> =
         call("suggest") {
-            InnertubeParser.parseSearchSuggestions(Innertube.searchSuggestions(input))
+            InnertubeParser.parseSearchSuggestions(rawSuggestions(input))
         }
 
     /**
-     * Live media results for the typeahead phase — a lightweight search that
-     * returns tracks, artists, and albums so the dropdown can show playable
-     * cards alongside text completions. Uses the ALL filter to get mixed
-     * results quickly; callers may want to limit how many they display.
+     * One `get_search_suggestions` answer per typed input, shared by the
+     * dropdown's text completions ([searchSuggestions]) and its live cards
+     * ([searchTypeahead]): both read the same response, so a keystroke asks
+     * YouTube once rather than twice. Only the latest input is kept — the
+     * field never goes back to an older one without it being typed again.
+     * Run on its own scope so one reader moving on doesn't cancel the other's
+     * answer; a failure isn't kept, so the next ask tries again. The answer is
+     * signed-in and ranked by the account, so it is reused only while
+     * [Innertube.listenerGeneration] is the one it was asked under: comparing
+     * the listener itself would miss a switch away and back while it was out.
+     */
+    private suspend fun rawSuggestions(input: String): JsonObject {
+        val generation = Innertube.listenerGeneration
+        val pending = synchronized(suggestionsLock) {
+            lastSuggestions
+                ?.takeIf { it.input == input && it.generation == generation && !it.answer.isCancelled }?.answer
+                ?: suggestionsScope.async { Innertube.searchSuggestions(input) }
+                    .also { lastSuggestions = PendingSuggestions(input, generation, it) }
+        }
+        return try {
+            pending.await().also {
+                // The request reads the account again when it is built, so a
+                // switch while it was out leaves its account unknown: neither
+                // kept nor handed back as the new account's completions.
+                if (Innertube.listenerGeneration != generation) {
+                    synchronized(suggestionsLock) {
+                        if (lastSuggestions?.answer === pending) lastSuggestions = null
+                    }
+                    throw IllegalStateException("account changed while suggestions were loading")
+                }
+            }
+        } catch (failure: Throwable) {
+            if (failure !is CancellationException || pending.isCancelled) {
+                synchronized(suggestionsLock) {
+                    if (lastSuggestions?.answer === pending) lastSuggestions = null
+                }
+            }
+            throw failure
+        }
+    }
+
+    private class PendingSuggestions(val input: String, val generation: Long, val answer: Deferred<JsonObject>)
+
+    private val suggestionsLock = Any()
+    private var lastSuggestions: PendingSuggestions? = null
+    private val suggestionsScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * Live media results for the typeahead phase: tracks, artists and albums
+     * so the dropdown can show playable cards alongside text completions.
      *
-     * Deliberately unauthenticated: [Innertube.searchTypeahead] strips the
-     * session cookie so YouTube Music does not log each debounced keystroke
-     * to the account's server-side search history. Confirmed searches (Enter /
-     * IME Search / tapping a suggestion) still use the normal authenticated
-     * [searchPage] path and are recorded properly.
+     * Read from the suggestions endpoint first, signed in, the way YouTube
+     * Music's own search box does it. That is the only way to get cards
+     * ranked by the account's listening without filing every debounced
+     * keystroke in its search history: a signed-in `search` records the
+     * query, and an anonymous one answers with what is popular rather than
+     * what this listener plays — which is how the cards came to be full of
+     * songs the user never listens to.
+     *
+     * Only when the suggestions carry no cards (some short or odd prefixes),
+     * or could not be fetched, does it fall back to [Innertube.searchTypeahead],
+     * the anonymous search, so the dropdown still has something to play.
      */
     suspend fun searchTypeahead(input: String): Result<SearchPage> =
         call("typeahead:$input") {
+            val suggestions = try {
+                rawSuggestions(input)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            }
+            val cards = suggestions?.let(InnertubeParser::parseSearchSuggestionEntities).orEmpty()
+                .distinctBy { it.identityKey() }
+                .withoutRepeatedRecordings()
+            if (cards.isNotEmpty()) return@call SearchPage(cards, continuation = null)
             InnertubeParser.parseSearchPage(
                 Innertube.searchTypeahead(input),
                 includeVideos = false,
@@ -1027,7 +1137,7 @@ object YtMusicRepository {
         var response = Innertube.browse(browseId)
         var page = 1
         while (true) {
-            val shelf = InnertubeParser.parsePlaylistShelf(response) ?: break
+            val shelf = InnertubeParser.parsePlaylistShelf(response, byEntry = true) ?: break
             shelf.songs.forEach { song ->
                 val setVideoId = song.setVideoId ?: error("playlist entry without an id")
                 out.putIfAbsent(setVideoId, song)

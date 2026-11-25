@@ -139,6 +139,25 @@ object InnertubeParser {
             }
             .distinct()
 
+    /**
+     * The songs, artists and albums a `music/get_search_suggestions` response
+     * lists under its query strings — YouTube Music's own live cards for a
+     * half-typed query. Asked signed in, YouTube ranks them by what the
+     * account listens to, and the call is not filed in the account's search
+     * history the way a `search` is. Music videos are left out, as on the
+     * All tab.
+     */
+    fun parseSearchSuggestionEntities(response: JsonObject): List<SearchResult> =
+        parseSearchPage(response).rows
+
+    /**
+     * Every card on a page of two-row items, wherever it sits: a carousel on
+     * Home, or the grid of a "More" page such as Mixed for you. For a caller
+     * that wants the cards and not the shelves they came in.
+     */
+    fun parseTwoRowItemsDeep(root: JsonElement): List<ShelfItem> =
+        collectRenderers(root, "musicTwoRowItemRenderer").mapNotNull(::parseTwoRowItem)
+
     /** Depth-first collection of a named renderer, preserving document order. */
     private fun collectRenderers(root: JsonElement, name: String): List<JsonObject> {
         val out = mutableListOf<JsonObject>()
@@ -597,12 +616,32 @@ object InnertubeParser {
      * songs the user added. Returns null off a page with nothing
      * playlist-shaped in scope (an album, say), so callers fall back to the
      * generic walk.
+     *
+     * [byEntry] keeps one row per playlist entry (its `playlistSetVideoId`)
+     * rather than per recording, so a song added twice comes back twice: a
+     * reorder has to name every entry.
      */
-    fun parsePlaylistShelf(root: JsonElement): PlaylistShelfPage? {
+    fun parsePlaylistShelf(root: JsonElement, byEntry: Boolean = false): PlaylistShelfPage? {
+        // A later page of the playlist's own rows can also come appended by an
+        // action, with no `continuationContents` at all: the shape a long
+        // playlist's second page now has. Read as nothing, a reorder saw only
+        // the first 100 rows (#947).
+        val appended = root.a("onResponseReceivedActions")?.firstNotNullOfOrNull { it.o("appendContinuationItemsAction") }
         val scope: JsonElement = root.o("continuationContents")
+            ?: appended
             ?: root.o("contents").o("twoColumnBrowseResultsRenderer").o("secondaryContents")
             ?: return null
-        val playlistScope = scope.o("musicPlaylistShelfContinuation")
+        // An appended page's own rows are its direct items: a "Suggestions"
+        // shelf nested among them is read below as suggestions, not as rows.
+        val playlistScope: JsonElement? = scope.o("musicPlaylistShelfContinuation")
+            ?: appended?.takeIf { scope === it }?.let { action ->
+                JsonArray(action.a("continuationItems").orEmpty().filterNot { it.o("musicShelfRenderer") != null })
+                    // Only track rows and the next-page token: anything else (a
+                    // podcast episode) is left to the general reading.
+                    .takeIf { items ->
+                        items.all { it.o("musicResponsiveListItemRenderer") != null || it.o("continuationItemRenderer") != null }
+                    }
+            }
             ?: collectRenderers(scope, "musicPlaylistShelfRenderer").firstOrNull()
         val suggestionShelves = collectRenderers(scope, "musicShelfRenderer")
             .filter { it.o("title").runs() == "Suggestions" }
@@ -612,7 +651,7 @@ object InnertubeParser {
         val songs = playlistScope?.let { playlist ->
             collectRenderers(playlist, "musicResponsiveListItemRenderer")
                 .mapNotNull { parseResponsiveListItem(it, pageCredit) }
-                .distinctBy { it.videoId }
+                .distinctBy { if (byEntry) it.setVideoId ?: it.videoId else it.videoId }
         }.orEmpty()
         val knownSongs = songs.mapTo(HashSet()) { it.videoId }
         val suggested = suggestionShelves

@@ -291,6 +291,10 @@ internal fun BoxScope.PortraitSleeve(
     song: Song,
     spotifyChromeAlpha: () -> Float,
     onDismissBandTop: (Float) -> Unit,
+    /** The Best Part pill, over the foot of the artwork; see [BestPartPill]. */
+    bestPart: @Composable (Modifier) -> Unit = {},
+    /** The Automix reveal's pictures for the playing track, or null; see [AutoMixCoverState]. */
+    autoMixFrames: () -> AutoMixCoverFrames? = { null },
 ) {
     // The cover on its way out until it has gone, then the playing track's —
     // see [TrackChangeMotion.shownKey]. Read here rather than by the screen,
@@ -490,41 +494,13 @@ internal fun BoxScope.PortraitSleeve(
                 )
             }
         }
-        AsyncImage(
-            // Decode at the sleeve's *expanded* size, always.
-            // Coil otherwise sizes the decode to however large
-            // this is when the request goes out — and changing
-            // track from the queue does that while the sleeve is
-            // collapsed to a thumbnail, leaving a thumbnail-sized
-            // bitmap to be blown back up when the queue closes.
-            // Skipping tracks with the transport keeps it sharp
-            // only because the sleeve happens to be full size at
-            // that moment.
-            //
-            // Asked for at the source's own size rather than the
-            // sleeve's: the banner is taller than the card is
-            // wide, and the one bitmap has to serve both shapes
-            // with nothing to upscale between them.
-            model = art.request,
-            contentDescription = null,
-            // Video thumbnails are 16:9; letterboxing them inside
-            // the square sleeve looks like a broken frame.
-            contentScale = ContentScale.Crop,
-            onState = art::onState,
-            // TextureView-backed canvas frames can arrive
-            // before Coil has decoded the sleeve. Alpha alone
-            // doesn't hide this layer for that window: a
-            // TextureView composites through its own hardware
-            // layer, and on some devices that layer wins the
-            // stacking order against a sibling Compose layer
-            // even when that layer's alpha is zero — so the
-            // still image's empty placeholder still shows
-            // through, above a perfectly healthy animated
-            // cover. Skipping the draw call outright leaves
-            // nothing there to composite, in the wrong order
-            // or otherwise; the request stays mounted so
-            // loading still finishes in the background and
-            // [PlayerArtwork.loaded] still flips the moment it does.
+        // The Automix reveal, when one is running or has just finished: the
+        // outgoing and incoming covers, drawn in the picture's place with the
+        // same crop, zoom and corners. The cover's own request stays mounted
+        // underneath, so it goes on loading and [PlayerArtwork.loaded] goes on
+        // flipping, but is not drawn under pictures that cover it.
+        val mixFrames = autoMixFrames()
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 // In the banner, Crop still takes the tighter slice
@@ -696,7 +672,50 @@ internal fun BoxScope.PortraitSleeve(
                         }
                     }
                 },
-        )
+        ) {
+            AsyncImage(
+                // Decode at the sleeve's *expanded* size, always.
+                // Coil otherwise sizes the decode to however large
+                // this is when the request goes out — and changing
+                // track from the queue does that while the sleeve is
+                // collapsed to a thumbnail, leaving a thumbnail-sized
+                // bitmap to be blown back up when the queue closes.
+                // Skipping tracks with the transport keeps it sharp
+                // only because the sleeve happens to be full size at
+                // that moment.
+                //
+                // Asked for at the source's own size rather than the
+                // sleeve's: the banner is taller than the card is
+                // wide, and the one bitmap has to serve both shapes
+                // with nothing to upscale between them.
+                model = art.request,
+                contentDescription = null,
+                // Video thumbnails are 16:9; letterboxing them inside
+                // the square sleeve looks like a broken frame.
+                contentScale = ContentScale.Crop,
+                onState = art::onState,
+                // TextureView-backed canvas frames can arrive
+                // before Coil has decoded the sleeve. Alpha alone
+                // doesn't hide this layer for that window: a
+                // TextureView composites through its own hardware
+                // layer, and on some devices that layer wins the
+                // stacking order against a sibling Compose layer
+                // even when that layer's alpha is zero — so the
+                // still image's empty placeholder still shows
+                // through, above a perfectly healthy animated
+                // cover. Skipping the draw call outright leaves
+                // nothing there to composite, in the wrong order
+                // or otherwise; the request stays mounted so
+                // loading still finishes in the background and
+                // [PlayerArtwork.loaded] still flips the moment it does.
+                modifier = Modifier
+                    .fillMaxSize()
+                    .drawWithContent { if (mixFrames == null) drawContent() },
+            )
+            if (mixFrames != null) {
+                AutoMixCover(mixFrames, Modifier.fillMaxSize(), blur = true) {}
+            }
+        }
 
         // Where the clip plays when it can't have the banner:
         // inside the same clip as the still art, taking the
@@ -785,17 +804,25 @@ internal fun BoxScope.PortraitSleeve(
         // Measured stats stay on the sleeve's bottom centre. They
         // fade away with Spotify's lower control deck rather than
         // following the compact credits to the bottom edge.
+        //
+        // The Best Part pill stacks above them: the column is pinned to the
+        // bottom, so the pill coming and going never moves the stats.
         WhileShown({ !collapsePastHalf() }) {
-            SleeveNerdStats(
-                song = song,
-                isPlaying = isPlaying,
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(horizontal = 10.dp, vertical = 8.dp)
                     .graphicsLayer {
                         alpha = (1f - p() * 2f) * spotifyChromeAlpha()
                     },
-            )
+            ) {
+                bestPart(Modifier.padding(bottom = BEST_PART_INSET))
+                SleeveNerdStats(
+                    song = song,
+                    isPlaying = isPlaying,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                )
+            }
         }
     }
 
@@ -944,3 +971,6 @@ internal fun bannerDissolveRamp(startY: Float, endY: Float): Brush {
     }
     return Brush.verticalGradient(colorStops = colorStops, startY = startY, endY = endY)
 }
+
+/** The Best Part pill's gap above the foot of the artwork. */
+internal val BEST_PART_INSET = 14.dp
