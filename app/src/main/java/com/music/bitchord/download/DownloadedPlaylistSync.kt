@@ -184,10 +184,14 @@ object DownloadedPlaylistSync {
         // where the last one left it.
         scope.launch {
             Downloads.awaitIndexReady()
-            val wanted = AppSettings.downloadLikedSongs.value
-            Downloads.collectionFor(YtMusicRepository.LIKED_MUSIC)
-                ?.takeIf { it.autoDownload != wanted }
-                ?.let { Downloads.setAutoDownloadNewSongs(it.id, wanted) }
+            // Read and written under the collections lock, so two quick toggles
+            // can't each act on the other's stale reading.
+            Downloads.withCollectionsHeld {
+                val wanted = AppSettings.downloadLikedSongs.value
+                Downloads.collectionFor(YtMusicRepository.LIKED_MUSIC)
+                    ?.takeIf { it.autoDownload != wanted }
+                    ?.let { Downloads.setAutoDownloadNewSongs(it.id, wanted) }
+            }
         }
         if (on) refresh(context, YtMusicRepository.LIKED_MUSIC, force = true)
     }

@@ -349,7 +349,28 @@ object Downloads {
      * count it as already queued — it joins the wait and starts the service
      * too, and only a start that succeeds makes it real for either of them.
      */
-    private val starting = HashMap<String, Int>()
+    private val starting = HashMap<String, StartAttempt>()
+
+    /**
+     * One track's unanswered service start: which attempt it is, and how many
+     * enqueue calls wait on it. A [cancel] ends the attempt, so a start that
+     * answers afterwards (or a retry that queued the track again) can never be
+     * settled against the wrong one.
+     */
+    private class StartAttempt(val generation: Long, var waiters: Int)
+    private var startGeneration = 0L
+
+    /** Joins [id]'s unanswered start, or begins one; returns the attempt waited on. Under [lock]. */
+    private fun waitOnStart(id: String, fresh: Boolean): Long {
+        val attempt = starting[id]
+        if (!fresh && attempt != null) {
+            attempt.waiters++
+            return attempt.generation
+        }
+        val created = StartAttempt(++startGeneration, 1)
+        starting[id] = created
+        return created.generation
+    }
 
     /**
      * Settle the service start [ids] were waiting on, under [lock].
@@ -359,23 +380,23 @@ object Downloads {
      * confirmed. Returns the ids that are now really queued or running, and
      * the ids this failure took off the queue.
      */
-    private fun settleStart(ids: Collection<String>, started: Boolean): Pair<Set<String>, List<String>> =
+    private fun settleStart(attempts: Map<String, Long>, started: Boolean): Pair<Set<String>, List<String>> =
         synchronized(lock) {
-            if (started) {
-                ids.forEach { starting.remove(it) }
-                return@synchronized ids.toSet() to emptyList()
-            }
             val dropped = ArrayList<String>()
-            for (id in ids) {
-                val waiting = starting[id] ?: continue
-                if (waiting > 1) {
-                    starting[id] = waiting - 1
+            for ((id, generation) in attempts) {
+                // Cancelled, or replaced by a newer attempt: not this answer's to settle.
+                val attempt = starting[id]?.takeIf { it.generation == generation } ?: continue
+                if (started) {
+                    starting.remove(id)
+                } else if (attempt.waiters > 1) {
+                    attempt.waiters--
                 } else {
                     starting.remove(id)
                     if (pending.remove(id) != null) dropped += id
                 }
             }
-            val kept = ids.filterTo(HashSet()) { it !in starting && (it in pending || it in running) }
+            // Really queued or running, and confirmed: a cancelled id is neither.
+            val kept = attempts.keys.filterTo(HashSet()) { it !in starting && (it in pending || it in running) }
             kept to dropped
         }
 
@@ -537,19 +558,19 @@ object Downloads {
             }
             return
         }
+        var attempt = 0L
         val joined = synchronized(lock) {
-            val waiting = starting[id]
             when {
                 // Another call's start is still unanswered: wait on it too,
                 // and start the service from here as well. See [starting].
-                waiting != null -> {
-                    starting[id] = waiting + 1
+                id in starting -> {
+                    attempt = waitOnStart(id, fresh = false)
                     true
                 }
                 id in pending || id in running -> return
                 else -> {
                     pending[id] = song
-                    starting[id] = 1
+                    attempt = waitOnStart(id, fresh = true)
                     false
                 }
             }
@@ -568,7 +589,7 @@ object Downloads {
             // looking accepted forever.
             Log.w(TAG, "could not start the download service: ${it.message}")
         }.isSuccess
-        settleStart(listOf(id), started).second.forEach { fail(it, "Downloads can't start right now") }
+        settleStart(mapOf(id to attempt), started).second.forEach { fail(it, "Downloads can't start right now") }
     }
 
     /**
@@ -599,6 +620,7 @@ object Downloads {
         val already = mutableSetOf<String>()
         // Queued by another call whose service start is still unanswered.
         val joined = mutableListOf<String>()
+        val attempts = HashMap<String, Long>()
         if (!automatic) clearDeletedByHand(songs.map { it.videoId })
         synchronized(lock) {
             // One ask per track: a list that names a track twice would
@@ -606,10 +628,9 @@ object Downloads {
             // queued — by this very call.
             for (song in songs.distinctBy { it.videoId }) {
                 val id = song.videoId
-                val waiting = starting[id]
-                if (waiting != null) {
+                if (id in starting) {
                     // Not admitted yet, only provisionally queued: see [starting].
-                    starting[id] = waiting + 1
+                    attempts[id] = waitOnStart(id, fresh = false)
                     joined += id
                     continue
                 }
@@ -622,7 +643,7 @@ object Downloads {
                     continue
                 }
                 pending[id] = song
-                starting[id] = 1
+                attempts[id] = waitOnStart(id, fresh = true)
                 accepted += song
             }
         }
@@ -644,13 +665,10 @@ object Downloads {
         }.onFailure {
             Log.w(TAG, "could not start the download service: ${it.message}")
         }.isSuccess
-        val waitedOn = ArrayList<String>(accepted.size + joined.size)
-        accepted.mapTo(waitedOn) { it.videoId }
-        waitedOn += joined
         // Only what a successful start confirmed counts as admitted: a track
         // a failed start took back off the queue is left for the caller to
         // try again, whichever call first queued it.
-        val (kept, dropped) = settleStart(waitedOn, started)
+        val (kept, dropped) = settleStart(attempts, started)
         dropped.forEach { fail(it, "Downloads can't start right now") }
         return already + kept
     }
@@ -695,6 +713,9 @@ object Downloads {
         fromCache.remove(videoId)
         val job = synchronized(lock) {
             pending.remove(videoId)
+            // Ends its unanswered start too: a retry queues afresh, and the old
+            // start's answer settles nothing.
+            starting.remove(videoId)
             if (videoId !in running) return@synchronized null
             running.remove(videoId)
         }
