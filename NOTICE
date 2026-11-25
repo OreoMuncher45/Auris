@@ -81,6 +81,16 @@ ui/components/backdrop/Backdrop.kt and the other engine files. Apache-2.0 is
 permissive and compatible with GPL-3.0.
 
 ================================================================================
+LastWave — GPL-3.0
+================================================================================
+Source:  https://github.com/Clash-Projects/LastWave-native
+License: GPL-3.0
+
+Auris' Bit-Perfect Built-in DAC mode is based on LastWave's Bit-Perfect
+USB DAC output. LastWave is GPL-3.0, and BitChord is GPL-3.0, so the terms are
+compatible.
+
+================================================================================
 SpotiFLAC Mobile — MIT License
 ================================================================================
 Source:  https://github.com/spotiflacapp/SpotiFLAC-Mobile
