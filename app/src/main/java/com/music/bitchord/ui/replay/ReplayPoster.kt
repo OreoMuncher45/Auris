@@ -23,6 +23,8 @@ import com.music.bitchord.R
 import com.music.bitchord.data.model.CARD_ART_PX
 import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.stats.ReplaySummary
+import com.music.bitchord.ui.components.TextScript
+import com.music.bitchord.ui.components.detectScript
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -730,6 +732,23 @@ internal class Fonts(context: Context) {
     private val heavy = font(context, R.font.sf_pro_display_heavy) ?: Typeface.DEFAULT_BOLD
     private val semibold = font(context, R.font.sf_pro_display_semibold) ?: Typeface.DEFAULT_BOLD
     private val regular = font(context, R.font.sf_pro_display_regular) ?: Typeface.DEFAULT
+
+    // The app's own faces for the scripts it sets: Urdu in its bundled nastaliq
+    // and Arabic in its naskh, the same two the player's lyrics panel uses. The
+    // face a run of text is written in is asked for by [scriptOf].
+    private val urdu = font(context, R.font.auris_urdu)
+    private val arabic = font(context, R.font.auris_arabic)
+
+    /**
+     * The face [text] is written in when it is not Latin, or null to keep the
+     * caller's own. A shared verse in Urdu is then set in nastaliq and reads as
+     * Urdu, rather than as a naskh face that breaks its joined letters apart.
+     */
+    fun scriptOf(text: String): Typeface? = when (detectScript(text)) {
+        TextScript.Urdu -> urdu
+        TextScript.Arabic -> arabic
+        TextScript.Latin -> null
+    }
 
     fun heading(size: Float, color: Int) = paint(heavy, size, color)
 

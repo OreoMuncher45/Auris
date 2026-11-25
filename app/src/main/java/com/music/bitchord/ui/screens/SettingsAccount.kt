@@ -1,11 +1,15 @@
 package com.music.bitchord.ui.screens
 
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.Forum
 import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -14,6 +18,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.R
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.model.Account
+import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.ui.components.TextValueAlert
 
 /**
  * The Account category: the account and scrobbling screen, Listen Together,
@@ -55,6 +61,54 @@ internal fun AccountSettings(
                 } ?: stringResource(R.string.listen_together_subtitle),
                 badge = party.members.size.takeIf { party.inParty && it > 1 }?.toString(),
                 onClick = onListenTogether,
+            )
+        }
+        // Apple Music's own account: the public catalog needs no sign-in, but
+        // the listener's library does, and this is where the token that reads
+        // it is pasted. Pasted beats an addon's configured token; the resolver
+        // in AppleMusicAuth owns the order.
+        val appleToken by AppSettings.appleUserToken.collectAsStateWithLifecycle()
+        var editingApple by remember { mutableStateOf(false) }
+        var appleDraft by remember { mutableStateOf("") }
+        val appleTitle = stringResource(R.string.apple_music)
+        row(appleTitle, "apple", "music", "library", "token", "integration") {
+            SettingsRow(
+                icon = Icons.Rounded.Album,
+                title = appleTitle,
+                subtitle = if (!appleToken.isNullOrBlank()) {
+                    stringResource(R.string.apple_token_connected)
+                } else {
+                    stringResource(R.string.apple_token_connect)
+                },
+                onClick = {
+                    appleDraft = appleToken.orEmpty()
+                    editingApple = true
+                },
+            )
+        }
+        if (editingApple) {
+            TextValueAlert(
+                title = stringResource(R.string.apple_token_title),
+                message = stringResource(R.string.apple_token_message),
+                placeholder = stringResource(R.string.apple_token_placeholder),
+                value = appleDraft,
+                onValueChange = { appleDraft = it },
+                onSave = {
+                    AppSettings.setAppleUserToken(appleDraft)
+                    editingApple = false
+                },
+                onDismiss = { editingApple = false },
+                onRemove = if (!appleToken.isNullOrBlank()) {
+                    {
+                        AppSettings.setAppleUserToken(null)
+                        editingApple = false
+                    }
+                } else {
+                    null
+                },
+                saveEnabled = appleDraft.isNotBlank(),
+                // A credential: hidden as it is typed, like the other tokens.
+                isPassword = true,
             )
         }
     }

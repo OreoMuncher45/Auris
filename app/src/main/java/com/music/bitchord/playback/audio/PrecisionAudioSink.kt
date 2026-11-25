@@ -456,6 +456,8 @@ class PrecisionAudioSink(
             return !session.failureIsRetryable()
         }
         exclusiveActive = true
+        // The exclusive USB route writes the decoder's PCM straight to the DAC:
+        // there is no float block for a loop mix to render into.
         boundSession = session
         exclusiveEnded = false
         if (isAudible()) {

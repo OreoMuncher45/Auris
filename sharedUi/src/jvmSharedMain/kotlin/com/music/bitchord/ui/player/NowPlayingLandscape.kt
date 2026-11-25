@@ -8,6 +8,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
@@ -141,6 +142,10 @@ internal fun LandscapeNowPlaying(
     sleeveLayer: GraphicsLayer,
     dockHost: Modifier,
     modifier: Modifier = Modifier,
+    /** The Best Part pill, over the foot of the artwork; see [BestPartPill]. */
+    bestPart: @Composable (Modifier) -> Unit = {},
+    /** The one-shot conversion offer, above the artwork's pinned stats. */
+    convertToVideo: @Composable (Modifier) -> Unit = {},
 ) {
     // Paused always wins outright over a scrub in progress — see
     // [ARTWORK_PAUSE_SHRINK_SCALE].
@@ -287,16 +292,26 @@ internal fun LandscapeNowPlaying(
                 ) {
                     // The stats belong to the player, not to the sleeve, so
                     // they leave it along with the rest of the player.
-                    SleeveNerdStats(
-                        song = song,
-                        isPlaying = isPlaying,
+                    // Faded with the player rather than flown with the
+                    // sleeve: the cover in the bar has none. The Best Part
+                    // pill and the conversion prompt stack above the stats,
+                    // which stay pinned.
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
-                            .padding(horizontal = 10.dp, vertical = 8.dp)
-                            // Faded with the player rather than flown with
-                            // the sleeve: the cover in the bar has none.
                             .graphicsLayer { alpha = if (panelOpen) 0f else dockFade() },
-                    )
+                    ) {
+                        if (!panelOpen) {
+                            bestPart(Modifier.padding(bottom = BEST_PART_INSET))
+                            convertToVideo(Modifier.padding(bottom = CONVERT_PROMPT_INSET))
+                        }
+                        SleeveNerdStats(
+                            song = song,
+                            isPlaying = isPlaying,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                        )
+                    }
                 }
             },
             actions = { playerActions(true) },

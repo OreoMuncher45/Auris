@@ -20,6 +20,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
+import com.music.bitchord.data.web.QuietWebChromeClient
 
 private const val MUSIC_ORIGIN = "https://music.youtube.com"
 
@@ -95,6 +96,7 @@ fun YtMusicLoginScreen(
             WebView(context).apply {
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
+                webChromeClient = QuietWebChromeClient()
 
                 webViewClient = object : WebViewClient() {
                     override fun onPageFinished(view: WebView?, url: String?) {

@@ -12,6 +12,14 @@ enum class QueueTier {
     AUTOPLAY,
 }
 
+/** Identity of one occurrence in a live queue, independent of its timeline index. */
+data class QueueEntryIdentity(
+    val mediaId: String,
+    val queueEntryId: String?,
+    /** Zero-based occurrence among entries with the same media and queue-entry ids. */
+    val occurrence: Int,
+)
+
 /**
  * One credited artist, as YouTube Music itself states them.
  *
@@ -110,6 +118,15 @@ data class Song(    val videoId: String,
     val localDateAddedSeconds: Long? = null,
     val localDateModifiedSeconds: Long? = null,
     /**
+     * Track number within its disc, from the file's own tags (`TRACK` in
+     * MediaStore, `CD_TRACK_NUMBER` via the retriever). Null when the tags
+     * don't say; remote catalogue rows never carry one. Lets Local Music
+     * sort an album into its release order.
+     */
+    val trackNumber: Int? = null,
+    /** Disc number from the same tags, for albums of more than one disc. */
+    val discNumber: Int? = null,
+    /**
      * What a non-YouTube source says it can serve this recording at, as one of
      * `LOSSLESS`, `HIGH` or `LOW` — null for every row that didn't come from
      * one.
@@ -174,6 +191,8 @@ data class Song(    val videoId: String,
         localPath: String? = null,
         localDateAddedSeconds: Long? = null,
         localDateModifiedSeconds: Long? = null,
+        trackNumber: Int? = null,
+        discNumber: Int? = null,
         sourceQuality: String? = null,
         isExplicit: Boolean? = null,
         playbackSource: String? = null,
@@ -200,6 +219,8 @@ data class Song(    val videoId: String,
         localPath = localPath,
         localDateAddedSeconds = localDateAddedSeconds,
         localDateModifiedSeconds = localDateModifiedSeconds,
+        trackNumber = trackNumber,
+        discNumber = discNumber,
         sourceQuality = sourceQuality,
         isExplicit = isExplicit,
         playbackSource = playbackSource,
@@ -226,27 +247,62 @@ fun Song.artworkAt(px: Int): String? = thumbnailUrl.artworkAt(px)
 /**
  * Whether a row is the track the player is on, for the now-playing highlight.
  *
- * Title and credit, matched exactly, and nothing else. Every id a row could be
- * matched on instead is scoped to where the row came from and so lies when
- * asked across that boundary: a set-video-id names a slot in one playlist, and
- * two playlists hand the same one to unrelated tracks, which is what used to
- * light up a stranger's row while something else played. A video id is no
- * better across catalogues — the same recording arrives with a different id
- * from a local file, a download and a module source, and the highlight would
- * simply go missing.
+ * The id decides. A row and the player's item with the same [Song.videoId]
+ * are the same track; two with different ids are two tracks, whatever they
+ * are called. Matching on title and credit instead lit up every row that
+ * shared them — a song's album cut and its single, or a film song uploaded
+ * once per dubbed release — so a search for one of them showed the whole set
+ * as "playing" at once.
  *
- * The cost is that name and credit are not unique: an album track and its
- * appearance on a compilation are one and the same to this, and both light up.
- * That is the trade the highlight is meant to make — it says "this is the song
- * you are hearing", not "this is the queue entry you are hearing".
+ * The one place an id can't be compared is across the Spotify boundary. A
+ * Spotify row (`spotify:`, `sp:` or `sp-miss:`) and the YouTube Music track it
+ * resolves to name one recording with two ids, and a playlist row that is
+ * matched while its queue entry is still the `spotify:` key has no id in
+ * common with it at all. Only there do title and credit decide, exactly as
+ * before. The three Spotify prefixes are one key, so a pending row and the
+ * `spotify:` entry queued from it are the same id.
  *
- * The one place that must not use this is the player's own queue, where the
- * entry, not the song, is what the row stands for — that list matches on
- * position.
+ * Every other catalogue keeps its own id through playback: a local file is its
+ * content uri on both sides, a download plays under its YouTube id, and a
+ * module substitution swaps the stream, not the queue entry's id.
+ *
+ * The set-video-id is never used: it names a slot in one playlist, and two
+ * playlists hand the same one to unrelated tracks. The player's own queue
+ * doesn't use this either; that list matches on position.
  */
 fun Song.isSameTrackAs(other: Song?): Boolean {
     other ?: return false
-    return title == other.title && artist == other.artist
+    return isSamePlayingTrack(videoId, title, artist, other.videoId, other.title, other.artist)
+}
+
+/**
+ * [Song.isSameTrackAs] for a row that isn't a [Song] — a home-shelf card —
+ * given its id, title and credit line. A blank or null id never matches on
+ * names alone unless the other side is a Spotify row.
+ */
+fun isSamePlayingTrack(
+    rowId: String?,
+    rowTitle: String,
+    rowArtist: String,
+    playingId: String?,
+    playingTitle: String,
+    playingArtist: String,
+): Boolean {
+    val row = trackIdentity(rowId)
+    val playing = trackIdentity(playingId)
+    if (row != null && row == playing) return true
+    val rowSpotify = row?.startsWith(SPOTIFY_ROW_PREFIX) == true
+    val playingSpotify = playing?.startsWith(SPOTIFY_ROW_PREFIX) == true
+    if (rowSpotify == playingSpotify) return false
+    return rowTitle == playingTitle && rowArtist == playingArtist
+}
+
+/** The id a track is compared on, with the three Spotify spellings folded into one. */
+private fun trackIdentity(id: String?): String? = when {
+    id.isNullOrBlank() -> null
+    id.startsWith(SPOTIFY_MISSING_PREFIX) -> SPOTIFY_ROW_PREFIX + id.removePrefix(SPOTIFY_MISSING_PREFIX)
+    id.startsWith(SPOTIFY_PENDING_PREFIX) -> SPOTIFY_ROW_PREFIX + id.removePrefix(SPOTIFY_PENDING_PREFIX)
+    else -> id
 }
 
 /**
@@ -278,7 +334,80 @@ fun String?.durationMillis(): Long {
 }
 
 /** As [Song.artworkAt], for artwork that isn't a track's. */
-fun String?.artworkAt(px: Int): String? = this?.replace(SIZE_HINT, "w$px-h$px")
+fun String?.artworkAt(px: Int): String? {
+    if (this == null) return null
+    val sized = this.replace(SIZE_HINT, "w$px-h$px")
+    return if (isYouTubeThumbnailHost(this)) upgradeYouTubeThumbnail(sized, px) else sized
+}
+
+internal fun isYouTubeThumbnailHost(url: String): Boolean {
+    val host = url.substringAfter("://", "")
+        .ifEmpty { url.substringAfter("//", "") }
+        .substringBefore('/')
+        .substringBefore('?')
+        .substringBefore('#')
+        // Any user information is not the host: "img.youtube.com:pw@other.test".
+        .substringAfterLast('@')
+        .substringBefore(':')
+        .lowercase()
+    return host == "i.ytimg.com" || host.endsWith(".ytimg.com") ||
+        host == "img.youtube.com" || host.endsWith(".youtube.com")
+}
+
+/** YouTube's thumbnail renditions, smallest to largest. Every video has `hqdefault`. */
+private val YT_THUMB_NAME_REGEX = Regex("/(default|mqdefault|hqdefault|sddefault|hq720|maxresdefault)\\.([a-zA-Z0-9]+)$")
+
+/** The rendition named by [url]'s last path segment; never one in its query. */
+private fun thumbnailRendition(url: String): MatchResult? =
+    YT_THUMB_NAME_REGEX.find(url.substringBefore('?').substringBefore('#'))
+
+/** The renditions an old or low-resolution upload doesn't have: each answers 404 for it. */
+private val YT_UPGRADED_RENDITIONS = setOf("sddefault", "hq720", "maxresdefault")
+
+/**
+ * A YouTube video thumbnail at the rendition that suits [px]: `maxresdefault`
+ * for the player and headers, `sddefault` for cards, and the small copy it
+ * came with for rows. An upgraded URL (one read back off the lock screen's
+ * artwork, say) comes back down to `hqdefault` at row sizes, rather than a
+ * list row loading a 1280px cover, or nothing where the video has no such
+ * size. Old uploads lack the larger renditions; see [youTubeThumbnailFallback].
+ */
+internal fun upgradeYouTubeThumbnail(url: String, px: Int): String {
+    val match = thumbnailRendition(url) ?: return url
+    val current = match.groupValues[1]
+    val target = when {
+        // 1280px for what is drawn larger than a card; a card's 480px is
+        // served by sddefault's 640, which is a third of the bytes to fetch
+        // and decode for every video card on a shelf.
+        px > CARD_ART_PX -> "maxresdefault"
+        px >= 240 -> "sddefault"
+        current in YT_UPGRADED_RENDITIONS -> "hqdefault"
+        else -> return url
+    }
+    return if (target == current) url else withRendition(url, match, target)
+}
+
+/**
+ * The copy every YouTube video has, for a thumbnail [artworkAt] asked a larger
+ * rendition of; null when [url] is no such thumbnail. Old and low-resolution
+ * uploads have no `sddefault` or `maxresdefault` (YouTube answers 404), so
+ * whatever loads one of those needs this to fall back on, and a loader that
+ * can't fall back should be handed this instead.
+ */
+fun youTubeThumbnailFallback(url: String): String? {
+    if (!isYouTubeThumbnailHost(url)) return null
+    val match = thumbnailRendition(url) ?: return null
+    if (match.groupValues[1] !in YT_UPGRADED_RENDITIONS) return null
+    return withRendition(url, match, "hqdefault")
+}
+
+/**
+ * [url] naming [rendition] instead. The query (`sqp=…&rs=…`) is dropped: it
+ * signs the rendition it came with, and the bare path serves any of them.
+ */
+private fun withRendition(url: String, match: MatchResult, rendition: String): String =
+    (url.substring(0, match.range.first) + "/$rendition.${match.groupValues[2]}" + url.substring(match.range.last + 1))
+        .substringBefore('?')
 
 private val SIZE_HINT = Regex("""w\d+-h\d+""")
 
@@ -372,6 +501,40 @@ sealed interface SearchResult {
     data class Browse(val item: BrowseItem) : SearchResult
 }
 
+/**
+ * The rows with every repeat of one recording after the first taken out.
+ *
+ * A search can list one recording more than once under different ids: the
+ * album cut and the single, the original album and a compilation, or two
+ * Spotify releases of the same master. Ids are already distinct by the time
+ * rows reach here, so this is the other half — a row is a repeat when its
+ * title, credit and length all match an earlier one, compared without regard
+ * to case or surrounding space, and it is the same kind of row (song or
+ * video, explicit or clean). The clean and explicit cuts stay apart because
+ * the audio switch picks between them by that flag. A row that states no
+ * length is always kept, since two different cuts can share a name and
+ * credit; so is a row whose credit differs, which is what a film song's dubbed versions look like.
+ *
+ * The promoted top result is never removed, only remembered, so a plain row
+ * repeating it goes instead. Browse rows pass through untouched. One pass and
+ * one set, linear in the page; callers run it off the main thread.
+ */
+fun List<SearchResult>.withoutRepeatedRecordings(): List<SearchResult> {
+    val seen = HashSet<String>(size)
+    return filter { row ->
+        val song = row.songOrNull() ?: return@filter true
+        val length = song.durationText?.trim()?.takeIf { it.isNotEmpty() } ?: return@filter true
+        val key = buildString {
+            append(song.title.trim().lowercase()).append('\u0001')
+            append(song.artist.trim().lowercase()).append('\u0001')
+            append(length).append('\u0001')
+            append(song.isVideo).append('\u0001')
+            append(song.isExplicit)
+        }
+        seen.add(key) || row is SearchResult.TopTrack
+    }
+}
+
 /** The song carried by a search row, whether it is promoted or ordinary. */
 fun SearchResult.songOrNull(): Song? = when (this) {
     is SearchResult.TopTrack -> song
@@ -379,7 +542,12 @@ fun SearchResult.songOrNull(): Song? = when (this) {
     is SearchResult.Browse -> null
 }
 
-enum class SearchFilter(val label: String, val params: String?) {
+enum class SearchFilter(
+    val label: String,
+    val params: String?,
+    /** Needs a signed-in account: it searches that account's own library. */
+    val requiresAuth: Boolean = false,
+) {
     /** YouTube Music's mixed search page: songs, artists, albums and playlists. */
     ALL("All", null),
     SONGS("Songs", "EgWKAQIIAWoKEAkQChAFEAMQBA=="),
@@ -389,6 +557,8 @@ enum class SearchFilter(val label: String, val params: String?) {
     PLAYLISTS("Playlists", "EgWKAQIoAWoKEAkQChAFEAMQBA=="),
     /** Not a YouTube filter — searched against the Apple podcast catalogue instead. */
     PODCASTS("Podcasts", null),
+    /** Only the songs in the signed-in account's own YouTube Music library. */
+    LIBRARY("Library", "agIYBA==", requiresAuth = true),
 }
 
 /** A card in a home-feed carousel: either a track (videoId) or an album/playlist (browseId). */
@@ -612,6 +782,12 @@ data class DetailPage(
     val continuation: String? = null,
     /** A next page is on the wire for this page. */
     val loadingMore: Boolean = false,
+    /**
+     * Which opening of [browseId] this stack entry is. The same page can be on
+     * the stack twice (opened again from itself, say), and work started for
+     * one opening must land on that entry, not the first with the same id.
+     */
+    val opening: Long = 0L,
 )
 
 /**

@@ -26,6 +26,15 @@ object PerfCounters {
         /** A captured frame read for the ink's colours. */
         INK_READ,
 
+        /**
+         * A new ink or grade handed to the player, after the judging.
+         *
+         * Each one starts the ink's tween, which redraws every text and glyph
+         * wearing it for the tween's length: this, not [INK_READ], is what a
+         * playing clip costs the player's chrome.
+         */
+        INK_CHANGE,
+
         /** A box-blur pass over a cover, still or live. */
         BLUR_PASS,
 

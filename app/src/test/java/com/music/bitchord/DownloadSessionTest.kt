@@ -244,6 +244,31 @@ class DownloadSessionTest {
         )
     }
 
+    /** A release deleted while the sync was reading must not come back with its record. */
+    @Test
+    fun `the sync does not recreate a release deleted while it read`() {
+        val target = DownloadTarget(id = "VLPL9", title = "Gone", playlist = true)
+        Downloads.rememberCollection(target, listOf(onDisk("a")))
+        Downloads.forgetCollection("VLPL9")
+
+        Downloads.rememberCollection(target, listOf(onDisk("b")), keepSwitch = true)
+
+        assertTrue(Downloads.collections.value.isEmpty())
+    }
+
+    @Test
+    fun `the sync grows a release still there and keeps its switch off`() {
+        val target = DownloadTarget(id = "VLPL9", title = "Kept", playlist = true)
+        Downloads.rememberCollection(target, listOf(onDisk("a")))
+        Downloads.setAutoDownloadNewSongs("VLPL9", false)
+
+        Downloads.rememberCollection(target, listOf(onDisk("b")), keepSwitch = true)
+
+        val record = Downloads.collections.value.getValue("VLPL9")
+        assertEquals(listOf("b", "a"), record.videoIds)
+        assertFalse(record.autoDownload)
+    }
+
     @Test
     fun `an empty ask records nothing`() {
         Downloads.rememberCollection(DownloadTarget(id = "MPREb1", title = "Motion"), emptyList())

@@ -330,28 +330,6 @@ fun SongRow(
     /** True while a Downloads row belongs to the current multi-selection. */
     selected: Boolean = false,
 ) {
-    val haptics = rememberHaptics()
-    val swipeStateHolder = remember { mutableStateOf<SwipeToDismissBoxState?>(null) }
-    var boxWidth by remember { mutableFloatStateOf(0f) }
-
-    val currentOnSwipeToQueue by rememberUpdatedState(onSwipeToQueue)
-
-    val swipeState = rememberSwipeToDismissBoxState(
-        confirmValueChange = { value ->
-            if (value != SwipeToDismissBoxValue.Settled && currentOnSwipeToQueue != null) {
-                val offset = try { swipeStateHolder.value?.requireOffset() ?: 0f } catch (e: Exception) { 0f }
-                // Only queue if the physical drag reached half the box width, ignoring short accidental flings.
-                if (abs(offset) >= boxWidth * 0.45f) {
-                    haptics.play(Haptic.Select)
-                    currentOnSwipeToQueue?.invoke()
-                }
-            }
-            false // never actually dismiss; snap back
-        },
-        positionalThreshold = { distance -> distance * 0.5f },
-    )
-    swipeStateHolder.value = swipeState
-
     if (onSwipeToQueue == null) {
         SongRowContent(
             song = song,
@@ -370,6 +348,63 @@ fun SongRow(
         )
         return
     }
+
+    SwipeToQueueBox(onSwipeToQueue = onSwipeToQueue, modifier = modifier) {
+        SongRowContent(
+            song = song,
+            onClick = onClick,
+            onLongPress = onLongPress,
+            onMore = onMore ?: onLongPress,
+            modifier = Modifier.background(rowBackground),
+            trackNumber = trackNumber,
+            subtitleColor = subtitleColor,
+            downloadedTint = downloadedTint,
+            isCurrent = isCurrent,
+            isPlaying = isPlaying,
+            activeTint = activeTint,
+            searchPlayingStyle = searchPlayingStyle,
+            selected = selected,
+        )
+    }
+}
+
+/**
+ * The swipe behind every track row: either way queues the track or plays it
+ * next, per [AppSettings.swipeToPlayNext], and the row springs back rather
+ * than dismissing. [content] is the row itself, and has to paint its own
+ * background so the reveal doesn't show through it.
+ *
+ * Shared by [SongRow] and the live-search rows, so a row typed into view
+ * swipes exactly like one in the full results.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SwipeToQueueBox(
+    onSwipeToQueue: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    val haptics = rememberHaptics()
+    val swipeStateHolder = remember { mutableStateOf<SwipeToDismissBoxState?>(null) }
+    var boxWidth by remember { mutableFloatStateOf(0f) }
+
+    val currentOnSwipeToQueue by rememberUpdatedState(onSwipeToQueue)
+
+    val swipeState = rememberSwipeToDismissBoxState(
+        confirmValueChange = { value ->
+            if (value != SwipeToDismissBoxValue.Settled) {
+                val offset = try { swipeStateHolder.value?.requireOffset() ?: 0f } catch (e: Exception) { 0f }
+                // Only queue if the physical drag reached half the box width, ignoring short accidental flings.
+                if (abs(offset) >= boxWidth * 0.45f) {
+                    haptics.play(Haptic.Select)
+                    currentOnSwipeToQueue()
+                }
+            }
+            false // never actually dismiss; snap back
+        },
+        positionalThreshold = { distance -> distance * 0.5f },
+    )
+    swipeStateHolder.value = swipeState
 
     // The row reveals "Queue" from the first pixel of the drag, but it only
     // *commits* past 45% of the width — so without this the label is a promise
@@ -400,21 +435,7 @@ fun SongRow(
         modifier = modifier.onSizeChanged { boxWidth = it.width.toFloat() },
         backgroundContent = { QueueSwipeBackground(swipeState) },
     ) {
-        SongRowContent(
-            song = song,
-            onClick = onClick,
-            onLongPress = onLongPress,
-            onMore = onMore ?: onLongPress,
-            modifier = Modifier.background(rowBackground),
-            trackNumber = trackNumber,
-            subtitleColor = subtitleColor,
-            downloadedTint = downloadedTint,
-            isCurrent = isCurrent,
-            isPlaying = isPlaying,
-            activeTint = activeTint,
-            searchPlayingStyle = searchPlayingStyle,
-            selected = selected,
-        )
+        content()
     }
 }
 
@@ -958,7 +979,29 @@ fun PillTextField(
     container: Color = MaterialTheme.colorScheme.surfaceVariant,
     keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
     keyboardActions: KeyboardActions = KeyboardActions.Default,
+    /**
+     * Drawn at the field's end, such as a Show/Hide toggle for a password.
+     * The text stops short of it rather than running underneath. Null for
+     * every existing caller, which draws exactly what it drew before.
+     */
+    trailing: (@Composable () -> Unit)? = null,
 ) {
+    if (trailing != null) {
+        Row(
+            modifier = modifier
+                .fillMaxWidth()
+                .height(40.dp)
+                .background(container, RoundedCornerShape(11.dp))
+                .padding(start = 12.dp, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                PillTextFieldContent(value, onValueChange, placeholder, enabled, isPassword, keyboardOptions, keyboardActions)
+            }
+            trailing()
+        }
+        return
+    }
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -967,29 +1010,43 @@ fun PillTextField(
             .padding(horizontal = 12.dp),
         contentAlignment = Alignment.CenterStart,
     ) {
-        if (value.isEmpty()) {
-            Text(
-                text = placeholder,
-                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        BasicTextField(
-            value = value,
-            onValueChange = onValueChange,
-            enabled = enabled,
-            singleLine = true,
-            textStyle = MaterialTheme.typography.bodyMedium.copy(
-                fontSize = 15.sp,
-                color = MaterialTheme.colorScheme.onBackground,
-            ),
-            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-            visualTransformation = if (isPassword) PasswordVisualTransformation() else VisualTransformation.None,
-            keyboardOptions = keyboardOptions,
-            keyboardActions = keyboardActions,
-            modifier = Modifier.fillMaxWidth(),
+        PillTextFieldContent(value, onValueChange, placeholder, enabled, isPassword, keyboardOptions, keyboardActions)
+    }
+}
+
+@Composable
+private fun PillTextFieldContent(
+    value: String,
+    onValueChange: (String) -> Unit,
+    placeholder: String,
+    enabled: Boolean,
+    isPassword: Boolean,
+    keyboardOptions: KeyboardOptions,
+    keyboardActions: KeyboardActions,
+) {
+    // Stacked by the caller's Box: the placeholder sits under the field.
+    if (value.isEmpty()) {
+        Text(
+            text = placeholder,
+            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
+    BasicTextField(
+        value = value,
+        onValueChange = onValueChange,
+        enabled = enabled,
+        singleLine = true,
+        textStyle = MaterialTheme.typography.bodyMedium.copy(
+            fontSize = 15.sp,
+            color = MaterialTheme.colorScheme.onBackground,
+        ),
+        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+        visualTransformation = if (isPassword) PasswordVisualTransformation() else VisualTransformation.None,
+        keyboardOptions = keyboardOptions,
+        keyboardActions = keyboardActions,
+        modifier = Modifier.fillMaxWidth(),
+    )
 }

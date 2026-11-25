@@ -303,4 +303,20 @@
     <string name="library_search_hint">Search this</string>
     <string name="library_empty_segment">Nothing here yet</string>
     <string name="home_chip_all">All</string>
+    <string name="best_part">Best Part</string>
+    <string name="best_part_description">Skip to the best part</string>
+    <string name="queue_select">選択</string>
+    <string name="queue_select_all">すべて選択</string>
+    <string name="queue_selected_count">%1$d件選択</string>
+    <string name="queue_close_selection">選択モードを終了</string>
+    <string name="queue_selection_remove">削除</string>
+    <string name="queue_selection_add_to_playlist">Add to playlist</string>
+    <string name="queue_download">ダウンロード</string>
+    <string name="queue_removed_song">Removed %1$s</string>
+    <string name="queue_removed_songs">Removed %1$d songs</string>
+    <string name="queue_undo_action">Undo</string>
+    <string name="queue_cleared">Next in queue cleared</string>
+    <string name="mixes_yours">あなたのミックス</string>
+    <string name="video_quality">Video quality</string>
+    <string name="video_quality_auto">Auto</string>
 </resources>

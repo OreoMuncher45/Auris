@@ -19,6 +19,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.VolumeOff
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.DownloadDone
+import androidx.compose.material.icons.rounded.Downloading
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.MusicOff
@@ -42,6 +45,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
@@ -125,7 +130,8 @@ internal fun PlaybackSettings(
             }
         }
         val automixTitle = stringResource(R.string.automix)
-        row(automixTitle, "crossfade", "smart fade", "mix") {
+        row(
+        ) {
             SettingsRow(
                 icon = Icons.Rounded.AutoAwesome,
                 title = automixTitle,
@@ -347,6 +353,7 @@ internal fun HomeProvider.localizedLabel(): String = stringResource(
     when (this) {
         HomeProvider.YOUTUBE -> R.string.home_provider_youtube
         HomeProvider.SPOTIFY -> R.string.spotify
+        HomeProvider.APPLE -> R.string.apple_music
     },
 )
 
@@ -373,6 +380,7 @@ internal fun ColumnScope.HomeProviderMenu(close: () -> Unit) {
                     when (provider) {
                         HomeProvider.YOUTUBE -> R.string.home_provider_youtube_subtitle
                         HomeProvider.SPOTIFY -> R.string.home_provider_spotify_subtitle
+                        HomeProvider.APPLE -> R.string.home_provider_apple_subtitle
                     },
                 ),
                 selected = provider == selected,
@@ -387,6 +395,28 @@ internal fun ColumnScope.HomeProviderMenu(close: () -> Unit) {
     )
 }
 
+
+/** A row's description with its one action under it, in the accent colour unless told otherwise. */
+@Composable
+private fun SubtitleWithAction(
+    subtitle: String,
+    action: String,
+    actionColor: Color = MaterialTheme.colorScheme.primary,
+) {
+    Text(
+        text = subtitle,
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 5,
+    )
+    Text(
+        text = action,
+        style = MaterialTheme.typography.bodyMedium,
+        fontWeight = FontWeight.Medium,
+        color = actionColor,
+        modifier = Modifier.padding(top = 6.dp),
+    )
+}
 
 /** The Automix performance picker, opened on its row, with its warning kept whole at the head. */
 @Composable

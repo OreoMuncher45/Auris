@@ -31,6 +31,8 @@ internal fun <T : Any> AnchoredItemMenu(
     item: T?,
     anchorInWindow: () -> Rect?,
     onDismiss: () -> Unit,
+    /** Centres the panel in its safe band instead of end-aligning it to the anchor. */
+    centered: Boolean = false,
     /** Forces dark (true) or light (false) colours; null follows the theme. */
     dark: Boolean? = null,
     content: @Composable ColumnScope.(T) -> Unit,
@@ -63,6 +65,7 @@ internal fun <T : Any> AnchoredItemMenu(
         // the app's shared Liquid/Frosted configuration; only the flat plate
         // needs extra opacity to keep the rows behind it from reading through.
         pagePlate = true,
+        centered = centered,
         dark = dark,
     ) {
         key(shown.opening) { content(current) }

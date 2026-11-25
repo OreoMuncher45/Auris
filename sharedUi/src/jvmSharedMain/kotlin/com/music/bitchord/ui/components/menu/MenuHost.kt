@@ -24,12 +24,17 @@ interface MenuHost {
      * menu this host already has up. [anchorInWindow] null opens at the top
      * end. [dark] forces the menu's dark or light colours for a surface that
      * doesn't follow the app's theme — the player is always dark — and null
-     * follows the theme. [content] is handed a `close` to call once a row has
-     * done its work.
+     * follows the theme. [centered] centres the panel in its safe band rather
+     * than aligning its end with the anchor. [fromPlayer] makes the Android
+     * host draw and sample glass inside the player's own backdrop scope;
+     * otherwise the root page's backdrop is used. [content] is handed a
+     * `close` to call once a row has done its work.
      */
     fun open(
         anchorInWindow: Rect?,
         dark: Boolean? = null,
+        centered: Boolean = false,
+        fromPlayer: Boolean = false,
         content: @Composable ColumnScope.(close: () -> Unit) -> Unit,
     )
 

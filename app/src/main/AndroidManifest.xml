@@ -130,7 +130,7 @@
             android:name=".data.sources.mornye.SflxVerifyActivity"
             android:exported="true"
             android:excludeFromRecents="true"
-            android:launchMode="singleTop"
+            android:launchMode="singleTask"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
             android:windowSoftInputMode="adjustResize"
             android:theme="@style/Theme.BitChord.Verify">
@@ -149,6 +149,19 @@
                 <data android:scheme="mornye" android:host="session-grant" />
             </intent-filter>
         </activity>
+
+        <!--
+          The restart trampoline (see util/AppRelaunch). Its own process so it
+          can kill the main one and still be in the foreground to start the
+          launcher, which Android 14+ requires; translucent so nothing shows.
+        -->
+        <activity
+            android:name=".util.RelaunchActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:process=":relaunch"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
         <activity
             android:name=".MainActivity"
@@ -253,6 +266,17 @@
                     android:scheme="https"
                     android:host="bitchord.kushagrasingh.in"
                     android:pathPattern="/invite/......" />
+                <!-- Before Android 12, pathPattern is case-sensitive and has no
+                     character classes, so the capitalisations a link is
+                     actually written in are listed one by one. A wildcard
+                     segment would also take the site's other six-letter pages. -->
+                <data android:pathPattern="/INVITE/......" />
+                <data android:pathPattern="/Invite/......" />
+                <!-- Any capitalisation of /invite/, as the parser accepts.
+                     Android 12+; older versions ignore it and keep the lines above. -->
+                <data
+                    android:pathAdvancedPattern="/[iI][nN][vV][iI][tT][eE]/[A-Za-z0-9]{6}"
+                    tools:targetApi="31" />
             </intent-filter>
 
             <!-- Custom scheme for Listen Together invites on custom server deployments. -->
@@ -352,6 +376,18 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/widget_media_pill" />
         </receiver>
+
+        <!-- Quick Settings tile: play or pause the last queue. See PlaybackTile. -->
+        <service
+            android:name=".widget.PlaybackTile"
+            android:exported="true"
+            android:icon="@drawable/ic_notification_logo"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
 
         <!-- The transport buttons. Reached only by this app's own PendingIntents. -->
         <receiver

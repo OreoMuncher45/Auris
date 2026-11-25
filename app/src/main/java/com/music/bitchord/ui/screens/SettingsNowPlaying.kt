@@ -11,16 +11,20 @@ import androidx.compose.material.icons.automirrored.rounded.VolumeOff
 import androidx.compose.material.icons.rounded.Animation
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.BlurOn
+import androidx.compose.material.icons.rounded.Contrast
 import androidx.compose.material.icons.rounded.FileDownload
 import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.Gradient
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Language
+import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Speed
+import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material.icons.rounded.VolumeOff
 import androidx.compose.material.icons.rounded.ZoomOut
@@ -65,6 +69,7 @@ internal fun NowPlayingSettings(
     val canvasOverCellular by AppSettings.canvasOverCellular.collectAsStateWithLifecycle()
     val fullBleedArtwork by AppSettings.fullBleedArtwork.collectAsStateWithLifecycle()
     val zoomOutAlbumArt by AppSettings.zoomOutAlbumArt.collectAsStateWithLifecycle()
+    val showTotalDuration by AppSettings.showTotalDuration.collectAsStateWithLifecycle()
     val legacyMeshGradient by AppSettings.legacyMeshGradient.collectAsStateWithLifecycle()
     val syncedLyrics by AppSettings.syncedLyrics.collectAsStateWithLifecycle()
     val lyricsSources by AppSettings.lyricsSources.collectAsStateWithLifecycle()
@@ -73,9 +78,12 @@ internal fun NowPlayingSettings(
     val hideSongStatus by AppSettings.hideSongStatus.collectAsStateWithLifecycle()
     val textGlow by AppSettings.textGlow.collectAsStateWithLifecycle()
     val liveBlur by AppSettings.liveBlur.collectAsStateWithLifecycle()
+    val backdropOverlay by AppSettings.backdropOverlay.collectAsStateWithLifecycle()
+    val videoConversionPromptEnabled by AppSettings.videoConversionPromptEnabled.collectAsStateWithLifecycle()
     val perfMonitor by AppSettings.perfMonitor.collectAsStateWithLifecycle()
     val showNowPlayingLyrics by AppSettings.showNowPlayingLyrics.collectAsStateWithLifecycle()
     val showNextTrackStatus by AppSettings.showNextTrackStatus.collectAsStateWithLifecycle()
+    val showBestPart by AppSettings.showBestPart.collectAsStateWithLifecycle()
     val showUpgradeBadge by AppSettings.showUpgradeBadge.collectAsStateWithLifecycle()
     val showLosslessBadge by AppSettings.showLosslessBadge.collectAsStateWithLifecycle()
     val showHiResBadge by AppSettings.showHiResBadge.collectAsStateWithLifecycle()
@@ -89,6 +97,21 @@ internal fun NowPlayingSettings(
                 title = nowPlayingColorsTitle,
                 subtitle = stringResource(R.string.custom_now_playing_help),
                 onClick = { sheets.showPlayerColors = true },
+            )
+        }
+        val showTotalDurationTitle = stringResource(R.string.show_total_duration)
+        row(showTotalDurationTitle, "seek bar", "remaining time", "duration", "song length") {
+            SettingsRow(
+                icon = Icons.Rounded.Timer,
+                title = showTotalDurationTitle,
+                subtitle = stringResource(R.string.show_total_duration_subtitle),
+                trailing = {
+                    SettingsSwitch(
+                        checked = showTotalDuration,
+                        onCheckedChange = AppSettings::setShowTotalDuration,
+                    )
+                },
+                onClick = { AppSettings.setShowTotalDuration(!showTotalDuration) },
             )
         }
         val textGlowTitle = stringResource(R.string.custom_text_glow)
@@ -134,6 +157,21 @@ internal fun NowPlayingSettings(
                     )
                 },
                 onClick = { AppSettings.setShowNextTrackStatus(!showNextTrackStatus) },
+            )
+        }
+        val bestPartTitle = stringResource(R.string.show_best_part)
+        row(bestPartTitle, "best part", "chorus", "skip", "replayed", "highlight") {
+            SettingsRow(
+                icon = Icons.Rounded.MusicNote,
+                title = bestPartTitle,
+                subtitle = stringResource(R.string.show_best_part_subtitle),
+                trailing = {
+                    SettingsSwitch(
+                        checked = showBestPart,
+                        onCheckedChange = AppSettings::setShowBestPart,
+                    )
+                },
+                onClick = { AppSettings.setShowBestPart(!showBestPart) },
             )
         }
         val upgradeBadgeTitle = stringResource(R.string.custom_upgrade_badge)
@@ -207,6 +245,44 @@ internal fun NowPlayingSettings(
                     )
                 },
                 onClick = { AppSettings.setLiveBlur(!liveBlur) },
+            )
+        }
+        val backdropOverlayTitle = stringResource(R.string.player_backdrop_overlay)
+        row(
+            backdropOverlayTitle,
+            "overlay",
+            "blur",
+            "background",
+            "buttons",
+            "contrast",
+            "visibility",
+        ) {
+            SettingsRow(
+                icon = Icons.Rounded.Contrast,
+                title = backdropOverlayTitle,
+                subtitle = stringResource(R.string.player_backdrop_overlay_help),
+                trailing = {
+                    SettingsSwitch(
+                        checked = backdropOverlay,
+                        onCheckedChange = AppSettings::setBackdropOverlay,
+                    )
+                },
+                onClick = { AppSettings.setBackdropOverlay(!backdropOverlay) },
+            )
+        }
+        val convertPromptTitle = stringResource(R.string.video_conversion_prompt)
+        row(convertPromptTitle, "convert", "video", "prompt", "player", "offer") {
+            SettingsRow(
+                icon = Icons.Rounded.Videocam,
+                title = convertPromptTitle,
+                subtitle = stringResource(R.string.video_conversion_prompt_help),
+                trailing = {
+                    SettingsSwitch(
+                        checked = videoConversionPromptEnabled,
+                        onCheckedChange = AppSettings::setVideoConversionPromptEnabled,
+                    )
+                },
+                onClick = { AppSettings.setVideoConversionPromptEnabled(!videoConversionPromptEnabled) },
             )
         }
         val perfMonitorTitle = stringResource(R.string.perf_monitor)

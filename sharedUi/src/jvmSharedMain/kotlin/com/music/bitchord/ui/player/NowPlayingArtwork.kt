@@ -4,10 +4,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -16,6 +18,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableFloatState
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.Stable
@@ -23,9 +26,11 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithCache
@@ -72,6 +77,7 @@ import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 
 /**
@@ -289,8 +295,18 @@ internal fun BoxScope.PortraitSleeve(
     haptics: Haptics,
     fullBleedArtNow: State<Boolean>,
     song: Song,
+    /** The playing row is a music video and this platform plays one; the picture takes the sleeve. */
+    videoMode: Boolean,
+    /** Goes full screen: the picture over the whole player, controls over it. */
+    onEnterVideoFullscreen: () -> Unit,
+    /** Opens the quality drawer — the heights this video offers, and the one held. */
+    onOpenVideoQuality: () -> Unit,
     spotifyChromeAlpha: () -> Float,
     onDismissBandTop: (Float) -> Unit,
+    /** The Best Part pill, over the foot of the artwork; see [BestPartPill]. */
+    bestPart: @Composable (Modifier) -> Unit = {},
+    /** The one-shot conversion offer, above the artwork's pinned stats. */
+    convertToVideo: @Composable (Modifier) -> Unit = {},
 ) {
     // The cover on its way out until it has gone, then the playing track's —
     // see [TrackChangeMotion.shownKey]. Read here rather than by the screen,
@@ -490,41 +506,7 @@ internal fun BoxScope.PortraitSleeve(
                 )
             }
         }
-        AsyncImage(
-            // Decode at the sleeve's *expanded* size, always.
-            // Coil otherwise sizes the decode to however large
-            // this is when the request goes out — and changing
-            // track from the queue does that while the sleeve is
-            // collapsed to a thumbnail, leaving a thumbnail-sized
-            // bitmap to be blown back up when the queue closes.
-            // Skipping tracks with the transport keeps it sharp
-            // only because the sleeve happens to be full size at
-            // that moment.
-            //
-            // Asked for at the source's own size rather than the
-            // sleeve's: the banner is taller than the card is
-            // wide, and the one bitmap has to serve both shapes
-            // with nothing to upscale between them.
-            model = art.request,
-            contentDescription = null,
-            // Video thumbnails are 16:9; letterboxing them inside
-            // the square sleeve looks like a broken frame.
-            contentScale = ContentScale.Crop,
-            onState = art::onState,
-            // TextureView-backed canvas frames can arrive
-            // before Coil has decoded the sleeve. Alpha alone
-            // doesn't hide this layer for that window: a
-            // TextureView composites through its own hardware
-            // layer, and on some devices that layer wins the
-            // stacking order against a sibling Compose layer
-            // even when that layer's alpha is zero — so the
-            // still image's empty placeholder still shows
-            // through, above a perfectly healthy animated
-            // cover. Skipping the draw call outright leaves
-            // nothing there to composite, in the wrong order
-            // or otherwise; the request stays mounted so
-            // loading still finishes in the background and
-            // [PlayerArtwork.loaded] still flips the moment it does.
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 // In the banner, Crop still takes the tighter slice
@@ -696,7 +678,87 @@ internal fun BoxScope.PortraitSleeve(
                         }
                     }
                 },
-        )
+        ) {
+            AsyncImage(
+                // Decode at the sleeve's *expanded* size, always.
+                // Coil otherwise sizes the decode to however large
+                // this is when the request goes out — and changing
+                // track from the queue does that while the sleeve is
+                // collapsed to a thumbnail, leaving a thumbnail-sized
+                // bitmap to be blown back up when the queue closes.
+                // Skipping tracks with the transport keeps it sharp
+                // only because the sleeve happens to be full size at
+                // that moment.
+                //
+                // Asked for at the source's own size rather than the
+                // sleeve's: the banner is taller than the card is
+                // wide, and the one bitmap has to serve both shapes
+                // with nothing to upscale between them.
+                model = art.request,
+                contentDescription = null,
+                // Video thumbnails are 16:9; letterboxing them inside
+                // the square sleeve looks like a broken frame.
+                contentScale = ContentScale.Crop,
+                onState = art::onState,
+                // TextureView-backed canvas frames can arrive
+                // before Coil has decoded the sleeve. Alpha alone
+                // doesn't hide this layer for that window: a
+                // TextureView composites through its own hardware
+                // layer, and on some devices that layer wins the
+                // stacking order against a sibling Compose layer
+                // even when that layer's alpha is zero — so the
+                // still image's empty placeholder still shows
+                // through, above a perfectly healthy animated
+                // cover. Skipping the draw call outright leaves
+                // nothing there to composite, in the wrong order
+                // or otherwise; the request stays mounted so
+                // loading still finishes in the background and
+                // [PlayerArtwork.loaded] still flips the moment it does.
+                modifier = Modifier.fillMaxSize(),
+            )
+            // The YouTube music video, when this row is one: the album art, the
+            // animated cover and the Canvas all stand down, the blurred backdrop
+            // stays, and the picture sits in the sleeve's own square with its
+            // quality and full-screen controls over it.
+            if (videoMode) {
+                var videoRendered by remember(song.videoId) { mutableStateOf(false) }
+                val videoAspect by PlayerPlatform.host.musicVideoAspect.collectAsStateWithLifecycle()
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    // The picture at the video's own shape, letterboxed in the
+                    // sleeve's frame — never stretched to the square.
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(videoAspect.takeIf { it > 0.1f } ?: (16f / 9f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (!videoRendered) VideoLoadingBackdrop(Modifier.fillMaxSize())
+                        MusicVideoSurface(
+                            videoId = song.videoId,
+                            fit = true,
+                            onRenderedChanged = { videoRendered = it },
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                    // Put away with the rest of the chrome while a panel is over it.
+                    if (!panels.lyricsOpen && !panels.queueOpen) {
+                        VideoCornerControls(
+                            fullscreen = false,
+                            onToggleFullscreen = onEnterVideoFullscreen,
+                            onOpenQuality = onOpenVideoQuality,
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(8.dp),
+                        )
+                    }
+                }
+            }
+        }
 
         // Where the clip plays when it can't have the banner:
         // inside the same clip as the still art, taking the
@@ -785,17 +847,27 @@ internal fun BoxScope.PortraitSleeve(
         // Measured stats stay on the sleeve's bottom centre. They
         // fade away with Spotify's lower control deck rather than
         // following the compact credits to the bottom edge.
+        //
+        // The Best Part pill stacks above them: the column is pinned to the
+        // bottom, so the pill coming and going never moves the stats. The
+        // one-shot conversion prompt stacks in the same place.
         WhileShown({ !collapsePastHalf() }) {
-            SleeveNerdStats(
-                song = song,
-                isPlaying = isPlaying,
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(horizontal = 10.dp, vertical = 8.dp)
                     .graphicsLayer {
                         alpha = (1f - p() * 2f) * spotifyChromeAlpha()
                     },
-            )
+            ) {
+                bestPart(Modifier.padding(bottom = BEST_PART_INSET))
+                convertToVideo(Modifier.padding(bottom = CONVERT_PROMPT_INSET))
+                SleeveNerdStats(
+                    song = song,
+                    isPlaying = isPlaying,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                )
+            }
         }
     }
 
@@ -944,3 +1016,9 @@ internal fun bannerDissolveRamp(startY: Float, endY: Float): Brush {
     }
     return Brush.verticalGradient(colorStops = colorStops, startY = startY, endY = endY)
 }
+
+/** The Best Part pill's gap above the foot of the artwork. */
+internal val BEST_PART_INSET = 14.dp
+
+/** The conversion prompt's gap above the foot of the artwork. */
+internal val CONVERT_PROMPT_INSET = 14.dp

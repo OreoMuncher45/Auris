@@ -67,10 +67,27 @@ class SflxHost(
     private val filesDirectory: File? = null,
     /** The client their downloads go through; a test brings one that trusts its own server. */
     private val filesClient: okhttp3.OkHttpClient? = null,
+    /** The client signed-session calls go through; null is the app's own. A test brings one for its mock gateway. */
+    private val sessionClient: okhttp3.OkHttpClient? = null,
 ) {
 
     /** One signed-session client per extension, made on first use. */
     private val sessions = java.util.concurrent.ConcurrentHashMap<String, SflxSignedSession>()
+
+    /**
+     * Guards creating a client against [replacing] flipping. Held only for a
+     * map lookup and a constructor, never across I/O or a client's own lock
+     * wait, so engine calls never queue behind a record write.
+     */
+    private val clientsLock = Any()
+
+    /**
+     * True while [replaceSessionRecords] writes records. A client created now,
+     * by any caller, including a leftover engine of an extension that was just
+     * removed, starts retired, so it can read but never save over the records
+     * being written.
+     */
+    private var replacing = false
 
     /**
      * Whether this extension's source row is switched on.
@@ -93,18 +110,25 @@ class SflxHost(
     fun sessionFor(installed: InstalledSflx): SflxSignedSession? {
         val directory = signedSessionsDirectory ?: return null
         val config = SignedSessionConfig.from(installed.manifest) ?: return null
-        return sessions.computeIfAbsent(installed.id) {
-            SflxSignedSession(
-                extensionId = installed.id,
-                config = config,
-                directory = directory,
-                onVerificationRequired = { url ->
-                    // A switched-off extension must not put a page on screen.
-                    if (enabled(installed)) {
-                        SflxVerify.open(installed.id, installed.manifest.displayName, url)
-                    }
-                },
-            )
+        sessions[installed.id]?.let { return it }
+        return synchronized(clientsLock) {
+            sessions.computeIfAbsent(installed.id) {
+                SflxSignedSession(
+                    extensionId = installed.id,
+                    config = config,
+                    directory = directory,
+                    onVerificationRequired = { url ->
+                        // A switched-off extension must not put a page on screen.
+                        if (enabled(installed)) {
+                            SflxVerify.open(installed.id, installed.manifest.displayName, url)
+                        }
+                    },
+                    httpClient = sessionClient ?: com.music.bitchord.data.Http.client,
+                ).also { client ->
+                    // Brand new, so its lock is free: this never waits.
+                    if (replacing) client.retire()
+                }
+            }
         }
     }
 
@@ -176,37 +200,84 @@ class SflxHost(
 
     /**
      * Redeems a grant that arrived as a deep link, without knowing which
-     * extension it belongs to.
-     *
-     * That is the shape a callback really arrives in: the verification page
-     * redirects to `mornye://session-grant?grant=…&state=…`, the system hands
-     * the URL to this app, and the URL names the challenge — not the package.
-     * The `state` is what identifies the extension, so it is matched against
-     * the challenge this host issued. When there is no state to match on and
-     * exactly one extension is waiting, that one is it, because a grant that
-     * arrives while one challenge is outstanding cannot belong to another.
+     * extension it belongs to. See [redeemGrant].
      */
-    fun completeGrantForState(grant: String, state: String?): Boolean {
-        if (grant.isBlank()) return false
-        val waiting = store.list().mapNotNull { installed ->
-            sessionFor(installed)?.takeIf { it.pendingState() != null }?.let { installed to it }
+    fun completeGrantForState(grant: String, state: String?): Boolean =
+        redeemGrant(null, grant, state, typed = false).isSuccess
+
+    /**
+     * Redeems a verification grant, and says why not when it can't.
+     *
+     * Which extension it is for:
+     *  - [typed] (the listener pasted it into the page opened for [extensionId]):
+     *    that extension, whatever `state` the pasted link carries. The page's
+     *    copy-link text keeps the state of the challenge it was solved for, and
+     *    the app forgets that challenge when its process is killed, when a
+     *    newer challenge replaces it after three minutes, or when an add-on
+     *    is reinstalled or imported. Refusing then left a pasted code that
+     *    could never work. The paste is the listener's own act, in a page the
+     *    app opened for that extension, so it carries the trust the state
+     *    check exists to supply.
+     *  - otherwise, the extension whose outstanding challenge has this `state`.
+     *    With no state and one challenge outstanding, that one. With no
+     *    challenge outstanding at all (the record of it died with the
+     *    process), the only enabled extension with a signed session. A grant
+     *    whose state names a different outstanding challenge is refused.
+     *
+     * Blocking network work; never call it on the main thread.
+     */
+    fun redeemGrant(
+        extensionId: String?,
+        grant: String,
+        state: String?,
+        typed: Boolean,
+    ): Result<Unit> {
+        if (grant.isBlank()) return Result.failure(SflxGrantRefused(SflxGrantRefused.REFUSED))
+        val target = (if (typed) extensionId else null)
+            ?.let { id -> store.find(id)?.let { installed -> sessionFor(installed) } }
+        // A paste is for the extension the page was opened for. If that one has
+        // since been removed (or no longer declares a signed session), or the
+        // page doesn't know it, the grant isn't any other extension's: handing
+        // it to whichever one is left would sign the listener in somewhere else.
+        if (typed && target == null) {
+            return Result.failure(SflxGrantRefused(SflxGrantRefused.NOT_WAITING))
         }
-        val matched = waiting.filter { (_, session) ->
-            state != null && session.pendingState() == state
-        }.ifEmpty {
-            if (state == null && waiting.size == 1) waiting else emptyList()
-        }
-        for ((_, session) in matched) {
-            val ok = runCatching { session.completeGrant(grant, state ?: session.pendingState()) }
-                .getOrDefault(false)
-            if (ok) {
-                Log.d(TAG, "a verification grant arrived by deep link and was redeemed")
-                SflxCatalog.refreshStatuses()
-                return true
+        // Each candidate: the client, the state to check, and whether it was
+        // chosen only because no challenge was outstanding.
+        val candidates: List<Triple<SflxSignedSession, String?, Boolean>> = if (target != null) {
+            listOf(Triple(target, null, false))
+        } else {
+            val signed = store.list().filter(::enabled).mapNotNull(::sessionFor)
+            // pendingState() is read without the session lock, so each is read
+            // once: a second read could see a challenge cleared mid-bootstrap and
+            // carry no state to bind the exchange to.
+            val waiting = signed.mapNotNull { session -> session.pendingState()?.let { session to it } }
+            val byState = waiting.filter { (_, pending) -> state != null && pending == state }
+            when {
+                byState.isNotEmpty() -> byState.map { (session, _) -> Triple(session, state, false) }
+                state == null && waiting.size == 1 ->
+                    waiting.single().let { (session, pending) -> listOf(Triple(session, pending, false)) }
+                waiting.isEmpty() && signed.size == 1 -> listOf(Triple(signed.single(), null, true))
+                else -> emptyList()
             }
         }
-        Log.w(TAG, "a verification grant arrived but matched no outstanding challenge")
-        return false
+        if (candidates.isEmpty()) {
+            Log.w(TAG, "a verification grant arrived but matched no outstanding challenge")
+            return Result.failure(SflxGrantRefused(SflxGrantRefused.NOT_WAITING))
+        }
+        var failure: SflxGrantRefused? = null
+        for ((session, expected, onlyWithoutChallenge) in candidates) {
+            val ok = runCatching { session.completeGrant(grant, expected, onlyWithoutChallenge) }
+                .onFailure { failure = SflxGrantRefused.from(it) }
+                .getOrDefault(false)
+            if (ok) {
+                Log.d(TAG, "a verification grant was redeemed")
+                SflxCatalog.refreshStatuses()
+                return Result.success(Unit)
+            }
+        }
+        SflxCatalog.refreshStatuses()
+        return Result.failure(failure ?: SflxGrantRefused(SflxGrantRefused.REFUSED))
     }
 
     /** A URL the listener must visit to verify [id], when one is pending. */
@@ -804,7 +875,6 @@ class SflxHost(
                 )
             }
             Log.d(TAG, "sflx load ${installed.id} v${installed.manifest.version} (${script.length} chars)")
-            val session = sessionFor(installed)
             QuickJsExecutor.loadModule(
                 moduleId = moduleId,
                 jsCode = script,
@@ -828,10 +898,26 @@ class SflxHost(
                 // like a catalogue refusing, and is why some of them searched but
                 // never streamed.
                 allowedHosts = installed.manifest.permissions.networkHosts.takeIf { it.isNotEmpty() },
-                sessionCall = session?.let { client -> { method, args -> client.sessionCall(method, args) } },
+                sessionCall = sessionCallFor(installed),
                 fileCall = filesFor(installed)?.let { folder -> { method, args -> folder.call(method, args) } },
             ).onFailure { Log.w(TAG, "sflx load failed for ${installed.id}: ${it.message}") }
         }
+    }
+
+    /**
+     * The `sessionCall` an engine is loaded with, or null when [installed]
+     * declares no signed session.
+     *
+     * Bound to the extension, not to one client. Each call looks up the
+     * current client in the map, so an engine that outlives a client (an
+     * import retires and replaces every client) moves to the new one on its
+     * next call, and keeps persisting refreshes and grants. Only a call
+     * already running on the old client stays on it, and that client is
+     * retired, so it can't write a stale record.
+     */
+    internal fun sessionCallFor(installed: InstalledSflx): ((String, String) -> String)? {
+        val first = sessionFor(installed) ?: return null
+        return { method, args -> (sessionFor(installed) ?: first).sessionCall(method, args) }
     }
 
     /** One lock per extension, so two callers cannot load the same package twice. */
@@ -914,10 +1000,93 @@ class SflxHost(
                 // Its folder's network list is the new manifest's, not the old one.
                 files.remove(installed.id)
                 // And its signed-session client is built from the new manifest.
-                sessions.remove(installed.id)
+                dropSession(installed.id)
                 installed
             }
         }.onFailure { Log.w(TAG, "sflx install failed: ${it.message}") }
+
+    /**
+     * Writes a package restored from an add-ons backup, then drops everything
+     * the running copy held, for the same reasons as [install].
+     */
+    fun restore(id: String, files: Map<String, ByteArray>): Result<InstalledSflx> =
+        runCatching {
+            synchronized(lifecycle) {
+                val installed = store.restore(id, files)
+                unload(installed.id)
+                this.files.remove(installed.id)
+                dropSession(installed.id)
+                installed
+            }
+        }.onFailure { Log.w(TAG, "sflx restore failed: ${it.message}") }
+
+    /** [id]'s package files for a backup, read under the lock install and removal take. */
+    fun exportFiles(id: String): Map<String, ByteArray>? = synchronized(lifecycle) { store.exportFiles(id) }
+
+    /**
+     * Drops every signed-session client, so the next signed call reads its
+     * record from disk again. Used after an import writes session records
+     * under extensions that are already running.
+     */
+    fun reloadSessions() = synchronized(lifecycle) { dropAllSessions() }
+
+    /**
+     * Takes [id]'s client out of the map and retires it.
+     *
+     * The invariant this keeps: a client that is no longer in the map is
+     * retired. A call running on a client keeps it until the call ends, so a
+     * client dropped without retiring could still save, and the next
+     * [replaceSessionRecords], which only reaches the map, could never stop
+     * it. Every removal goes through here or [dropAllSessions]. Engines don't
+     * hold clients past a call; see [sessionCallFor].
+     */
+    private fun dropSession(id: String) {
+        synchronized(clientsLock) { sessions.remove(id) }?.retire()
+    }
+
+    /**
+     * Retires and drops every client. Loaded engines need no reload: their
+     * next session call builds a fresh client that can save (see [sessionCallFor]).
+     *
+     * Removes key by key and retires exactly what each removal took, never a
+     * blanket `clear()`. [sessionFor] doesn't take the lifecycle lock, so a
+     * client it creates concurrently is either removed here, and so retired,
+     * or created after its key's removal and left in the map. No client
+     * leaves the map unretired.
+     */
+    private fun dropAllSessions() {
+        sessions.keys.toList().forEach(::dropSession)
+    }
+
+    /**
+     * Runs [write], which replaces signed-session records on disk, so that no
+     * client can write a stale record over it.
+     *
+     * Every installed extension first gets a client in the map, and every
+     * client is retired, which waits out any save in progress. While [write]
+     * runs, callers get those retired clients: they read the disk as usual but
+     * never save. A fresh client can't be created mid-write and read the old
+     * record. Afterwards the map is cleared, so the next call builds clients
+     * that read the restored records.
+     */
+    fun <T> replaceSessionRecords(write: () -> T): T = synchronized(lifecycle) {
+        runCatching { store.list() }.getOrDefault(emptyList()).forEach { sessionFor(it) }
+        // From here every new client is born retired, for any extension,
+        // installed or not. The snapshot covers every client made before the flip.
+        val existing = synchronized(clientsLock) {
+            replacing = true
+            sessions.values.toList()
+        }
+        try {
+            // Outside clientsLock: a retire may wait out a save in progress, and
+            // callers asking for a client must not wait with it.
+            existing.forEach { it.retire() }
+            write()
+        } finally {
+            synchronized(clientsLock) { replacing = false }
+            dropAllSessions()
+        }
+    }
 
     fun remove(id: String): Boolean = synchronized(lifecycle) {
         // All of it under the lock: a reinstall between deleting the package
@@ -926,7 +1095,7 @@ class SflxHost(
         if (removed) {
             unload(id)
             clearFiles(id)
-            sessions.remove(id)
+            dropSession(id)
         }
         removed
     }

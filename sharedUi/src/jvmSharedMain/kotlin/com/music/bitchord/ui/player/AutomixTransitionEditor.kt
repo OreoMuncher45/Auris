@@ -748,18 +748,9 @@ internal fun AutomixTransitionEditor(
                     // the handoff somewhere the listener did not choose.
                     if (decided && horizontal) {
                         val finished = live
-                        // Only a gesture that moved the box is a choice of window.
-                        // A pan or a lane drag leaves it where it was, though the
-                        // planner may have moved the panel's window meanwhile.
-                        val movedWindow = grabbed == Grab.START_EDGE ||
-                            grabbed == Grab.END_EDGE || grabbed == Grab.BODY
-                        if (movedWindow && (finished.start != opened.start || finished.end != opened.end)) {
+                        if (finished.start != latestWindow.start || finished.end != latestWindow.end) {
                             pending = finished
                             latestOnWindow(finished)
-                        } else if (latestWindow.length > 0.0) {
-                            // The sync above sat out the drag and will not run
-                            // again until the window changes, so catch up here.
-                            live = latestWindow
                         }
                         // The arriving track was moved, so the engine is told
                         // where it was put. Without this the drag was drawing
@@ -773,9 +764,7 @@ internal fun AutomixTransitionEditor(
                         // instead is what made the lane snap back to the
                         // beginning every single time it was moved.
                         if (grabbed == Grab.ARRIVING) {
-                            // Stopped where the drawing stopped: the cue cannot go
-                            // below the track's beginning.
-                            val moved = movedTo(lastX).coerceAtMost(startedAtCue)
+                            val moved = movedTo(lastX)
                             if (abs(moved) > 0.02) {
                                 latestOnCue(automixIncomingShift(startedAtShift, moved))
                             }

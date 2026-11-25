@@ -85,6 +85,7 @@ import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.ROW_ART_PX
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.isSamePlayingTrack
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.model.isQuickPicksShelfTitle
 import java.util.Locale
@@ -130,7 +131,7 @@ private const val SHORTCUT_SHELF_TITLE = "Shortcuts"
 private fun ShelfItem.matchesCurrentlyPlaying(song: Song?): Boolean {
     song ?: return false
     if (videoId == null) return false
-    return videoId == song.videoId || (title == song.title && subtitle == song.artist)
+    return isSamePlayingTrack(videoId, title, subtitle, song.videoId, song.title, song.artist)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1156,9 +1157,10 @@ internal fun SectionHeader(
                 )
             }
         }
-        if (trailing != null) {
-            trailing()
-        } else if (onShowAll != null) {
+        // Both, when a shelf offers both: "Show all" and the list/grid switch
+        // belong at the same end of the heading, and a shelf that can be either
+        // layout must keep the way out of the one it is in.
+        if (onShowAll != null) {
             Text(
                 text = stringResource(Res.string.show_all),
                 style = MaterialTheme.typography.titleSmall,
@@ -1167,7 +1169,10 @@ internal fun SectionHeader(
                     .clickable(onClick = onShowAll)
                     .padding(start = 12.dp, top = 4.dp, bottom = 4.dp),
             )
-        } else if (onNavigate != null) {
+        }
+        if (trailing != null) {
+            trailing()
+        } else if (onShowAll == null && onNavigate != null) {
             Icon(
                 imageVector = BitChordIcons.ChevronRight,
                 contentDescription = null,

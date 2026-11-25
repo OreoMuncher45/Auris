@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
@@ -19,6 +20,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -47,6 +49,7 @@ class MenuHostTest {
     val compose = createComposeRule()
 
     private val host = MenuHostState()
+    private val playerHostEnabled = mutableStateOf(false)
 
     /** A button-sized rectangle a third of the way down the end edge, in window pixels. */
     private val button = Rect(left = 1_000f, top = 800f, right = 1_100f, bottom = 900f)
@@ -61,7 +64,10 @@ class MenuHostTest {
         compose.setContent {
             MaterialTheme {
                 CompositionLocalProvider(LocalMenuHost provides host) {
-                    Box(Modifier.fillMaxSize()) { MenuHostOverlay(host) }
+                    Box(Modifier.fillMaxSize()) {
+                        MenuHostOverlay(host, fromPlayer = false)
+                        if (playerHostEnabled.value) MenuHostOverlay(host, fromPlayer = true)
+                    }
                 }
             }
         }
@@ -95,6 +101,33 @@ class MenuHostTest {
         val buttonBottom = with(compose.density) { button.bottom.toDp() }
         assertTrue("the menu opens below its anchor", row.top >= buttonBottom)
         assertTrue("…right under it", row.top - buttonBottom < 40.dp)
+    }
+
+    @Test
+    fun aCenteredCardIsCentredInTheWindow() {
+        host.open(button, centered = true) { close ->
+            MenuRow(icon = null, label = "Quality", ink = Color.White, modifier = Modifier.testTag(ROW)) { close() }
+        }
+        compose.waitForIdle()
+
+        val root = compose.onRoot().getUnclippedBoundsInRoot()
+        val row = compose.onNodeWithTag(ROW).getUnclippedBoundsInRoot()
+        // Placement is integer-pixel; allow the resulting fraction of a dp.
+        assertEquals((root.left + root.right).value / 2f, (row.left + row.right).value / 2f, 0.51f)
+    }
+
+    @Test
+    fun aPlayerRequestIsRenderedOnlyByThePlayerHost() {
+        host.open(button, fromPlayer = true) { close ->
+            MenuRow(icon = null, label = "Quality", ink = Color.White, modifier = Modifier.testTag(ROW)) { close() }
+        }
+        compose.waitForIdle()
+        compose.onNodeWithTag(ROW).assertDoesNotExist()
+
+        playerHostEnabled.value = true
+        Snapshot.sendApplyNotifications()
+        compose.waitForIdle()
+        compose.onNodeWithTag(ROW).assertIsDisplayed()
     }
 
     @Test

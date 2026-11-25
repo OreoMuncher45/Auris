@@ -38,13 +38,14 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.itemsIndexed as gridItemsIndexed
 import com.music.bitchord.ui.components.LazyContent
+import com.music.bitchord.ui.components.ShelfRow
+import com.music.bitchord.ui.components.ShelfSnap
 import com.music.bitchord.ui.components.rememberShelfKeys
 import com.music.bitchord.ui.components.uniqueKeys
 import com.music.bitchord.ui.components.ROW_REMOVAL_FADE_OUT
@@ -62,6 +63,7 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.ui.graphics.luminance
 import com.music.bitchord.data.model.LibraryState
+import com.music.bitchord.data.spotify.SPOTIFY_ARTIST_PREFIX
 import com.music.bitchord.data.spotify.SpotifyArtistStats
 import com.music.bitchord.data.spotify.SpotifyArtistStatsProvider
 import androidx.compose.material.icons.rounded.Close
@@ -101,6 +103,7 @@ import androidx.compose.ui.draw.BlurredEdgeTreatment
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -194,9 +197,6 @@ private const val ARTIST_ROW_MAX_ITEMS = 5
 /** The artist photo, very slightly taller than it is wide. */
 private const val ARTIST_PHOTO_RATIO = 0.95f
 
-/** A release's sleeve, given a little more height than the artist photo. */
-private const val SLEEVE_RATIO = 0.92f
-
 /** The sleeve on a release page, as a fraction of the page width. */
 private const val SLEEVE_FRACTION = 0.80f
 
@@ -277,6 +277,8 @@ fun DetailScreen(
     onSongLongPress: (Song) -> Unit,
     onSongSwipe: (Song) -> Unit,
     onShuffle: (List<Song>) -> Unit,
+    /** The Play button: the songs from the top, in order. */
+    onPlay: (List<Song>) -> Unit,
     onSectionItemClick: (ShelfItem) -> Unit,
     onArtistClick: (String, String) -> Unit,
     onAddSuggested: (Song) -> Unit,
@@ -398,7 +400,17 @@ fun DetailScreen(
     var spotifyStats by remember(page.browseId) { mutableStateOf<SpotifyArtistStats?>(null) }
     LaunchedEffect(page.browseId, page.title, nameSettled, isArtist) {
         if (isArtist && nameSettled) {
-            spotifyStats = SpotifyArtistStatsProvider.load(page.title)
+            // One set of counts on every artist page, whichever catalogue it
+            // was opened from — Auris's search already reads Spotify and
+            // YouTube together, so an artist is the same artist everywhere.
+            // Opened from Spotify's catalogue the id is in hand and the page is
+            // scraped directly; an Apple or YouTube artist has no Spotify id, so
+            // the artist is found by name and read the same way.
+            spotifyStats = if (page.browseId.startsWith(SPOTIFY_ARTIST_PREFIX)) {
+                SpotifyArtistStatsProvider.loadById(page.browseId.removePrefix(SPOTIFY_ARTIST_PREFIX))
+            } else {
+                SpotifyArtistStatsProvider.load(page.title)
+            }
         }
     }
     val palette = rememberArtworkPalette(
@@ -523,18 +535,26 @@ fun DetailScreen(
                 // Capping against the window's own height is what keeps the ratio's
                 // math honest once the width it's fed is no longer guaranteed to be
                 // the narrow one it was written for.
-                val artHeight = (maxWidth / if (isArtist) ARTIST_PHOTO_RATIO else SLEEVE_RATIO)
-                    .coerceAtMost(maxHeight * 0.6f)
+                val artHeight = (maxWidth / ARTIST_PHOTO_RATIO).coerceAtMost(maxHeight * 0.6f)
+                // The release's framed sleeve: about four fifths of the width,
+                // capped so a wide window cannot make it taller than the list
+                // it heads.
+                val sleeveSize = (maxWidth * SLEEVE_FRACTION).coerceAtMost(maxHeight * 0.5f)
 
-                PageBackground(
-                    page = page,
-                    palette = palette,
-                    canvas = canvas,
-                    artHeight = artHeight,
-                    listState = listState,
-                    heroUrl = appleArt?.heroUrl,
-                    modifier = Modifier.matchParentSize(),
-                )
+                // The photo band is the artist page's alone now: a release's
+                // artwork is the framed sleeve in its header, so there is no
+                // full-width picture behind the list to draw.
+                if (isArtist) {
+                    PageBackground(
+                        page = page,
+                        palette = palette,
+                        canvas = canvas,
+                        artHeight = artHeight,
+                        listState = listState,
+                        heroUrl = appleArt?.heroUrl,
+                        modifier = Modifier.matchParentSize(),
+                    )
+                }
 
                 LazyColumn(
                     state = listState,
@@ -550,10 +570,11 @@ fun DetailScreen(
                     ReleaseHeader(
                         page = page,
                         palette = palette,
-                        artHeight = artHeight,
+                        sleeveSize = sleeveSize,
+                        canvas = canvas,
                         trackCount = songs.size,
                         songs = songs,
-                        onPlay = { onSongClick(songs, 0) },
+                        onPlay = { onPlay(songs) },
                         onShuffle = { onShuffle(songs) },
                         searching = searching,
                         onSearch = {
@@ -628,7 +649,7 @@ fun DetailScreen(
                 item(key = "actions") {
                     ActionRow(
                         palette = palette,
-                        onPlay = { onSongClick(songs, 0) },
+                        onPlay = { onPlay(songs) },
                         onShuffle = { onShuffle(songs) },
                         subscription = page.subscription?.takeIf { onToggleSubscription != null },
                         onToggleSubscription = onToggleSubscription,
@@ -703,9 +724,13 @@ fun DetailScreen(
                         )
                         BoxWithConstraints {
                             val columnWidth = trackColumnWidth(maxWidth)
-                            LazyRow(
+                            // Home's Recents shelf, the same way: a column is most of the row
+                            // wide, so a fling turns one page of four songs and settles on the
+                            // heading's inset instead of stopping partway through a column.
+                            ShelfRow(
                                 contentPadding = PaddingValues(horizontal = ARTIST_CONTENT_GUTTER),
                                 horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                snap = ShelfSnap.OneItemPerFling,
                             ) {
                                 itemsIndexed(
                                     topColumns,
@@ -856,7 +881,8 @@ fun DetailScreen(
                         onShowAll = if (canShowAll) { { onActiveShelfChange(shelf) } } else null,
                         horizontalPadding = ARTIST_CONTENT_GUTTER,
                     )
-                    LazyRow(
+                    // Settles on the nearest card, like Home's card shelves.
+                    ShelfRow(
                         contentPadding = PaddingValues(horizontal = ARTIST_CONTENT_GUTTER),
                         horizontalArrangement = Arrangement.spacedBy(14.dp),
                     ) {
@@ -921,7 +947,9 @@ fun DetailScreen(
 private fun ReleaseHeader(
     page: DetailPage,
     palette: ArtworkPalette,
-    artHeight: Dp,
+    /** The framed sleeve at the head of the page — the cover a card flies into. */
+    sleeveSize: Dp,
+    canvas: CanvasArtwork?,
     trackCount: Int,
     songs: List<Song>,
     onPlay: () -> Unit,
@@ -938,20 +966,47 @@ private fun ReleaseHeader(
     // own long-press "Open artist" already reads from.
     val artist = songs.firstOrNull()
 
-    // The outer Box just needs to be as tall as its content — we don't force
-    // an aspect ratio here so the action buttons can extend below the artwork.
-    Box(Modifier.fillMaxWidth()) {
-
-        Spacer(Modifier.fillMaxWidth().height(artHeight + HEADER_DROP))
-
-        // Text + action row stacked, pinned to the bottom of the Box.
-        Column(
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = topBarContentPadding(), bottom = 14.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        // The release's own sleeve, framed and centred at the head of the page —
+        // the picture a card's cover flew into (see ArtworkFlight). The page
+        // behind it is one wash of the record's colour, so a landed cover has
+        // nothing to seam against.
+        Box(
             modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .padding(bottom = 14.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
+                .size(sleeveSize)
+                .shadow(10.dp, SLEEVE_SHAPE)
+                .background(palette.elevated)
+                .thumbnailBorder(SLEEVE_SHAPE)
+                .artworkArrival(page.browseId, corner = 12.dp, wash = palette.wash),
         ) {
+            AsyncImage(
+                model = page.thumbnailUrl.artworkAt(HEADER_ART_PX),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                // The moment the page's own sleeve has drawn, the cover that
+                // flew in may let go of it.
+                onState = {
+                    if (it is AsyncImagePainter.State.Success) artworkArrivalDrawn(page.browseId)
+                },
+                modifier = Modifier.matchParentSize(),
+            )
+            // Animated cover art inside the same frame, always running: this
+            // page is only up while it is being read.
+            canvas?.let { clip ->
+                CanvasArtworkPlayer(
+                    canvas = clip,
+                    isPlaying = true,
+                    modifier = Modifier.matchParentSize(),
+                )
+            }
+        }
+
+        Spacer(Modifier.height(20.dp))
             Text(
                 text = page.title,
                 style = MaterialTheme.typography.headlineMedium,
@@ -1009,18 +1064,39 @@ private fun ReleaseHeader(
                 // header gutter instead of running off the edge.
                 val circles = listOfNotNull(library, onMore).size + 2 // + Shuffle, Search
                 val full = circles >= 4
-                val circleSize = if (full) 46.dp else 50.dp
+                // The labelled Play pill is wider than the circle it replaces, so
+                // a full row comes down a little and closes up a little to keep
+                // five controls inside the gutter on a 360dp screen.
+                val circleSize = if (full) 42.dp else 50.dp
                 Spacer(Modifier.height(14.dp))
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = HEADER_GUTTER),
                     horizontalArrangement = Arrangement.spacedBy(
-                        if (full) 8.dp else 10.dp,
+                        if (full) 6.dp else 10.dp,
                         Alignment.CenterHorizontally,
                     ),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    CircleIconButton(
+                        icon = BitChordIcons.Shuffle,
+                        contentDescription = stringResource(R.string.shuffle),
+                        palette = palette,
+                        onClick = onShuffle,
+                        haptic = Haptic.Resume,
+                        size = circleSize,
+                    )
+                    // The primary action is the labelled pill Apple Music (and
+                    // Zenith) lead with — "Play" spelled out — not one more
+                    // circle among the rest. Shuffle, Play, then save: the order
+                    // upstream puts them in.
+                    PlayPill(
+                        onClick = onPlay,
+                        iconOnly = false,
+                        size = circleSize,
+                        horizontalPadding = if (full) 16.dp else 26.dp,
+                    )
                     if (library != null) {
                         CircleIconButton(
                             // A tick, not a filled-in plus: the pair reads as
@@ -1037,19 +1113,6 @@ private fun ReleaseHeader(
                             size = circleSize,
                         )
                     }
-                    CircleIconButton(
-                        icon = BitChordIcons.Shuffle,
-                        contentDescription = stringResource(R.string.shuffle),
-                        palette = palette,
-                        onClick = onShuffle,
-                        haptic = Haptic.Resume,
-                        size = circleSize,
-                    )
-                    PlayPill(
-                        onClick = onPlay,
-                        iconOnly = true,
-                        size = circleSize,
-                    )
                     // Where the download circle used to be. Downloading a
                     // release is a thing done once and then not thought about;
                     // finding a track on a long playlist is a thing done while
@@ -1081,7 +1144,6 @@ private fun ReleaseHeader(
                 }
             }
         }
-    }
 }
 
 /**

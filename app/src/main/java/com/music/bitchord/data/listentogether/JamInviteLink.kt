@@ -142,6 +142,7 @@ object JamInviteLink {
         return withScheme
     }
 
-    private val INVITE_PATH = Regex("""/invite/([A-Za-z0-9]{${ListenTogether.CODE_LENGTH}})""")
+    // Case-insensitive, as the shared JamInvite.parse is: both apps must read a link the same way.
+    private val INVITE_PATH = Regex("""/invite/([A-Za-z0-9]{${ListenTogether.CODE_LENGTH}})""", RegexOption.IGNORE_CASE)
 }
 

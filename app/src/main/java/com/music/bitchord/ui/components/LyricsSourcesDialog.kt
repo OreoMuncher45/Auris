@@ -42,10 +42,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -163,12 +165,8 @@ fun LyricsSourcesDialog(
         )
 
         AlertRule()
-        AlertAction(
-            label = stringResource(
-                if (paxSenixApiKey.isBlank()) R.string.paxsenix_api_key_missing
-                else R.string.paxsenix_api_key_configured,
-            ),
-            emphasised = false,
+        PaxSenixApiKeyRow(
+            configured = paxSenixApiKey.isNotBlank(),
             onClick = { showPaxSenixKeyDialog = true },
         )
         if (lyricsExtension != null) {
@@ -219,6 +217,50 @@ fun LyricsSourcesDialog(
             onDismiss = { showPaxSenixKeyDialog = false },
             isPassword = true,
         )
+    }
+}
+
+/**
+ * The PaxSenix key, as a title with its state underneath rather than one
+ * long action label: said in a single line, the "optional, not configured"
+ * state ran past the card's width and over its own edge.
+ */
+@Composable
+private fun PaxSenixApiKeyRow(configured: Boolean, onClick: () -> Unit) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = ACTION_HEIGHT)
+            .background(
+                if (pressed) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.09f) else Color.Transparent,
+            )
+            .clickable(
+                indication = null,
+                interactionSource = interactionSource,
+                onClick = onClick,
+            )
+            .padding(horizontal = 16.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = stringResource(R.string.paxsenix_api_key),
+                style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp),
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                text = stringResource(
+                    if (configured) R.string.paxsenix_api_key_configured
+                    else R.string.paxsenix_api_key_missing,
+                ),
+                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp, lineHeight = 15.sp),
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 
@@ -283,8 +325,8 @@ private fun SyllableSyncToggle(checked: Boolean, onToggle: () -> Unit) {
  * the gesture that produced it.
  *
  * The drag keeps exactly two numbers: how far the finger has come since it
- * went down ([totalDrag]), and which slot it went down on ([startIndex]).
- * Where to draw the row and which slot it belongs in are both *derived* from
+ * went down ([totalDrag]), and where its slot began ([startTop]), with the
+ * row pitches frozen at the start of the gesture. Where to draw the row and which slot it belongs in are both *derived* from
  * those, so neither can drift from the other however many swaps happen on the
  * way. See [SWAP_THRESHOLD] for why the crossing point is past the halfway
  * mark rather than on it.
@@ -307,21 +349,24 @@ private fun ReorderableSourceList(
     /** Distance the finger has covered since this gesture began, in pixels. */
     var totalDrag by remember { mutableStateOf(0f) }
 
-    /** Which slot of [liveOrder] it began on. */
-    var startIndex by remember { mutableStateOf(0) }
-
     // The distance from one row's top to the next one's — which is the row
     // *plus* the hairline above it, not the row alone. Measured off a wrapper
     // holding both, because measuring the row by itself left every swap
     // short by the width of a rule and the error compounded down the list.
     //
-    // All the rows are the same height by construction (one line of label,
-    // one of detail, both capped), so whichever reports last is as good as
-    // any other; [lockedPitchPx] then freezes it for the duration of a
-    // gesture, so a relayout mid-drag can't move the boundaries the drag is
-    // being measured against underneath it.
-    var pitchPx by remember { mutableStateOf(0f) }
-    var lockedPitchPx by remember { mutableStateOf(0f) }
+    // Kept per row: a detail may take two lines, so one row can stand
+    // taller than the next, and a single shared pitch put the swap points
+    // and the held row's offset off by the difference. Plain maps rather
+    // than state — nothing draws them; they are read inside the gesture and
+    // the draw-phase offset, which [totalDrag] already re-runs. The locked
+    // copy freezes them for the duration of a gesture, so a relayout mid-drag
+    // can't move the boundaries the drag is being measured against.
+    val rowPitches = remember { HashMap<LyricsSource, Float>() }
+    val lockedPitches = remember { HashMap<LyricsSource, Float>() }
+    fun pitchOf(source: LyricsSource) = lockedPitches[source] ?: 0f
+
+    /** Where the held row's slot began, from the top of the list. */
+    var startTop by remember { mutableStateOf(0f) }
 
     val scrollState = rememberScrollState()
     var viewportHeightPx by remember { mutableStateOf(0f) }
@@ -330,7 +375,7 @@ private fun ReorderableSourceList(
     val edgeZonePx = with(density) { SOURCE_EDGE_SCROLL_ZONE.toPx() }
     val edgeSpeedPx = with(density) { SOURCE_EDGE_SCROLL_SPEED.toPx() }
 
-    // Because [totalDrag] and [startIndex] are the only state a swap needs
+    // Because [totalDrag] and [startTop] are the only state a swap needs
     // (see the class doc above), scrolling the card by some amount and adding
     // that same amount to [totalDrag] cancel out exactly: the row's position
     // relative to the *content* moves with the scroll, but its position in
@@ -340,41 +385,25 @@ private fun ReorderableSourceList(
     // would be.
     fun advanceDrag(delta: Float) {
         val source = draggedSource ?: return
-        val pitch = lockedPitchPx
+        val pitch = pitchOf(source)
         if (pitch <= 0f) return
-        var index = liveOrder.indexOf(source)
-        if (index < 0) return
+        if (liveOrder.indexOf(source) < 0) return
 
         // Held past either end the row stops there under the finger, rather
         // than running off the list and having to be dragged all the way back
         // before it answers again.
-        totalDrag = (totalDrag + delta).coerceIn(
-            -startIndex * pitch,
-            (liveOrder.lastIndex - startIndex) * pitch,
-        )
+        val listHeight = liveOrder.sumOf { pitchOf(it).toDouble() }.toFloat()
+        totalDrag = (totalDrag + delta).coerceIn(-startTop, listHeight - pitch - startTop)
 
-        // A loop, not an `if`: one pointer event — or one frame of
-        // auto-scroll — can cover several rows when it's quick, and settling
-        // one row per event would leave the list trailing behind it.
-        while (true) {
-            val travelled = totalDrag / pitch
-            val moved = (index - startIndex).toFloat()
-            if (travelled > moved + SWAP_THRESHOLD && index < liveOrder.lastIndex) {
-                liveOrder = liveOrder.toMutableList().apply { add(index + 1, removeAt(index)) }
-                index++
-            } else if (travelled < moved - SWAP_THRESHOLD && index > 0) {
-                liveOrder = liveOrder.toMutableList().apply { add(index - 1, removeAt(index)) }
-                index--
-            } else {
-                break
-            }
-        }
+        val settled = settleSourceDrag(liveOrder, source, startTop + totalDrag, ::pitchOf)
+        if (settled != liveOrder) liveOrder = settled
+        val index = liveOrder.indexOf(source)
 
         // Read fresh off the same numbers [advanceDrag] just moved, rather
         // than tracked separately: the row's top in the viewport is its
-        // content position — [startIndex] times the pitch, plus how far it has
+        // content position — the top of the slot it began in, plus how far it has
         // travelled — less however far the card itself has scrolled.
-        val top = startIndex * pitch + totalDrag - scrollState.value
+        val top = startTop + totalDrag - scrollState.value
         val speed = edgeScrollSpeed(
             top = top,
             bottom = top + pitch,
@@ -409,9 +438,16 @@ private fun ReorderableSourceList(
         }
     }
 
+    // A share of the screen rather than a fixed height alone: on a short
+    // screen the fixed cap left the card taller than the room it had, and the
+    // last rows were cut off below the buttons instead of scrolled to.
+    val screenHeight = LocalConfiguration.current.screenHeightDp.dp
+    val maxHeight = (screenHeight * 0.42f).coerceIn(180.dp, SOURCES_MAX_HEIGHT)
+
     Column(
         modifier = Modifier
-            .heightIn(max = SOURCES_MAX_HEIGHT)
+            .heightIn(max = maxHeight)
+            .clipToBounds()
             // Measured outside [verticalScroll] on purpose: inside it, this
             // would report the full, unclipped height of every row stacked up
             // rather than the capped card height, since verticalScroll gives
@@ -446,7 +482,7 @@ private fun ReorderableSourceList(
                     modifier = Modifier
                         .fillMaxWidth()
                         .zIndex(if (dragging) 1f else 0f)
-                        .onSizeChanged { pitchPx = it.height.toFloat() }
+                        .onSizeChanged { rowPitches[source] = it.height.toFloat() }
                         .graphicsLayer {
                             // Read here rather than in composition: this runs
                             // once a frame in the draw phase, so a drag moves
@@ -458,7 +494,7 @@ private fun ReorderableSourceList(
                             // relocates the slot and shortens this offset by
                             // exactly as much, and the row does not budge.
                             translationY = if (dragging) {
-                                totalDrag - (liveOrder.indexOf(source) - startIndex) * lockedPitchPx
+                                startTop + totalDrag - sourceSlotTop(liveOrder, liveOrder.indexOf(source), ::pitchOf)
                             } else {
                                 0f
                             }
@@ -496,8 +532,9 @@ private fun ReorderableSourceList(
                                         onDragStart = {
                                             draggedSource = source
                                             totalDrag = 0f
-                                            startIndex = liveOrder.indexOf(source)
-                                            lockedPitchPx = pitchPx
+                                            lockedPitches.clear()
+                                            lockedPitches.putAll(rowPitches)
+                                            startTop = sourceSlotTop(liveOrder, liveOrder.indexOf(source), ::pitchOf)
                                             autoScroll.setSpeed(0f)
                                         },
                                         onDrag = { change, delta ->
@@ -530,9 +567,9 @@ private fun ReorderableSourceList(
                             )
                             Text(
                                 text = source.detail,
-                                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp),
+                                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp, lineHeight = 15.sp),
                                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                                maxLines = 1,
+                                maxLines = 2,
                                 overflow = TextOverflow.Ellipsis,
                             )
                         }
@@ -552,9 +589,49 @@ private fun ReorderableSourceList(
     }
 }
 
+/** The top of slot [index] in [order]: the pitches of every row above it. */
+internal fun <T> sourceSlotTop(order: List<T>, index: Int, pitch: (T) -> Float): Float {
+    var top = 0f
+    for (i in 0 until index) top += pitch(order[i])
+    return top
+}
+
+/**
+ * [order] with [dragged] moved to the slot its held top — [top], from the top
+ * of the list — has carried it to.
+ *
+ * A row trades places with a neighbour once it has travelled
+ * [SWAP_THRESHOLD] of *that neighbour's* pitch past its own slot, so rows of
+ * different heights swap where the finger meets them. With every row the same
+ * height it is exactly the old one-pitch-per-row rule.
+ *
+ * A loop, not an `if`: one pointer event — or one frame of auto-scroll — can
+ * cover several rows when it's quick, and settling one row per event would
+ * leave the list trailing behind it.
+ */
+internal fun <T> settleSourceDrag(order: List<T>, dragged: T, top: Float, pitch: (T) -> Float): List<T> {
+    var index = order.indexOf(dragged)
+    if (index < 0) return order
+    var settled = order
+    var slot = sourceSlotTop(order, index, pitch)
+    while (true) {
+        if (index < settled.lastIndex && top - slot > pitch(settled[index + 1]) * SWAP_THRESHOLD) {
+            slot += pitch(settled[index + 1])
+            settled = settled.toMutableList().apply { add(index + 1, removeAt(index)) }
+            index++
+        } else if (index > 0 && slot - top > pitch(settled[index - 1]) * SWAP_THRESHOLD) {
+            slot -= pitch(settled[index - 1])
+            settled = settled.toMutableList().apply { add(index - 1, removeAt(index)) }
+            index--
+        } else {
+            return settled
+        }
+    }
+}
+
 /**
  * How far past a neighbour the finger has to carry a row before the two trade
- * places, as a share of one row's pitch.
+ * places, as a share of that neighbour's pitch.
  *
  * Deliberately more than half. At exactly half, a row that has just swapped
  * lands with its offset sitting precisely on the boundary of swapping *back* —

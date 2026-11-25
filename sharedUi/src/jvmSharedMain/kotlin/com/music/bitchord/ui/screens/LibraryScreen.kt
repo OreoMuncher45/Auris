@@ -13,6 +13,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.unit.sp
 import com.music.bitchord.ui.components.SearchField
+import com.music.bitchord.ui.components.artworkDeparture
+import com.music.bitchord.ui.components.rememberArtworkTap
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.horizontalScroll
@@ -61,6 +63,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.LibraryPage
+import com.music.bitchord.data.model.ROW_ART_PX
+import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.settings.LibrarySort
@@ -271,22 +275,20 @@ fun LibraryScreen(
                                     HomeShelf(title = stringResource(Res.string.folders), items = folders),
                                 ).items,
                             )
-                            LibraryGridShelf(
+                            LibraryListShelf(
                                 shelf = folderShelf,
                                 onItemClick = onShelfItemClick,
                                 onItemLongPress = onShelfItemLongPress,
-                                onShowAll = { onShowAll(folderShelf) },
                             )
                         }
                     }
                     if (deviceItems.isNotEmpty()) {
                         item(key = "shelf:$onDevice", contentType = LazyContent.SHELF) {
                             val onDeviceShelf = HomeShelf(title = onDevice, items = deviceItems)
-                            LibraryGridShelf(
+                            LibraryListShelf(
                                 shelf = filtered(onDeviceShelf),
                                 onItemClick = onShelfItemClick,
                                 onItemLongPress = onShelfItemLongPress,
-                                onShowAll = { onShowAll(onDeviceShelf) },
                             )
                         }
                     } else if (links.isEmpty() && folders.isEmpty()) {
@@ -313,11 +315,10 @@ fun LibraryScreen(
                     // are shelves of the same kind as the playlists.
                     shelfNamed(PODCASTS)?.let { podcasts ->
                         item(key = "shelf:$PODCASTS", contentType = LazyContent.SHELF) {
-                            LibraryGridShelf(
+                            LibraryListShelf(
                                 shelf = filtered(podcasts),
                                 onItemClick = onShelfItemClick,
                                 onItemLongPress = onShelfItemLongPress,
-                                onShowAll = { onShowAll(podcasts) },
                             )
                         }
                     }
@@ -331,21 +332,19 @@ fun LibraryScreen(
                     val subscriptions = shelfNamed(SUBSCRIPTIONS)
                     if (artists != null) {
                         item(key = "shelf:$ARTISTS", contentType = LazyContent.SHELF) {
-                            LibraryGridShelf(
+                            LibraryListShelf(
                                 shelf = filtered(artists),
                                 onItemClick = onShelfItemClick,
                                 onItemLongPress = onShelfItemLongPress,
-                                onShowAll = { onShowAll(artists) },
                             )
                         }
                     }
                     if (subscriptions != null) {
                         item(key = "shelf:$SUBSCRIPTIONS", contentType = LazyContent.SHELF) {
-                            LibraryGridShelf(
+                            LibraryListShelf(
                                 shelf = filtered(subscriptions),
                                 onItemClick = onShelfItemClick,
                                 onItemLongPress = onShelfItemLongPress,
-                                onShowAll = { onShowAll(subscriptions) },
                             )
                         }
                     }
@@ -358,11 +357,10 @@ fun LibraryScreen(
                     val albums = shelfNamed(ALBUMS)
                     if (albums != null) {
                         item(key = "shelf:$ALBUMS", contentType = LazyContent.SHELF) {
-                            LibraryGridShelf(
+                            LibraryListShelf(
                                 shelf = filtered(albums),
                                 onItemClick = onShelfItemClick,
                                 onItemLongPress = onShelfItemLongPress,
-                                onShowAll = { onShowAll(albums) },
                             )
                         }
                     } else {
@@ -381,7 +379,7 @@ fun LibraryScreen(
                 }
             }
             when (state) {
-                is UiState.Loading -> librarySkeleton()
+                is UiState.Loading -> if (showsLibrarySkeleton(signedIn, state)) librarySkeleton()
                 is UiState.Error -> item {
                     MessageState(state.message, actionLabel = stringResource(Res.string.retry), onAction = onRetry)
                 }
@@ -391,7 +389,7 @@ fun LibraryScreen(
             // segments (On device / Playlists / Artists / Albums).
             podcastShelves.forEach { shelf ->
                 item(key = "podcast:${shelf.title}", contentType = LazyContent.SHELF) {
-                    Shelf(shelf = shelf, onItemClick = onShelfItemClick, onItemLongPress = onShelfItemLongPress)
+                    LibraryListShelf(shelf = shelf, onItemClick = onShelfItemClick, onItemLongPress = onShelfItemLongPress)
                 }
             }
         }
@@ -595,7 +593,7 @@ private fun PlaylistShelf(
             Column(Modifier.padding(horizontal = PAGE_GUTTER)) {
                 NewPlaylistRow(onClick = onNewPlaylist)
                 shelf.items.forEach { item ->
-                    PlaylistListRow(
+                    LibraryListRow(
                         item = item,
                         isPinned = item.browseId != null && item.browseId in pinnedPlaylists,
                         onClick = { onItemClick(item) },
@@ -607,20 +605,26 @@ private fun PlaylistShelf(
         return
     }
 
+    val newPlaylistCard: @Composable () -> Unit = {
+        NewShelfCard(
+            icon = BitChordIcons.Plus,
+            label = stringResource(Res.string.new_playlist),
+            subtitle = stringResource(Res.string.saved_to_youtube_music),
+            onClick = onNewPlaylist,
+        )
+    }
     LibraryGridShelf(
         shelf = shelf,
         onItemClick = onItemClick,
         onItemLongPress = onItemLongPress,
         onShowAll = onShowAll,
         pinnedPlaylists = pinnedPlaylists,
-        leadingCard = {
-            NewShelfCard(
-                icon = BitChordIcons.Plus,
-                label = stringResource(Res.string.new_playlist),
-                subtitle = stringResource(Res.string.saved_to_youtube_music),
-                onClick = onNewPlaylist,
-            )
-        },
+        // The account's own playlists first, the way to make another after
+        // them; it leads only when there is nothing else in the row.
+        leadingCard = newPlaylistCard.takeIf { shelf.items.isEmpty() },
+        trailingCard = newPlaylistCard.takeIf { shelf.items.isNotEmpty() },
+        // The way back to the list, which the grid used to leave off.
+        trailing = { ViewTypeToggle(viewType = viewType, onToggle = toggle) },
     )
 }
 
@@ -701,29 +705,47 @@ private fun NewPlaylistRow(onClick: () -> Unit) {
     }
 }
 
-/** One playlist, as a row: its cover, its name, how much is in it. */
+/** One shelf item as a row: its cover, its name, and what the feed says about it. */
 @Composable
-private fun PlaylistListRow(
+private fun LibraryListRow(
     item: ShelfItem,
     isPinned: Boolean,
     onClick: () -> Unit,
     onLongPress: () -> Unit,
 ) {
+    // Tapping the row lifts its little cover and flies it into the page it
+    // opens — see ArtworkFlight. A row's square is small, so the flight is
+    // where the size change happens: 44dp here, the page's framed sleeve there,
+    // one picture growing across the two.
+    val open = rememberArtworkTap(destination = item.browseId, token = item, onOpen = onClick)
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .longPressMenuClickable(onClick = onClick, onLongClick = onLongPress)
+            .longPressMenuClickable(onClick = open, onLongClick = onLongPress)
             .padding(vertical = 6.dp),
     ) {
         AsyncImage(
-            model = item.thumbnailUrl,
+            // The row is 44dp; ask for the row rendition, not whatever the feed
+            // handed over. YouTube covers are rewritten to it; a Spotify cover
+            // already is one, so this is their only size there.
+            model = item.thumbnailUrl.artworkAt(ROW_ART_PX),
             contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = Modifier
                 .size(44.dp)
                 .clip(RoundedCornerShape(8.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant),
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                // The cover this row flies from: measured where it is, and drawn
+                // away while its own copy is in the air.
+                .artworkDeparture(
+                    token = item,
+                    // The same rendition the row is showing, so the flight starts
+                    // from a picture already in the cache rather than fetching a
+                    // second, larger copy at the moment of the tap.
+                    model = item.thumbnailUrl?.artworkAt(ROW_ART_PX),
+                    corner = 8.dp,
+                ),
         )
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
@@ -769,8 +791,8 @@ private const val LIBRARY_ROW_MAX_ITEMS = 5
  * title whenever there's more than that, opening the rest as a
  * vertically-scrolling grid instead. See [LibraryGridPage].
  *
- * [leadingCard], if given, occupies the first slot and counts against that
- * cap — see [PlaylistShelf].
+ * [leadingCard] and [trailingCard], if given, occupy the first and last
+ * slots and count against that cap — see [PlaylistShelf].
  */
 @Composable
 internal fun LibraryGridShelf(
@@ -779,11 +801,14 @@ internal fun LibraryGridShelf(
     onItemLongPress: (ShelfItem) -> Unit,
     onShowAll: () -> Unit,
     leadingCard: (@Composable () -> Unit)? = null,
+    trailingCard: (@Composable () -> Unit)? = null,
     pinnedPlaylists: List<String> = emptyList(),
+    /** The heading's own control — the list/grid switch, on a shelf that can be either. */
+    trailing: (@Composable () -> Unit)? = null,
 ) {
-    val leadingCount = if (leadingCard != null) 1 else 0
-    val visibleItems = remember(shelf.items, leadingCount) {
-        shelf.items.take((LIBRARY_ROW_MAX_ITEMS - leadingCount).coerceAtLeast(0))
+    val extraCount = (if (leadingCard != null) 1 else 0) + (if (trailingCard != null) 1 else 0)
+    val visibleItems = remember(shelf.items, extraCount) {
+        shelf.items.take((LIBRARY_ROW_MAX_ITEMS - extraCount).coerceAtLeast(0))
     }
     val keys = rememberShelfKeys(visibleItems)
     // A set, so each card's pin check is a lookup rather than a walk of the list.
@@ -792,7 +817,8 @@ internal fun LibraryGridShelf(
         SectionHeader(
             title = shelf.title,
             subtitle = shelf.subtitle,
-            onShowAll = onShowAll.takeIf { shelf.items.size + leadingCount > LIBRARY_ROW_MAX_ITEMS },
+            onShowAll = onShowAll.takeIf { shelf.items.size + extraCount > LIBRARY_ROW_MAX_ITEMS },
+            trailing = trailing,
         )
         ShelfRow(
             contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
@@ -811,6 +837,48 @@ internal fun LibraryGridShelf(
                     onClick = { onItemClick(item) },
                     onLongPress = { onItemLongPress(item) },
                     isPinned = item.browseId != null && item.browseId in pinned,
+                )
+            }
+            trailingCard?.let { card ->
+                item(key = "trailing", contentType = LazyContent.LEADING_CARD) { card() }
+            }
+        }
+    }
+}
+
+/**
+ * A Library shelf as a list: the same heading, then one row per item — the
+ * cover, its name, and what the feed says about it.
+ *
+ * The library is a list of things a listener named. A row is how you find one
+ * among thirty of them; a row of big squares is the better look at five and the
+ * worse way to read the rest, which is why every segment here is a list now.
+ *
+ * [trailing] is the heading's own control — the list/grid switch, on a shelf
+ * that can still be either.
+ */
+@Composable
+internal fun LibraryListShelf(
+    shelf: HomeShelf,
+    onItemClick: (ShelfItem) -> Unit,
+    onItemLongPress: (ShelfItem) -> Unit,
+    pinnedPlaylists: List<String> = emptyList(),
+    trailing: (@Composable () -> Unit)? = null,
+) {
+    val pinned = remember(pinnedPlaylists) { pinnedPlaylists.toHashSet() }
+    Column(Modifier.padding(bottom = 26.dp)) {
+        SectionHeader(
+            title = shelf.title,
+            subtitle = shelf.subtitle,
+            trailing = trailing,
+        )
+        Column(Modifier.padding(horizontal = PAGE_GUTTER)) {
+            shelf.items.forEach { item ->
+                LibraryListRow(
+                    item = item,
+                    isPinned = item.browseId != null && item.browseId in pinned,
+                    onClick = { onItemClick(item) },
+                    onLongPress = { onItemLongPress(item) },
                 )
             }
         }
@@ -932,3 +1000,12 @@ private const val SUBSCRIPTIONS = "Subscriptions"
 
 /** The saved podcasts shelf of the library feed. */
 private const val PODCASTS = "Podcasts"
+
+/**
+ * Whether the library's loading skeleton belongs on the page. Signed out, the
+ * account's library is never fetched, so the state stays Loading for good: a
+ * skeleton there would sweep its shimmer on every frame for a page that is
+ * never coming.
+ */
+internal fun showsLibrarySkeleton(signedIn: Boolean, state: UiState<*>): Boolean =
+    signedIn && state is UiState.Loading

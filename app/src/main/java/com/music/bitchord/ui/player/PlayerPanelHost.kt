@@ -24,6 +24,9 @@ import com.music.bitchord.ui.components.backdrop.backdrops.layerBackdrop
 import com.music.bitchord.ui.components.backdrop.backdrops.rememberLayerBackdrop
 import com.music.bitchord.ui.components.heldMenuUsesGlass
 import com.music.bitchord.ui.components.menu.AnchoredMenu
+import com.music.bitchord.ui.components.menu.LocalMenuHost
+import com.music.bitchord.ui.components.menu.MenuHostOverlay
+import com.music.bitchord.ui.components.menu.MenuHostState
 import com.music.bitchord.ui.components.menu.rememberMenuPresence
 import com.music.bitchord.ui.components.rememberRemoteArtworkUrl
 import com.music.bitchord.ui.theme.rememberArtworkPalette
@@ -121,7 +124,15 @@ internal fun PlayerPanelHost(
     val openingKey = remember(menuSong != null) { Any() }
     val shownOpening = remember { arrayOfNulls<Any>(1) }
     if (menuSong != null) shownOpening[0] = openingKey
-    val menuUsesGlass = menuPresence.isShowing && heldMenuUsesGlass(reduceDynamicBlur)
+    // Shared player controls (quality and Automix pickers) use the root menu
+    // host's state, but their panel is drawn below inside this backdrop scope.
+    // Keep recording through their exit too, just as for the player's ⋯ menu.
+    val sharedMenuHost = LocalMenuHost.current as? MenuHostState
+    val sharedMenuPresence = rememberMenuPresence(
+        expanded = sharedMenuHost?.request?.fromPlayer == true,
+    )
+    val menuUsesGlass = (menuPresence.isShowing || sharedMenuPresence.isShowing) &&
+        heldMenuUsesGlass(reduceDynamicBlur)
     PlayerPanel(
         dock = activeDock,
         motion = motion.takeIf { !reducePlayerMotion },
@@ -146,12 +157,12 @@ internal fun PlayerPanelHost(
         },
         modifier = Modifier.onGloballyPositioned { rootOrigin = it.positionInWindow() },
         overlay = {
-            // The track menu, hung off the three-dot button. Same surface and
-            // same rows as the long-press menu, anchored to the button rather
-            // than lifted out of a held row.
-            val menuTrack = shownSong[0]
-            if (menuPresence.isShowing && menuTrack != null) {
-                CompositionLocalProvider(LocalAppBackdrop provides playerBackdrop) {
+            CompositionLocalProvider(LocalAppBackdrop provides playerBackdrop) {
+                // The track menu, hung off the three-dot button. Same surface and
+                // same rows as the long-press menu, anchored to the button rather
+                // than lifted out of a held row.
+                val menuTrack = shownSong[0]
+                if (menuPresence.isShowing && menuTrack != null) {
                     AnchoredMenu(
                         presence = menuPresence,
                         // Both read while the menu is placed, so a player still
@@ -171,6 +182,10 @@ internal fun PlayerPanelHost(
                         }
                     }
                 }
+                // Quality and Automix menus originate in sharedUI, but must be
+                // rendered here: the root host sits over the home page and its
+                // glass would otherwise sample that page through the player.
+                sharedMenuHost?.let { MenuHostOverlay(it, fromPlayer = true) }
             }
         },
     ) {

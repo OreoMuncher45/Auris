@@ -76,6 +76,9 @@ kotlin {
             api("org.jetbrains.compose.components:components-resources:$cmp")
             api("org.jetbrains.androidx.lifecycle:lifecycle-runtime-compose:2.8.4")
             api("io.coil-kt.coil3:coil-compose:3.0.4")
+            // HttpException, for YouTubeThumbnailFallback. Both apps already
+            // ship it under coil-network-okhttp.
+            implementation("io.coil-kt.coil3:coil-network-core:3.0.4")
             api("dev.chrisbanes.haze:haze:1.3.1")
             api("dev.chrisbanes.haze:haze-materials:1.3.1")
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
@@ -91,6 +94,8 @@ kotlin {
         jvmTest.dependencies {
             implementation(kotlin("test"))
             implementation("junit:junit:4.13.2")
+            // A Main dispatcher for tests that drive collectAsStateWithLifecycle headlessly.
+            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
         }
         androidMain.dependencies {
             // The phone's own versions, so nothing here moves them.

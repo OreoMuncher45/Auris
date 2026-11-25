@@ -303,4 +303,20 @@
     <string name="library_search_hint">Search this</string>
     <string name="library_empty_segment">Nothing here yet</string>
     <string name="home_chip_all">All</string>
+    <string name="best_part">Best Part</string>
+    <string name="best_part_description">Skip to the best part</string>
+    <string name="queue_select">בחירה</string>
+    <string name="queue_select_all">בחירת הכול</string>
+    <string name="queue_selected_count">%1$d נבחרו</string>
+    <string name="queue_close_selection">סגירת מצב הבחירה</string>
+    <string name="queue_selection_remove">הסר</string>
+    <string name="queue_selection_add_to_playlist">הוסף לפלייליסט</string>
+    <string name="queue_download">הורדה</string>
+    <string name="queue_removed_song">%1$s הוסר</string>
+    <string name="queue_removed_songs">%1$d שירים הוסרו</string>
+    <string name="queue_undo_action">ביטול</string>
+    <string name="queue_cleared">„הבא בתור“ רוקן</string>
+    <string name="mixes_yours">המיקסים שלך</string>
+    <string name="video_quality">Video quality</string>
+    <string name="video_quality_auto">Auto</string>
 </resources>

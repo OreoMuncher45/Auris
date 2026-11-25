@@ -65,4 +65,82 @@ class ModelsTest {
         val albums = HomeShelf("Albums & singles", (1..10).map { album("a$it") })
         assertEquals(listOf(listenAgain), listOf(listenAgain).withoutRepeatsOf(listOf(recents, albums)))
     }
+
+    @Test
+    fun aYouTubeVideoCoverIsAskedForAtTheRenditionItsSizeWants() {
+        assertEquals(
+            "https://i.ytimg.com/vi/dQw4w9WgXcQ/maxresdefault.jpg",
+            "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg".artworkAt(1200),
+        )
+        assertEquals(
+            "https://i.ytimg.com/vi/dQw4w9WgXcQ/sddefault.jpg",
+            "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg".artworkAt(320),
+        )
+        assertEquals(
+            "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+            "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg".artworkAt(160),
+        )
+        assertEquals(
+            "https://img.youtube.com/vi/dQw4w9WgXcQ/maxresdefault.webp",
+            "https://img.youtube.com/vi/dQw4w9WgXcQ/default.webp".artworkAt(720),
+        )
+    }
+
+    @Test
+    fun aYouTubeCardGetsTheCardSizedRendition() {
+        assertEquals(
+            "https://i.ytimg.com/vi/dQw4w9WgXcQ/sddefault.jpg",
+            "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg".artworkAt(CARD_ART_PX),
+        )
+    }
+
+    @Test
+    fun anUpgradedYouTubeCoverComesBackDownForARow() {
+        // Read back off the lock screen's artwork, the URL already names the
+        // large copy; a row must not load it.
+        assertEquals(
+            "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+            "https://i.ytimg.com/vi/dQw4w9WgXcQ/maxresdefault.jpg".artworkAt(160),
+        )
+        assertEquals(
+            "https://i.ytimg.com/vi/dQw4w9WgXcQ/mqdefault.jpg",
+            "https://i.ytimg.com/vi/dQw4w9WgXcQ/mqdefault.jpg".artworkAt(160),
+        )
+    }
+
+    @Test
+    fun aRenamedYouTubeCoverDropsTheQueryThatSignedItsOldRendition() {
+        assertEquals(
+            "https://i.ytimg.com/vi/dQw4w9WgXcQ/maxresdefault.jpg",
+            "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg?sqp=abc&rs=def".artworkAt(1200),
+        )
+    }
+
+    @Test
+    fun theFallbackIsTheCopyEveryVideoHas() {
+        assertEquals(
+            "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+            youTubeThumbnailFallback("https://i.ytimg.com/vi/dQw4w9WgXcQ/maxresdefault.jpg"),
+        )
+        assertEquals(null, youTubeThumbnailFallback("https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg"))
+        assertEquals(null, youTubeThumbnailFallback("https://lh3.googleusercontent.com/x=w544-h544"))
+    }
+
+    @Test
+    fun aRenditionNamedOnlyInTheQueryIsNotRewritten() {
+        val url = "https://i.ytimg.com/vi/abc/0.jpg?ref=/hqdefault.jpg"
+        assertEquals(url, url.artworkAt(720))
+        assertEquals(null, youTubeThumbnailFallback("https://i.ytimg.com/vi/abc/0.jpg?x=/sddefault.jpg"))
+    }
+
+    @Test
+    fun userInformationIsNotTheHost() {
+        val url = "https://img.youtube.com:pw@images.example.test/vi/abc/hqdefault.jpg?token=abc"
+        assertEquals(url, url.artworkAt(720))
+        // A real thumbnail host with a port still upgrades.
+        assertEquals(
+            "https://i.ytimg.com:443/vi/abc/maxresdefault.jpg",
+            "https://i.ytimg.com:443/vi/abc/hqdefault.jpg".artworkAt(1200),
+        )
+    }
 }

@@ -88,6 +88,21 @@ class MenuPlacementTest {
     }
 
     @Test
+    fun aCenteredCardUsesTheSafeBandsCenterNotTheButtonsRightEdge() {
+        // The quality badge is centred, but end-aligning its card to the tap
+        // target shifts the whole card left. Centre it in the usable band.
+        val left = 33
+        val right = 1080 - 33
+        val width = 825
+        val x = centeredMenuX(left, right, width)
+        assertEquals((left + right) / 2f, x + width / 2f, 0.5f)
+        assertEquals(127, x)
+
+        // Asymmetric cutouts centre the card in what remains, not the window.
+        assertEquals(187, centeredMenuX(left = 153, right = right, menuWidth = width))
+    }
+
+    @Test
     fun aSideCutoutPushesTheMenuInwards() {
         // A 120px cutout on the left, hosted at the window's origin.
         val left = menuSafeStart(inset = 120, hostStart = 0) + 33

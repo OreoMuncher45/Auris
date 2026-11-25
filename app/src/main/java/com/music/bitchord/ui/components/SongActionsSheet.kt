@@ -41,6 +41,7 @@ import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.HighQuality
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Image
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Radio
@@ -56,6 +57,8 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -103,6 +106,17 @@ import com.music.bitchord.ui.theme.rememberArtworkPalette
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
+
+/** Audio always offers conversion; the reverse direction still needs a known audio cut. */
+internal fun shouldOfferAudioVersionToggle(
+    fromPlayer: Boolean,
+    inParty: Boolean,
+    isAudioVersion: Boolean,
+    hasAlternateVersion: Boolean,
+    switching: Boolean,
+    isCurrentSong: Boolean,
+): Boolean = fromPlayer && !inParty && !switching && isCurrentSong &&
+    (isAudioVersion || hasAlternateVersion)
 
 /**
  * Long-press menu for a track, in the shape music apps normally use.
@@ -199,8 +213,8 @@ fun SongActionsSheet(
     upgradeQualityInProgress: Boolean = false,
     /**
      * Switches the playing track between its video and audio-only cuts. Null
-     * hides the row — offered only from the player, and only once an
-     * alternate cut is known to exist. See
+     * hides the row. Every current audio track can ask for a matching video;
+     * the reverse direction needs an alternate cut known to exist. See
      * [com.music.bitchord.playback.PlaybackService.smoothSwapCurrentTrackVersion].
      */
     onToggleAudioVersion: (() -> Unit)? = null,
@@ -262,6 +276,10 @@ fun SongActionsSheet(
     presentation: SongActionsPresentation = SongActionsPresentation.Menu,
 ) {
     var pickingSleepTimer by remember { mutableStateOf(false) }
+    // The dialog is its own window, so it shows over the menu wherever the
+    // menu hangs — the player's included — and the menu stays as it was.
+    var showingSongInfo by remember(song.videoId) { mutableStateOf(false) }
+    if (showingSongInfo) SongInfoDialog(song) { showingSongInfo = false }
     val glass = presentation == SongActionsPresentation.Glass
     // A menu over a page stays in the theme's colours: it floats over
     // whatever the page is, and an accent pitched against one sleeve is not
@@ -329,27 +347,32 @@ fun SongActionsSheet(
             GroupSeparator(palette)
         }
 
-        if (signedIn && !isOffline) {
-            ActionRow(
-                icon = if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                label = if (liked) stringResource(R.string.remove_from_liked) else stringResource(R.string.like),
-                tint = if (liked) palette.accent else null,
-                accent = palette.accent,
-                onClick = onToggleLike,
-            )
-            ActionRow(
-                icon = if (disliked) Icons.Rounded.ThumbDown else Icons.Rounded.ThumbDownOffAlt,
-                label = if (disliked) stringResource(R.string.undo_dislike) else stringResource(R.string.dislike),
-                tint = if (disliked) palette.accent else null,
-                accent = palette.accent,
-                onClick = onToggleDislike,
-            )
-            ActionRow(
-                icon = Icons.AutoMirrored.Rounded.PlaylistAdd,
-                label = stringResource(R.string.add_to_playlist),
-                accent = palette.accent,
-                onClick = onAddToPlaylist,
-            )
+        // Remove stands without an account too: a playlist imported onto this
+        // device is the listener's to edit while signed out or offline.
+        val accountRows = signedIn && !isOffline
+        if (accountRows || onRemoveFromPlaylist != null) {
+            if (accountRows) {
+                ActionRow(
+                    icon = if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                    label = if (liked) stringResource(R.string.remove_from_liked) else stringResource(R.string.like),
+                    tint = if (liked) palette.accent else null,
+                    accent = palette.accent,
+                    onClick = onToggleLike,
+                )
+                ActionRow(
+                    icon = if (disliked) Icons.Rounded.ThumbDown else Icons.Rounded.ThumbDownOffAlt,
+                    label = if (disliked) stringResource(R.string.undo_dislike) else stringResource(R.string.dislike),
+                    tint = if (disliked) palette.accent else null,
+                    accent = palette.accent,
+                    onClick = onToggleDislike,
+                )
+                ActionRow(
+                    icon = Icons.AutoMirrored.Rounded.PlaylistAdd,
+                    label = stringResource(R.string.add_to_playlist),
+                    accent = palette.accent,
+                    onClick = onAddToPlaylist,
+                )
+            }
             onRemoveFromPlaylist?.let {
                 ActionRow(
                     icon = Icons.Rounded.PlaylistRemove,
@@ -437,6 +460,9 @@ fun SongActionsSheet(
                 stringResource(R.string.open_artist),
                 accent = palette.accent,
             ) { onOpenArtist(id) }
+        }
+        ActionRow(Icons.Rounded.Info, stringResource(R.string.song_info), accent = palette.accent) {
+            showingSongInfo = true
         }
         if (showSleepTimer) {
             ActionRow(
@@ -839,6 +865,15 @@ private fun SleepTimerPicker(
                 onBack()
             }
         }
+        // Under the durations because it is about them: the timer's last
+        // half-minute, not a choice of when it ends.
+        val fadeOut by AppSettings.sleepTimerFadeOut.collectAsStateWithLifecycle()
+        SleepFadeOption(
+            checked = fadeOut,
+            accent = palette.accent,
+            mutedInk = mutedInk,
+            onCheckedChange = AppSettings::setSleepTimerFadeOut,
+        )
         if (chosen != null || afterTrack) {
             ActionRow(Icons.Rounded.Close, stringResource(R.string.turn_off_timer), accent = palette.accent) {
                 SleepTimer.cancel()
@@ -878,6 +913,48 @@ private fun SleepOption(
                 modifier = Modifier.size(22.dp),
             )
         }
+    }
+}
+
+/** The fade-out switch under the sleep timer's durations, in the same row shape as [SleepOption]. */
+@Composable
+private fun SleepFadeOption(
+    checked: Boolean,
+    accent: Color,
+    mutedInk: Color,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    val ink = LocalMenuInk.current ?: MaterialTheme.colorScheme.onSurface
+    val interactive = LocalMenuInteractive.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = interactive) { onCheckedChange(!checked) }
+            .padding(start = 22.dp, end = 16.dp, top = 11.dp, bottom = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = stringResource(R.string.sleep_timer_fade_out),
+                style = MaterialTheme.typography.bodyLarge,
+                color = ink,
+            )
+            Text(
+                text = stringResource(R.string.sleep_timer_fade_out_subtitle),
+                style = MaterialTheme.typography.bodyMedium,
+                color = mutedInk,
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            enabled = interactive,
+            colors = SwitchDefaults.colors(
+                checkedTrackColor = accent,
+                checkedBorderColor = accent,
+            ),
+        )
     }
 }
 

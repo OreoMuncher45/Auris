@@ -81,6 +81,8 @@
     <string name="clear">Clear</string>
     <string name="close_lyrics">Close lyrics</string>
     <string name="close_player">Close player</string>
+    <string name="convert_to_video">Convert to Video</string>
+    <string name="convert_to_video_description">Convert to Video. This prompt disappears in five seconds.</string>
     <string name="playing_from_label">Playing from</string>
     <string name="played_by_label">Played by</string>
     <string name="data_saver">Data-Saver</string>
@@ -303,4 +305,20 @@
     <string name="queue_suggest_album">From album</string>
     <string name="queue_search_nothing_here">Nothing here yet</string>
     <string name="home_chip_all">All</string>
+    <string name="best_part">Best Part</string>
+    <string name="best_part_description">Skip to the best part</string>
+    <string name="queue_select">Select</string>
+    <string name="queue_select_all">Select all</string>
+    <string name="queue_selected_count">%1$d selected</string>
+    <string name="queue_close_selection">Close selection mode</string>
+    <string name="queue_selection_remove">Remove</string>
+    <string name="queue_selection_add_to_playlist">Add to playlist</string>
+    <string name="queue_download">Download</string>
+    <string name="queue_removed_song">Removed %1$s</string>
+    <string name="queue_removed_songs">Removed %1$d songs</string>
+    <string name="queue_undo_action">Undo</string>
+    <string name="queue_cleared">Next in queue cleared</string>
+    <string name="mixes_yours">Your Mixes</string>
+    <string name="video_quality">Video quality</string>
+    <string name="video_quality_auto">Auto</string>
 </resources>

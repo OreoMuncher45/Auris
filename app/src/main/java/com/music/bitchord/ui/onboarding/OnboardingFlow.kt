@@ -74,10 +74,12 @@ import com.music.bitchord.ui.components.SflxInstallDialog
 import com.music.bitchord.ui.player.MeshGradientBackground
 import com.music.bitchord.ui.player.rememberArtworkColors
 import com.music.bitchord.util.AppRelaunch
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * The first-run flow.
@@ -217,7 +219,7 @@ fun SetupWizard(
      * the whole point of having arrived over it rather than instead of it: the
      * finish is the app, at full size, already loaded, with the flow gone.
      */
-    fun leave(then: () -> Unit) {
+    fun leave(then: suspend () -> Unit) {
         scope.launch {
             animateReveal(0f, 320)
             then()
@@ -237,16 +239,23 @@ fun SetupWizard(
         AppSettings.setHomeProvider(provider)
         OnboardingState.markCompleted(context)
         leave {
-            onFinished()
             // Only when it moved, and only after the flow is gone: a catalogue
             // that changed re-trains Flow and Autoplay, which is a restart's
             // worth of work rather than something to attempt in place.
-            if (provider != providerAtEntry) {
-                scope.launch {
-                    delay(RESTART_GRACE_MS)
-                    AppRelaunch.relaunch(context)
-                }
-            }
+            //
+            // The restart runs before onFinished, in this coroutine. onFinished
+            // removes this composable, and that cancels [scope]. A restart
+            // launched after it was cancelled before it ran, so the app kept
+            // running on the old catalogue.
+            //
+            // The restart kills the process, so the flow's answers are
+            // committed to disk first (off the main thread) rather than left to
+            // the apply() writes above. If that write fails, the app carries on
+            // without the restart; the catalogue can still be switched in
+            // Settings.
+            val restart = provider != providerAtEntry &&
+                withContext(Dispatchers.IO) { OnboardingState.commitFinished(context, picks, name) }
+            if (restart) AppRelaunch.relaunch(context) else onFinished()
         }
     }
 
@@ -441,7 +450,6 @@ fun SetupWizard(
 private enum class SignIn { YOUTUBE, SPOTIFY }
 
 private const val SHEET_AFTER_BONES_MS = 220L
-private const val RESTART_GRACE_MS = 350L
 private const val DEMO_QUERY = "hits"
 
 private const val NAME_STEP = 0

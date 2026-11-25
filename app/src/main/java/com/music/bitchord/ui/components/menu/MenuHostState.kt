@@ -24,6 +24,8 @@ class MenuHostState : MenuHost {
     internal class Request(
         val anchorInWindow: Rect?,
         val dark: Boolean?,
+        val centered: Boolean,
+        val fromPlayer: Boolean,
         val content: @Composable ColumnScope.(close: () -> Unit) -> Unit,
     )
 
@@ -33,9 +35,11 @@ class MenuHostState : MenuHost {
     override fun open(
         anchorInWindow: Rect?,
         dark: Boolean?,
+        centered: Boolean,
+        fromPlayer: Boolean,
         content: @Composable ColumnScope.(close: () -> Unit) -> Unit,
     ) {
-        request = Request(anchorInWindow, dark, content)
+        request = Request(anchorInWindow, dark, centered, fromPlayer, content)
     }
 
     override fun close() {
@@ -57,17 +61,23 @@ class MenuHostState : MenuHost {
  * before it. Compose it last among the root's overlays.
  */
 @Composable
-fun MenuHostOverlay(state: MenuHostState) {
+fun MenuHostOverlay(state: MenuHostState, fromPlayer: Boolean? = null) {
     val request = state.request
+    // Each host owns only its backdrop's requests. Null means an unfiltered
+    // host (previews and tests); production has one page host and, while the
+    // player is up, one host inside the player's own backdrop scope.
+    val owned = request?.takeIf { fromPlayer == null || it.fromPlayer == fromPlayer }
     // The last request outlives the host's own for the frames of the exit,
     // so the closing menu stays where it hung and keeps its colours.
     val last = remember { arrayOfNulls<MenuHostState.Request>(1) }
-    if (request != null) last[0] = request
+    if (owned != null) last[0] = owned
+    val presentation = owned ?: last[0]
     AnchoredItemMenu(
-        item = request,
+        item = owned,
         anchorInWindow = { last[0]?.anchorInWindow },
         onDismiss = state::close,
-        dark = (request ?: last[0])?.dark,
+        centered = presentation?.centered == true,
+        dark = presentation?.dark,
     ) { shown ->
         // The menu caps its height to the room around the button and leaves
         // the scroll to its content; a requester hands over rows, not a

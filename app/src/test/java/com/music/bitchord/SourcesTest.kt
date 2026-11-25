@@ -147,6 +147,18 @@ class SourcesTest {
         assertTrue(SourceResolver.worthSwapping(ac4, StreamFormat(codec = "flac")))
     }
 
+    @Test
+    fun `Tidal segmented FLAC and Atmos are read through their generic MP4 envelope`() {
+        val source = ModuleSource(SourceConfig(kind = SourceKind.MODULE))
+        val playlist = "file:///cache/tidal/playlist.m3u8"
+
+        assertEquals("flac", source.codecOf("audio/mp4", "LOSSLESS", playlist))
+        assertEquals("flac", source.codecOf("audio/mp4", "HI_RES_LOSSLESS", playlist))
+        assertEquals("eac3-joc", source.codecOf("audio/mp4", "DOLBY_ATMOS", playlist))
+        // A real payload codec remains more specific than either tier label.
+        assertEquals("aac", source.codecOf("audio/aac", "LOSSLESS", playlist))
+    }
+
     /**
      * ...and premium only where it is allowed to play. E-AC-3 ships with the
      * vendor image, not with Android, and a module that answers every request
@@ -914,6 +926,26 @@ class SourcesTest {
         )
     }
 
+    @Test
+    fun `manual video audio switch keeps the explicit edition despite a long visual intro`() {
+        val target = TrackMatcher.Target(
+            "Big Dawgs",
+            "Hanumankind, Kalmi",
+            durationSec = 391,
+            isExplicit = true,
+            isVideo = true,
+        )
+        val clean = song("Big Dawgs", "Hanumankind, Kalmi", "3:11")
+            .copy(videoId = "clean", isExplicit = false)
+        val explicit = song("Big Dawgs", "Hanumankind, Kalmi", "3:11")
+            .copy(videoId = "explicit", isExplicit = true)
+
+        // Both are beyond the ordinary matcher's runtime limit, so the
+        // fallback decides; the clean row listed first must not win.
+        assertNull(TrackMatcher.best(listOf(clean, explicit), target))
+        assertEquals(explicit, TrackMatcher.bestOfficialAudioForVideo(listOf(clean, explicit), target))
+    }
+
     /**
      * A declared tier is a reason to prefer one copy of a recording over
      * another. It is not a reason to play a different recording — the DJ edit
@@ -1487,6 +1519,7 @@ class SourcesTest {
             limit: Int,
             waitForAll: Boolean,
             request: StreamRequest?,
+            target: TrackMatcher.Target?,
         ): List<Song> {
             asked = true
             try {

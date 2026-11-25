@@ -132,6 +132,8 @@ fun AnchoredMenu(
     modifier: Modifier = Modifier,
     /** How wide the menu wants to be. Never wider than the host's safe width. */
     menuWidth: Dp = MenuTokens.Width,
+    /** Centres the panel in its safe band instead of end-aligning it to the anchor. */
+    centered: Boolean = false,
     /**
      * Where this composable's root sits in the window, so the window's system
      * bars can be measured from it.
@@ -248,7 +250,11 @@ fun AnchoredMenu(
                             maxHeight = slot.maxHeight,
                         ),
                     )
-                    val x = menuX(button.right, left, right, menuWidthPx)
+                    val x = if (centered) {
+                        centeredMenuX(left, right, menuWidthPx)
+                    } else {
+                        menuX(button.right, left, right, menuWidthPx)
+                    }
                     val y = menuY(slot, placeable.height)
                     layout(widthPx, heightPx) { placeable.place(x, y) }
                 }

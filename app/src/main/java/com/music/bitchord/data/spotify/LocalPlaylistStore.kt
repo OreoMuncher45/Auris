@@ -136,6 +136,22 @@ object LocalPlaylistStore {
         persist()
     }
 
+    /**
+     * Takes one row of [song] out of the playlist at [browseId]. The first
+     * copy, when the playlist holds it twice: rows here carry no per-row id
+     * to say which copy was picked, and they play the same either way.
+     */
+    fun removeSong(browseId: String, song: Song) {
+        val cleanId = browseId.removePrefix("local:playlist:")
+        val updated = _playlists.value.map { playlist ->
+            if (playlist.id != cleanId && playlist.browseId != browseId) return@map playlist
+            val index = playlist.songs.indexOfFirst { it.videoId == song.videoId }
+            if (index < 0) playlist else playlist.copy(songs = playlist.songs.filterIndexed { i, _ -> i != index })
+        }
+        _playlists.value = updated
+        persist()
+    }
+
     fun deletePlaylist(id: String) {
         val updated = _playlists.value.filterNot { it.id == id || it.browseId == id || it.id == id.removePrefix("local:playlist:") }
         _playlists.value = updated

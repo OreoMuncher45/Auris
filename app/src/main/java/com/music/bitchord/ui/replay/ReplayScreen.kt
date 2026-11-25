@@ -20,7 +20,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -59,6 +58,7 @@ import com.music.bitchord.data.stats.ArtistFacts
 import com.music.bitchord.data.stats.ReplayPeriod
 import com.music.bitchord.data.stats.ReplaySummary
 import com.music.bitchord.ui.components.PAGE_GUTTER
+import com.music.bitchord.ui.components.ShelfRow
 import com.music.bitchord.ui.icons.BitChordIcons
 import com.music.bitchord.ui.player.MeshGradientBackground
 import com.music.bitchord.ui.player.rememberArtworkColors
@@ -346,7 +346,9 @@ internal fun ReplayCardRow(
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(horizontal = PAGE_GUTTER + 4.dp),
 ) {
-    LazyRow(
+    // Settles on the nearest card, like Home's card shelves, rather than
+    // stopping wherever the fling runs out with a card cut off at each edge.
+    ShelfRow(
         modifier = modifier,
         contentPadding = contentPadding,
         horizontalArrangement = Arrangement.spacedBy(12.dp),

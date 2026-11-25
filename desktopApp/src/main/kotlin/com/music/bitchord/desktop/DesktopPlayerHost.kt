@@ -188,6 +188,7 @@ internal object DesktopPlayerSettings : PlayerSettingsSource {
     override val canvasOverCellular = MutableStateFlow(true)
     override val fullBleedArtwork = MutableStateFlow(false)
     override val zoomOutAlbumArt = MutableStateFlow(false)
+    override val showTotalDuration = MutableStateFlow(false)
     override val hideSongStatus = MutableStateFlow(false)
     // A desktop window has no status bar to hide.
     override val hideStatusBar = MutableStateFlow(false)
@@ -197,6 +198,7 @@ internal object DesktopPlayerSettings : PlayerSettingsSource {
             .getOrDefault(LastPlayerScreen.MAIN),
     )
     override val legacyMeshGradient = MutableStateFlow(false)
+    override val backdropOverlay = MutableStateFlow(false)
     override val lyricsBlur = MutableStateFlow(true)
     override val liveBlur = MutableStateFlow(false)
     override val textGlow = MutableStateFlow(true)
@@ -213,6 +215,8 @@ internal object DesktopPlayerSettings : PlayerSettingsSource {
     override val reduceAnimation = MutableStateFlow(false)
     override val reduceDynamicBlur = MutableStateFlow(false)
     override val showNerdStats = MutableStateFlow(false)
+    /** The desktop has no Best Part lookup; see [com.music.bitchord.ui.player.PlayerHost.bestPartMs]. */
+    override val showBestPart = MutableStateFlow(false)
     override val showNextTrackStatus = MutableStateFlow(true)
     override val showUpgradeBadge = MutableStateFlow(true)
     override val showLosslessBadge = MutableStateFlow(true)
@@ -250,6 +254,10 @@ internal object DesktopPlayerSettings : PlayerSettingsSource {
 
     override fun setZoomOutAlbumArt(value: Boolean) {
         zoomOutAlbumArt.value = value
+    }
+
+    override fun setBackdropOverlay(value: Boolean) {
+        backdropOverlay.value = value
     }
 
     // The listener's own Automix choices, kept with the songs — the same

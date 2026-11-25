@@ -100,17 +100,43 @@ object Innertube {
     private const val WEB_REMIX_VERSION = "1.20250101.01.00"
     private const val WEB_REMIX_CLIENT_ID = "67"
 
+    /**
+     * The plain youtube.com client, for [webNext] only. Kept in step with the
+     * WEB entry in [PlayerClient]; `next` is lenient about an old version.
+     */
+    private const val WEB_CLIENT_VERSION = "2.20260708.00.00"
+    private const val WEB_CLIENT_ID = "1"
+
+    /**
+     * The Android Music client, which is the only one YouTube serves its timed
+     * lyrics to — see [browseMobile]. Everything else in the app keeps asking
+     * as the web client.
+     */
+    private const val ANDROID_MUSIC_CLIENT_ID = "21"
+    private const val ANDROID_MUSIC_VERSION = "7.21.50"
+
     private const val TAG = "BitChord"
+
+    /** Whether plays are registered with YouTube — off; see [playbackTracking]. */
+    private const val DISABLE_PLAY_HISTORY = true
+
+    /**
+     * Guards every write to the state [listener] is built from (cookie, scope,
+     * adopted identity, channel override) together with the rebuild, so a
+     * rebuild can never publish from a read another thread has since replaced.
+     */
+    private val identityLock = Any()
 
     /** Session cookie captured by the login WebView; null = browse as guest. */
     var cookie: String? = null
-        set(value) {
+        set(value) = synchronized(identityLock) {
             if (field != value) {
                 // Both belong to the session that just left. A scope kept across
                 // a sign-in would credit the new account's plays to the old one,
                 // and a visitor id minted under the old session is not bound to
                 // the new one — see [SessionScope] and [visitorData].
                 scope = null
+                adoptedIdentity = null
                 visitorData = null
                 visitorDataIsSessionBound = false
                 // The chosen channel belonged to the account that just left.
@@ -119,7 +145,58 @@ object Innertube {
                 channelOverride = null
             }
             field = value
+            refreshListener()
         }
+
+    /**
+     * Who requests are answered for: the session [cookie] and the channel
+     * chosen under it, or null signed out. A profile switch keeps the cookie
+     * and changes only the channel, so a cache of one listener's answers
+     * compares this rather than the cookie. Rebuilt only when either changes.
+     */
+    val listener: String? get() = published.listener
+
+    /**
+     * Bumped each time [listener] changes. Unlike the listener itself it tells
+     * an A→B→A switch apart from no switch at all, so an answer requested
+     * before the change is never kept as the current listener's.
+     */
+    val listenerGeneration: Long get() = published.generation
+
+    /**
+     * [listener] and [listenerGeneration], published together in one write:
+     * a reader never sees the new account under the old generation.
+     */
+    private class PublishedListener(val listener: String?, val generation: Long)
+
+    @Volatile
+    private var published = PublishedListener(null, 0L)
+
+    private fun refreshListener() = synchronized(identityLock) {
+        val session = cookie
+        val fresh = session?.let {
+            val channel = channelOverride
+            when {
+                // The account index requests actually send: the scope's when
+                // the channel doesn't name one.
+                channel != null -> "${channel.pageId}/${channel.dataSyncId}/${authUserFor(scope)}|$it"
+                // A scope taken from a signed-in page can name another account
+                // under the same cookie; requests then go out as that one.
+                adoptedIdentity != null -> "$adoptedIdentity|$it"
+                else -> it
+            }
+        }
+        val current = published
+        if (fresh != current.listener) published = PublishedListener(fresh, current.generation + 1)
+    }
+
+    /**
+     * The identity [adoptSessionScope] took from a page, while its scope is
+     * the one requests use. The shell's own default ([ensureSessionScope]) is
+     * not one: it is what the cookie alone already names.
+     */
+    @Volatile
+    private var adoptedIdentity: String? = null
 
     /**
      * Google's per-session visitor id.
@@ -267,10 +344,13 @@ object Innertube {
      * default. Takes effect on the next request — nothing is cached from it.
      */
     fun selectChannel(pageId: String?, dataSyncId: String?, authUser: String? = null) {
-        channelOverride = if (pageId == null && dataSyncId == null) {
-            null
-        } else {
-            ChannelSelection(pageId, dataSyncId, authUser)
+        synchronized(identityLock) {
+            channelOverride = if (pageId == null && dataSyncId == null) {
+                null
+            } else {
+                ChannelSelection(pageId, dataSyncId, authUser)
+            }
+            refreshListener()
         }
         Log.d(
             TAG,
@@ -305,10 +385,23 @@ object Innertube {
         clientVersion: String?,
         loggedIn: Boolean,
     ) {
+        synchronized(identityLock) { adoptSessionScopeLocked(pageId, dataSyncId, authUser, visitorData, clientVersion, loggedIn) }
+    }
+
+    private fun adoptSessionScopeLocked(
+        pageId: String?,
+        dataSyncId: String?,
+        authUser: String?,
+        visitorData: String?,
+        clientVersion: String?,
+        loggedIn: Boolean,
+    ) {
         val version = clientVersion ?: scope?.clientVersion
         if (!loggedIn) {
             Log.w(TAG, "captured page was signed out; not scoping requests to it")
             scope = version?.let { SessionScope(null, null, "0", it) }
+            adoptedIdentity = null
+            refreshListener()
             return
         }
         scope = SessionScope(
@@ -316,7 +409,8 @@ object Innertube {
             pageId = pageId?.takeIf { it.isNotBlank() },
             authUser = authUser?.takeIf { it.isNotBlank() } ?: "0",
             clientVersion = version,
-        )
+        ).also { adoptedIdentity = "${it.pageId}/${it.dataSyncId}/${it.authUser}" }
+        refreshListener()
         // The page's own visitor id, bound to this session — strictly better
         // than the anonymous one [fetchVisitorData] mints. See [visitorData].
         visitorData?.takeIf { it.isNotBlank() }?.let {
@@ -344,6 +438,33 @@ object Innertube {
     /** Which account in the cookie jar, chosen channel's first. */
     private fun authUserFor(session: SessionScope?): String =
         channelOverride?.authUser ?: session?.authUser ?: "0"
+
+    /**
+     * What one signed request goes out with, read in one go under
+     * [identityLock]: the cookie, the account and channel it acts as, and the
+     * visitor id.
+     *
+     * Read field by field while a sign-in or channel switch was half-way
+     * through, a request could pair the new channel with the old cookie or
+     * scope — credentials no published [listener] ever named, so a caller's
+     * before-and-after [listenerGeneration] check could not tell. Taken whole
+     * under the lock, every request goes out as a state that was published at
+     * some generation, and generations only grow: a caller that reads the
+     * same generation before the request and after it got that listener's
+     * answer.
+     */
+    private class RequestCredentials(
+        val cookie: String?,
+        val authUser: String,
+        val pageId: String?,
+        val dataSyncId: String?,
+        val visitorData: String?,
+    )
+
+    private fun requestCredentials(): RequestCredentials = synchronized(identityLock) {
+        val session = scope
+        RequestCredentials(cookie, authUserFor(session), pageIdFor(session), dataSyncIdFor(session), visitorData)
+    }
 
     /**
      * The WEB_REMIX version to claim, live if the shell has been read.
@@ -377,11 +498,20 @@ object Innertube {
                     // flight. Never install the old cookie's answer under the
                     // new one: that is a guaranteed 401 and, worse, can credit
                     // a play to the profile that just left.
-                    if (cookie != session) {
-                        Log.d(TAG, "discarding a session scope from an account that is no longer active")
+                    // Nor over a scope a signed-in page adopted meanwhile under
+                    // the same cookie: that names the profile the listener
+                    // picked, and [adoptedIdentity] already says so.
+                    val installed = synchronized(identityLock) {
+                        if (cookie != session || scope != null) return@synchronized false
+                        scope = fresh
+                        // Its account index can be what the listener names.
+                        refreshListener()
+                        true
+                    }
+                    if (!installed) {
+                        Log.d(TAG, "discarding a session scope from an account or profile that is no longer active")
                         return@let
                     }
-                    scope = fresh
                     channelOverride?.let { selected ->
                         if (selected.pageId != fresh.pageId || selected.dataSyncId != fresh.dataSyncId) {
                             Log.w(TAG, "server shell identity differs from selected profile; retaining override")
@@ -401,7 +531,13 @@ object Innertube {
     /** Re-read request context once after an authenticated rejection. */
     suspend fun refreshSessionScope() {
         if (cookie == null) return
-        scopeLock.withLock { scope = null }
+        scopeLock.withLock {
+            synchronized(identityLock) {
+                scope = null
+                adoptedIdentity = null
+                refreshListener()
+            }
+        }
         ensureSessionScope()
     }
 
@@ -528,8 +664,37 @@ object Innertube {
 
     // ---- Public API ---------------------------------------------------------
 
-    suspend fun browse(browseId: String, params: String? = null): JsonObject =
-        postMusic("browse") {
+    /**
+     * @param language an `hl` to ask in instead of the app's own, for a caller
+     *   that needs YouTube's titles in one fixed language to read them rather
+     *   than to show them.
+     */
+    suspend fun browse(browseId: String, params: String? = null, language: String? = null): JsonObject =
+        postMusic("browse", language = language) {
+            put("browseId", browseId)
+            params?.let { put("params", it) }
+        }
+
+    /**
+     * The same page as [browse], asked as the Android Music client.
+     *
+     * YouTube Music only hands out its timed lyrics to the mobile clients: the
+     * web client is answered with the plain `musicDescriptionShelfRenderer`,
+     * while the phone gets an `elementRenderer` carrying `timedLyricsModel`.
+     * The lyrics tab's own page is the only thing this is needed for, so it
+     * stays a separate call rather than changing the identity of the rest.
+     *
+     * Anonymous on purpose: lyrics are not tied to an account, and an Android
+     * client context paired with a web session's cookie is not a combination
+     * Google recognises.
+     */
+    suspend fun browseMobile(browseId: String, params: String? = null): JsonObject =
+        postMusicAnonymous(
+            endpoint = "browse",
+            clientId = ANDROID_MUSIC_CLIENT_ID,
+            clientName = "ANDROID_MUSIC",
+            clientVersion = ANDROID_MUSIC_VERSION,
+        ) {
             put("browseId", browseId)
             params?.let { put("params", it) }
         }
@@ -578,16 +743,16 @@ object Innertube {
     suspend fun accountSwitcher(): JsonObject {
         requireSession()
         ensureSessionScope()
-        val session = scope
+        val credentials = requestCredentials()
         val text = withRetry {
             client.get("$YOUTUBE_ORIGIN/getAccountSwitcherEndpoint") {
                 header("User-Agent", WEB_USER_AGENT)
                 header("Accept-Language", acceptLanguageHeader)
                 header("X-Origin", YOUTUBE_ORIGIN)
                 header("Referer", "$YOUTUBE_ORIGIN/")
-                cookie?.let { c ->
+                credentials.cookie?.let { c ->
                     header("Cookie", c)
-                    header("X-Goog-AuthUser", authUserFor(session))
+                    header("X-Goog-AuthUser", credentials.authUser)
                     sapisidFrom(c)?.let {
                         header("Authorization", sapisidHash(it, YOUTUBE_ORIGIN))
                     }
@@ -608,6 +773,47 @@ object Innertube {
         put("isAudioOnly", true)
     }
 
+    /**
+     * youtube.com's own `next` answer for [videoId], asked as the plain WEB
+     * client rather than YouTube Music.
+     *
+     * Only for what YouTube Music's answer leaves out: the "Most replayed"
+     * heat markers the player's Best Part button reads. Same video, same
+     * timeline, but only youtube.com's watch page carries the curve.
+     *
+     * Anonymous on purpose. No cookie, no visitor id, no account: which part
+     * of a song the world replays is not something the listener's account has
+     * any say in, and asking under it would put a watch-page visit on their
+     * history for every song. One retry rather than the usual two, because a
+     * miss here only costs the button, and the answer is around half a
+     * megabyte.
+     */
+    suspend fun webNext(videoId: String): JsonObject = withRetry(attempts = 2) {
+        client.post("$YOUTUBE_ORIGIN/youtubei/v1/next") {
+            contentType(ContentType.Application.Json)
+            parameter("prettyPrint", "false")
+            header("User-Agent", WEB_USER_AGENT)
+            header("Origin", YOUTUBE_ORIGIN)
+            header("Referer", "$YOUTUBE_ORIGIN/")
+            header("X-YouTube-Client-Name", WEB_CLIENT_ID)
+            header("X-YouTube-Client-Version", WEB_CLIENT_VERSION)
+            header("Accept-Language", acceptLanguageHeader)
+            setBody(
+                buildJsonObject {
+                    putJsonObject("context") {
+                        putJsonObject("client") {
+                            put("clientName", "WEB")
+                            put("clientVersion", WEB_CLIENT_VERSION)
+                            put("hl", currentLanguage)
+                            put("gl", "US")
+                        }
+                    }
+                    put("videoId", videoId)
+                },
+            )
+        }.body<JsonObject>()
+    }
+
     /** Timed caption transcript used as a last-resort lyrics source. */
     suspend fun transcript(videoId: String): JsonObject = postMusic("get_transcript") {
         // get_transcript expects a tiny protobuf: field 1, length, video id.
@@ -615,8 +821,17 @@ object Innertube {
         put("params", Base64.getEncoder().encodeToString(bytes))
     }
 
+    /**
+     * Search, asked anonymously.
+     *
+     * The regular authenticated `search` endpoint records every query against
+     * the signed-in account, which then shows up in the listener's YouTube app
+     * under search history. Dropping the cookie here keeps the results (tracks,
+     * artists, albums) but makes the lookup a guest one that touches no
+     * history — the same trade [searchTypeahead] already makes.
+     */
     suspend fun search(query: String, params: String? = null): JsonObject =
-        postMusic("search") {
+        postMusicAnonymous("search") {
             put("query", query)
             params?.let { put("params", it) }
         }
@@ -694,6 +909,10 @@ object Innertube {
      * timestamp one revision old, it does not.
      */
     suspend fun playbackTracking(videoId: String, signatureTimestamp: Int?): PlaybackTracking? {
+        // History registration is disabled outright: the app must not write the
+        // listener's plays into their YouTube account (search history and watch
+        // history both surface in the YouTube app). Nothing else reads this.
+        if (DISABLE_PLAY_HISTORY) return null
         if (cookie == null) return null
         ensureSessionScope()
         val response = postMusic("player") {
@@ -785,10 +1004,10 @@ object Innertube {
         // Playback can outlive the Activity that restored the session. Ensure
         // the selected profile's headers exist before this first history ping.
         if (cookie != null) ensureSessionScope()
-        val session = scope
+        val credentials = requestCredentials()
         return client.get(baseUrl) {
             parameter("cpn", cpn)
-            statsHeaders(session)
+            statsHeaders(credentials)
         }.status.value
     }
 
@@ -799,7 +1018,7 @@ object Innertube {
         extras: HttpRequestBuilder.() -> Unit,
     ): Int {
         if (cookie != null) ensureSessionScope()
-        val session = scope
+        val credentials = requestCredentials()
         return client.get(baseUrl) {
             parameter("ver", "2")
             parameter("c", "WEB_REMIX")
@@ -815,7 +1034,7 @@ object Innertube {
             parameter("hl", "en_US")
             parameter("cr", "US")
             extras()
-            statsHeaders(session)
+            statsHeaders(credentials)
         }.status.value
     }
 
@@ -825,16 +1044,16 @@ object Innertube {
      * player response; sending fewer is what makes a ping land somewhere other
      * than the listener's own history.
      */
-    private fun HttpRequestBuilder.statsHeaders(session: SessionScope?) {
+    private fun HttpRequestBuilder.statsHeaders(credentials: RequestCredentials) {
         header("X-Origin", MUSIC_ORIGIN)
         header("Origin", MUSIC_ORIGIN)
         header("Referer", "$MUSIC_ORIGIN/")
         header("User-Agent", WEB_USER_AGENT)
-        visitorData?.let { header("X-Goog-Visitor-Id", it) }
-        cookie?.let { c ->
+        credentials.visitorData?.let { header("X-Goog-Visitor-Id", it) }
+        credentials.cookie?.let { c ->
             header("Cookie", c)
-            header("X-Goog-AuthUser", authUserFor(session))
-            pageIdFor(session)?.let { header("X-Goog-PageId", it) }
+            header("X-Goog-AuthUser", credentials.authUser)
+            credentials.pageId?.let { header("X-Goog-PageId", it) }
             sapisidFrom(c)?.let { header("Authorization", sapisidHash(it)) }
         }
     }
@@ -1114,21 +1333,24 @@ object Innertube {
     private suspend fun postMusic(
         endpoint: String,
         query: Map<String, String> = emptyMap(),
+        /** The `hl` to ask in; the app's own language when null. */
+        language: String? = null,
         bodyExtras: JsonObjectBuilder.() -> Unit,
     ): JsonObject {
+        val hl = language ?: currentLanguage
         // This is the common authenticated request path: Home, Library,
         // likes, playlists, account menus and all their continuations pass
         // through it. Waiting here makes restoration process-wide rather than
         // a special case implemented by whichever screen happened to open.
         if (cookie != null) ensureSessionScope()
-        val session = scope
+        val credentials = requestCredentials()
         val clientVersion = webRemixVersion
         val response = withRetry {
             client.post("$MUSIC_BASE/$endpoint") {
                 contentType(ContentType.Application.Json)
                 parameter("prettyPrint", "false")
-                parameter("hl", currentLanguage)
-                header("Accept-Language", acceptLanguageHeader)
+                parameter("hl", hl)
+                header("Accept-Language", language ?: acceptLanguageHeader)
                 query.forEach { (key, value) -> parameter(key, value) }
                 header("X-Origin", MUSIC_ORIGIN)
                 header("Origin", MUSIC_ORIGIN)
@@ -1138,14 +1360,14 @@ object Innertube {
                 // id is minted on the first call and reused for the session.
                 header("X-YouTube-Client-Name", WEB_REMIX_CLIENT_ID)
                 header("X-YouTube-Client-Version", clientVersion)
-                visitorData?.let { header("X-Goog-Visitor-Id", it) }
-                cookie?.let { c ->
+                credentials.visitorData?.let { header("X-Goog-Visitor-Id", it) }
+                credentials.cookie?.let { c ->
                     header("Cookie", c)
                     // Which account in the jar, and which brand channel of it.
                     // Both were fixed at "the first one" before — see
                     // [SessionScope].
-                    header("X-Goog-AuthUser", authUserFor(session))
-                    pageIdFor(session)?.let { header("X-Goog-PageId", it) }
+                    header("X-Goog-AuthUser", credentials.authUser)
+                    credentials.pageId?.let { header("X-Goog-PageId", it) }
                     sapisidFrom(c)?.let { header("Authorization", sapisidHash(it)) }
                 }
                 setBody(
@@ -1154,9 +1376,9 @@ object Innertube {
                             putJsonObject("client") {
                                 put("clientName", "WEB_REMIX")
                                 put("clientVersion", clientVersion)
-                                put("hl", currentLanguage)
+                                put("hl", hl)
                                 put("gl", "US")
-                                visitorData?.let { put("visitorData", it) }
+                                credentials.visitorData?.let { put("visitorData", it) }
                             }
                             putJsonObject("user") {
                                 put("lockedSafetyMode", false)
@@ -1165,7 +1387,7 @@ object Innertube {
                                 // `onBehalfOfUser` it cannot tie to the cookie
                                 // with 401, so a guess here would take the
                                 // whole app down rather than just history.
-                                dataSyncIdFor(session)?.let { put("onBehalfOfUser", it) }
+                                credentials.dataSyncId?.let { put("onBehalfOfUser", it) }
                             }
                             putJsonObject("request") { put("useSsl", true) }
                         }
@@ -1191,9 +1413,12 @@ object Innertube {
      */
     private suspend fun postMusicAnonymous(
         endpoint: String,
+        /** Which client to ask as; the web one unless a caller needs another. */
+        clientId: String = WEB_REMIX_CLIENT_ID,
+        clientName: String = "WEB_REMIX",
+        clientVersion: String = webRemixVersion,
         bodyExtras: JsonObjectBuilder.() -> Unit,
     ): JsonObject {
-        val clientVersion = webRemixVersion
         return withRetry {
             client.post("$MUSIC_BASE/$endpoint") {
                 contentType(ContentType.Application.Json)
@@ -1201,7 +1426,7 @@ object Innertube {
                 header("X-Origin", MUSIC_ORIGIN)
                 header("Origin", MUSIC_ORIGIN)
                 header("Referer", "$MUSIC_ORIGIN/")
-                header("X-YouTube-Client-Name", WEB_REMIX_CLIENT_ID)
+                header("X-YouTube-Client-Name", clientId)
                 header("X-YouTube-Client-Version", clientVersion)
                 visitorData?.let { header("X-Goog-Visitor-Id", it) }
                 // No Cookie / Authorization headers — anonymous request.
@@ -1209,7 +1434,7 @@ object Innertube {
                     buildJsonObject {
                         putJsonObject("context") {
                             putJsonObject("client") {
-                                put("clientName", "WEB_REMIX")
+                                put("clientName", clientName)
                                 put("clientVersion", clientVersion)
                                 put("hl", "en")
                                 put("gl", "US")

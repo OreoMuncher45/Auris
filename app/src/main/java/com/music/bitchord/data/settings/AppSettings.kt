@@ -12,17 +12,17 @@ import androidx.media3.common.Player
 import com.music.bitchord.BuildConfig
 import com.music.bitchord.auth.AuthStore
 import com.music.bitchord.data.canvas.SpotifyToken
+import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.sources.SourceKind
+import com.music.bitchord.data.stats.ReplayPeriod
 import com.music.bitchord.playback.EqLayout
 import com.music.bitchord.playback.EqualizerPreset
 import com.music.bitchord.playback.audio.JamesDspConfig
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.SharingStarted
@@ -203,6 +203,12 @@ enum class LocalMusicSort {
     TITLE_DESC,
     DATE_ADDED,
     DATE_MODIFIED,
+
+    /**
+     * Album by album, each in its release order by the files' own disc and
+     * track tags. Only offered when some file carries a track tag.
+     */
+    TRACK_NUMBER,
 }
 
 /**
@@ -235,6 +241,12 @@ object AppSettings {
 
     /** Only for the Discord, WebDAV and SMB secrets — everything else on here is plain prefs. */
     private lateinit var authStore: AuthStore
+
+    /**
+     * The encrypted store the Apple token lives in, kept apart from [prefs]:
+     * it is a bearer credential, and the settings file is plain text.
+     */
+    private var appleSecrets: SharedPreferences? = null
 
     /**
      * Quality ceilings, one per kind of connection — the point of the split is
@@ -292,6 +304,14 @@ object AppSettings {
      */
     val exportDownloads = MutableStateFlow(false)
 
+    /**
+     * Keep every liked song downloaded: the account's Liked Music is fetched
+     * whole on the next pass allowed to download, then each new like follows
+     * it. Off by default, like downloading any other playlist whole — see
+     * [com.music.bitchord.download.DownloadedPlaylistSync], which does the work.
+     */
+    val downloadLikedSongs = MutableStateFlow(false)
+
     /** Whether the active network charges for data. `null` while offline. */
     val meteredConnection = MutableStateFlow<Boolean?>(null)
 
@@ -317,12 +337,32 @@ object AppSettings {
     val smartFadeEnabled = MutableStateFlow(false)
 
     /**
+     * Turns the music down over the sleep timer's last 30 seconds instead of
+     * stopping it mid-phrase — see [com.music.bitchord.playback.SleepTimer.fadeVolume].
+     * Off by default, so a timer behaves as it always has until asked.
+     */
+    val sleepTimerFadeOut = MutableStateFlow(false)
+
+    /**
      * Blends a proved lossless copy in over the lossy stream it replaces,
      * instead of cutting the audio while the player rebuilds its source.
      * Off by default: the two masters can differ enough to double or phase
      * during the overlap, so it is only turned on after a confirmation.
      */
     val seamlessQualityUpgrade = MutableStateFlow(false)
+
+    /**
+     * The listener's word that their YouTube account has Premium, and that
+     * YouTube playback should take the signed-in route that reaches Premium's
+     * ~256kbps Opus (itag 774) instead of the anonymous 251 — the route
+     * age-restricted tracks already take. See
+     * [InnerTubeXResolver.extract][com.music.bitchord.data.innertube.InnerTubeXResolver.extract].
+     *
+     * Off by default and asked rather than detected: nothing InnerTubeX
+     * exposes confirms the entitlement, and claiming it for an account
+     * without Premium only costs that account the faster anonymous route.
+     */
+    val youtubePremiumAudio = MutableStateFlow(false)
 
     /**
      * Whether the songs kept on the device are upgraded to a better copy
@@ -728,6 +768,12 @@ object AppSettings {
     /** Put the playing track's codec, bitrate and sample rate on the player. */
     val showNerdStats = MutableStateFlow(false)
 
+    /**
+     * The "Best Part" button on the player's artwork, which skips to the part of
+     * the song listeners replay most. On unless turned off.
+     */
+    val showBestPart = MutableStateFlow(true)
+
     /** Freezes the main player's mesh gradient instead of letting it drift/crossfade. */
     val reduceAnimation = MutableStateFlow(false)
 
@@ -758,6 +804,22 @@ object AppSettings {
      * metadata appears immediately while the catalogue match is resolved.
      */
     val preferMusicOnly = MutableStateFlow(false)
+
+    /** Tracks whose one-shot Convert to Video prompt has already been shown. */
+    val videoConversionPromptHistory = MutableStateFlow<Set<String>>(emptySet())
+
+    /** Whether the one-shot "Convert to Video" offer is shown over the artwork at all. */
+    val videoConversionPromptEnabled = MutableStateFlow(true)
+
+    /**
+     * The listener's pasted Apple Music `Music-User-Token`, when they have one.
+     *
+     * Null means none was pasted, and Apple's account reads fall back to the
+     * addon's configured token, then to nothing. Kept in an encrypted store —
+     * see `EncryptedPrefs` — because it is an account credential; the public
+     * catalog needs no token at all.
+     */
+    val appleUserToken = MutableStateFlow<String?>(null)
 
     /** Analyzes audio waveform/envelope to align matching playback moment between versions. */
     val smartVersionAlignment = MutableStateFlow(true)
@@ -955,6 +1017,20 @@ object AppSettings {
     val zoomOutAlbumArt = MutableStateFlow(false)
 
     /**
+     * Shows the track's total length at the end of the player's scrubber,
+     * in place of the time left. Off by default: the countdown is the
+     * player's own look.
+     */
+    val showTotalDuration = MutableStateFlow(false)
+
+    /**
+     * The period last picked on the Replay page, which it opens on next time.
+     * This year until one is picked. Device-local, like the listening it
+     * charts — see [DEVICE_LOCAL].
+     */
+    val replayPeriod = MutableStateFlow(ReplayPeriod.DEFAULT)
+
+    /**
      * Puts v1.5's backdrop back on the player: four quantised blobs drifting
      * behind the whole screen, rather than the artwork's own colours hung off
      * the sleeve's bottom edge.
@@ -970,6 +1046,15 @@ object AppSettings {
      * reason is one a listener has to agree with.
      */
     val legacyMeshGradient = MutableStateFlow(false)
+
+    /**
+     * The dark-or-bright overlay the player lays over its blurred backdrop so
+     * the buttons keep their contrast against it: black under light ink over a
+     * bright cover, white under dark ink over a dark one. Off by default, so
+     * the blur is seen as it is — the 3.1 look; on, the buttons win over the
+     * picture. See [com.music.bitchord.ui.player.PlayerInkContrast].
+     */
+    val backdropOverlay = MutableStateFlow(false)
 
     /** Restores the expanded player to the surface the listener left open. */
     val lastPlayerScreen = MutableStateFlow(LastPlayerScreen.MAIN)
@@ -1054,9 +1139,10 @@ object AppSettings {
      *
      * A grid of covers says nothing about how many tracks are in a playlist
      * or when it was last touched, and a listener with thirty playlists wants
-     * to read the names rather than look at thirty squares.
+     * to read the names rather than look at thirty squares. A list is the
+     * default; the switch still opens the covers.
      */
-    val libraryPlaylistsViewType = MutableStateFlow(LibraryViewType.GRID)
+    val libraryPlaylistsViewType = MutableStateFlow(LibraryViewType.LIST)
 
     /**
      * Whether the synthetic Flow card is offered on Home.
@@ -1578,6 +1664,29 @@ object AppSettings {
     }
 
     /**
+     * Opens the encrypted store the Apple account token lives in and publishes
+     * what it holds.
+     *
+     * Separate from [init] on purpose: it touches the device Keystore, and
+     * [init] is called by tests that have no business standing one up. The
+     * application calls this once, right after [init]; a caller that never does
+     * simply has no Apple account token, which is the same state as never
+     * having pasted one.
+     */
+    fun initAppleAccount(context: Context) {
+        appleSecrets = runCatching {
+            com.music.bitchord.auth.EncryptedPrefs.open(
+                context.applicationContext,
+                "bitchord_apple",
+                "bitchord_apple_plain",
+            )
+        }.getOrNull()
+        appleUserToken.value = appleSecrets
+            ?.getString(KEY_APPLE_USER_TOKEN, null)
+            ?.takeIf { it.isNotBlank() }
+    }
+
+    /**
      * Re-reads every setting off disk.
      *
      * The one caller is an import ([Backup][com.music.bitchord.data.stats.Backup]),
@@ -1590,7 +1699,10 @@ object AppSettings {
      */
     fun reload() {
         if (!this::prefs.isInitialized) return
+        val premiumAudio = youtubePremiumAudio.value
         readAll()
+        // A restore that flips it leaves URLs picked under the old route.
+        if (youtubePremiumAudio.value != premiumAudio) StreamResolver.forgetResolved()
     }
 
     private fun readAll() {
@@ -1605,9 +1717,12 @@ object AppSettings {
         downloadQuality.value = readDownloadQuality()
         wifiOnlyDownloads.value = prefs.getBoolean(KEY_WIFI_ONLY_DOWNLOADS, true)
         exportDownloads.value = prefs.getBoolean(KEY_EXPORT_DOWNLOADS, false)
+        downloadLikedSongs.value = prefs.getBoolean(KEY_DOWNLOAD_LIKED_SONGS, false)
         crossfadeSeconds.value = prefs.getInt(KEY_CROSSFADE, 0)
         smartFadeEnabled.value = prefs.getBoolean(KEY_SMART_FADE, false)
+        sleepTimerFadeOut.value = prefs.getBoolean(KEY_SLEEP_TIMER_FADE_OUT, false)
         seamlessQualityUpgrade.value = prefs.getBoolean(KEY_SEAMLESS_QUALITY_UPGRADE, false)
+        youtubePremiumAudio.value = prefs.getBoolean(KEY_YOUTUBE_PREMIUM_AUDIO, false)
         autoUpgradeLocalStorage.value = prefs.getBoolean(KEY_AUTO_UPGRADE_LOCAL_STORAGE, true)
         automixPerformanceMode.value = runCatching {
             AutomixPerformanceMode.valueOf(
@@ -1719,6 +1834,7 @@ object AppSettings {
         shuffleEnabled.value = prefs.getBoolean(KEY_SHUFFLE_ENABLED, false)
         repeatMode.value = prefs.getInt(KEY_REPEAT_MODE, Player.REPEAT_MODE_OFF)
         showNerdStats.value = prefs.getBoolean(KEY_NERD_STATS, false)
+        showBestPart.value = prefs.getBoolean(KEY_BEST_PART, true)
         reduceAnimation.value = prefs.getBoolean(KEY_REDUCE_ANIMATION, lowEndDevice)
         highPerformanceMode.value = prefs.getBoolean(KEY_HIGH_PERFORMANCE_MODE, false)
         performanceRefreshRate.value = normalizePerformanceRefreshRate(
@@ -1730,6 +1846,8 @@ object AppSettings {
         swipeToPlayNext.value = prefs.getBoolean(KEY_SWIPE_TO_PLAY_NEXT, false)
         dontRepeatSuggestions.value = prefs.getBoolean(KEY_DONT_REPEAT_SUGGESTIONS, false)
         preferMusicOnly.value = prefs.getBoolean(KEY_PREFER_MUSIC_ONLY, false)
+        refreshVideoConversionPromptHistory()
+        videoConversionPromptEnabled.value = prefs.getBoolean(KEY_VIDEO_CONVERSION_PROMPT_ENABLED, true)
         smartVersionAlignment.value = prefs.getBoolean(KEY_SMART_VERSION_ALIGNMENT, true)
         reduceDynamicBlur.value = prefs.getBoolean(KEY_REDUCE_BLUR, lowEndDevice)
         liquidGlass.value = prefs.getBoolean(KEY_LIQUID_GLASS, false)
@@ -1761,7 +1879,10 @@ object AppSettings {
         spotifyCanvasEnabled.value = prefs.getBoolean(KEY_SPOTIFY_CANVAS_ENABLED, true)
         fullBleedArtwork.value = prefs.getBoolean(KEY_FULL_BLEED_ARTWORK, true)
         zoomOutAlbumArt.value = prefs.getBoolean(KEY_ZOOM_OUT_ALBUM_ART, false)
+        showTotalDuration.value = prefs.getBoolean(KEY_SHOW_TOTAL_DURATION, false)
+        replayPeriod.value = ReplayPeriod.named(prefs.getString(KEY_REPLAY_PERIOD, null))
         legacyMeshGradient.value = prefs.getBoolean(KEY_LEGACY_MESH_GRADIENT, false)
+        backdropOverlay.value = prefs.getBoolean(KEY_BACKDROP_OVERLAY, false)
         lastPlayerScreen.value = runCatching {
             LastPlayerScreen.valueOf(
                 prefs.getString(KEY_LAST_PLAYER_SCREEN, null) ?: LastPlayerScreen.MAIN.name,
@@ -1805,7 +1926,7 @@ object AppSettings {
         homeRecentsViewType.value = readLibraryViewType(KEY_HOME_RECENTS_VIEW_TYPE)
         libraryPlaylistsViewType.value = readLibraryViewType(
             KEY_LIBRARY_PLAYLISTS_VIEW_TYPE,
-            fallback = LibraryViewType.GRID,
+            fallback = LibraryViewType.LIST,
         )
         homeFlowVisible.value = prefs.getBoolean(KEY_HOME_FLOW_VISIBLE, true)
         homeReplayVisible.value = prefs.getBoolean(KEY_HOME_REPLAY_VISIBLE, true)
@@ -1944,7 +2065,6 @@ object AppSettings {
      */
     private fun watchConnection(context: Context) {
         val manager = context.getSystemService(ConnectivityManager::class.java) ?: return
-        var pendingCheck: Job? = null
 
         // A connected network is not the same thing as a working one. Wi-Fi
         // with no internet behind it — the router is up, the line is down —
@@ -1953,59 +2073,52 @@ object AppSettings {
         // while the detector insists it is fine. The system's own probe is the
         // answer: VALIDATED is set only after it got an answer from the
         // internet, so a captive portal and a dead line both read as offline.
+        fun NetworkCapabilities.working() =
+            hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+
+        // Asked once, before any callback: with no network at all the system
+        // sends none, and the verdict has to learn "offline" from somewhere.
         val actuallyUp = {
             runCatching {
                 val network = manager.activeNetwork ?: return@runCatching false
-                val capabilities = manager.getNetworkCapabilities(network)
-                    ?: return@runCatching false
-                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-                    capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                manager.getNetworkCapabilities(network)?.working() == true
             }.getOrDefault(false)
         }
 
-        // Believed immediately when a network is there; believed gone only after
-        // the grace period, and only if it is *still* gone by then. `activeNetwork`
-        // is null for a moment on every handover, and the player reads this to
-        // choose between a downloaded file and a stream — a verdict that
-        // flickers for 200ms mid-handover is how one queue came out as files and
-        // the next as streams.
-        //
-        // The wait has to be *scheduled*, not read from the clock inside the
-        // callback. Reading it there meant the verdict was only ever computed at
-        // the instant the callback ran, which is always inside the grace: with
-        // no network at all the only callback is the initial one, so the app
-        // believed it could stream forever and no downloaded file ever played.
-        val markStreaming = {
-            pendingCheck?.cancel()
-            pendingCheck = null
-            streamingAvailableFlow.value = true
+        // The verdict itself follows the callbacks, not the system's answer —
+        // which lags them. See [ConnectionWatch] for the grace period and why.
+        val watch = ConnectionWatch(networkScope, NETWORK_LOST_GRACE_MS, actuallyUp) { up ->
+            streamingAvailableFlow.value = up
         }
 
-        val refresh = {
-            if (actuallyUp()) {
-                markStreaming()
-            } else {
-                pendingCheck?.cancel()
-                pendingCheck = networkScope.launch {
-                    delay(NETWORK_LOST_GRACE_MS)
-                    if (!actuallyUp()) streamingAvailableFlow.value = false
-                    pendingCheck = null
-                }
-            }
+        val refreshMetered = {
             meteredConnection.value = runCatching {
                 if (manager.activeNetwork == null) null else manager.isActiveNetworkMetered
             }.getOrNull()
         }
-        refresh()
+        watch.start()
+        refreshMetered()
         runCatching {
             manager.registerDefaultNetworkCallback(
                 object : ConnectivityManager.NetworkCallback() {
-                    override fun onAvailable(network: Network) = refresh()
-                    override fun onLost(network: Network) = refresh()
+                    override fun onAvailable(network: Network) {
+                        watch.onAvailable(network)
+                        refreshMetered()
+                    }
+
+                    override fun onLost(network: Network) {
+                        watch.onLost(network)
+                        refreshMetered()
+                    }
+
                     override fun onCapabilitiesChanged(
                         network: Network,
                         capabilities: NetworkCapabilities,
-                    ) = refresh()
+                    ) {
+                        watch.onCapabilities(network, capabilities.working())
+                        refreshMetered()
+                    }
                 },
             )
         }
@@ -2145,19 +2258,32 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_WIFI_ONLY_DOWNLOADS, value).apply()
     }
 
-    fun setCrossfadeSeconds(value: Int) {
-        crossfadeSeconds.value = value
-        prefs.edit().putInt(KEY_CROSSFADE, value).apply()
-    }
-
     fun setSmartFadeEnabled(value: Boolean) {
         smartFadeEnabled.value = value
         prefs.edit().putBoolean(KEY_SMART_FADE, value).apply()
     }
 
+    fun setCrossfadeSeconds(value: Int) {
+        crossfadeSeconds.value = value
+        prefs.edit().putInt(KEY_CROSSFADE, value).apply()
+    }
+
+
+    fun setSleepTimerFadeOut(value: Boolean) {
+        sleepTimerFadeOut.value = value
+        prefs.edit().putBoolean(KEY_SLEEP_TIMER_FADE_OUT, value).apply()
+    }
+
     fun setSeamlessQualityUpgrade(value: Boolean) {
         seamlessQualityUpgrade.value = value
         prefs.edit().putBoolean(KEY_SEAMLESS_QUALITY_UPGRADE, value).apply()
+    }
+
+    fun setYoutubePremiumAudio(value: Boolean) {
+        youtubePremiumAudio.value = value
+        prefs.edit().putBoolean(KEY_YOUTUBE_PREMIUM_AUDIO, value).apply()
+        // Remembered URLs were picked under the old route; the next play asks again.
+        StreamResolver.forgetResolved()
     }
 
     /**
@@ -2184,15 +2310,6 @@ object AppSettings {
      * [com.music.bitchord.util.AppRelaunch] — because a settings write has no
      * business killing the process behind the screen that called it.
      */
-    fun setHomeProvider(value: HomeProvider) {
-        homeProvider.value = value
-        // Committed, not applied: the caller restarts the process as soon as
-        // this returns, and an async write that has not reached disk when the
-        // process dies is a switch that reports success and comes back on the
-        // old provider — which is exactly what it did.
-        prefs.edit().putString(KEY_HOME_PROVIDER, value.name).commit()
-    }
-
     /**
      * Records the engine in the preferences.
      *
@@ -2202,6 +2319,15 @@ object AppSettings {
     fun setAutomixEngine(value: AutomixEngine) {
         automixEngine.value = value
         prefs.edit().putString(KEY_AUTOMIX_ENGINE, value.name).apply()
+    }
+
+    fun setHomeProvider(value: HomeProvider) {
+        homeProvider.value = value
+        // Committed, not applied: the caller restarts the process as soon as
+        // this returns, and an async write that has not reached disk when the
+        // process dies is a switch that reports success and comes back on the
+        // old provider — which is exactly what it did.
+        prefs.edit().putString(KEY_HOME_PROVIDER, value.name).commit()
     }
 
     fun setSkipSilence(value: Boolean) {
@@ -2349,6 +2475,11 @@ object AppSettings {
         prefs.edit().putFloat(KEY_SPEED, value).apply()
     }
 
+    fun setShowBestPart(value: Boolean) {
+        showBestPart.value = value
+        prefs.edit().putBoolean(KEY_BEST_PART, value).apply()
+    }
+
     fun setShowNerdStats(value: Boolean) {
         showNerdStats.value = value
         prefs.edit().putBoolean(KEY_NERD_STATS, value).apply()
@@ -2426,6 +2557,41 @@ object AppSettings {
     fun setPreferMusicOnly(value: Boolean) {
         preferMusicOnly.value = value
         prefs.edit().putBoolean(KEY_PREFER_MUSIC_ONLY, value).apply()
+    }
+
+    fun setVideoConversionPromptEnabled(value: Boolean) {
+        videoConversionPromptEnabled.value = value
+        prefs.edit().putBoolean(KEY_VIDEO_CONVERSION_PROMPT_ENABLED, value).apply()
+    }
+
+    /**
+     * Stores (or clears) the listener's pasted Apple `Music-User-Token`.
+     *
+     * A blank value removes the key rather than storing an empty one: "no
+     * token" and "an empty token" are the same state, and the resolver should
+     * fall through to the addon on either.
+     */
+    fun setAppleUserToken(token: String?) {
+        val clean = token?.trim()?.takeIf { it.isNotEmpty() }
+        appleUserToken.value = clean
+        appleSecrets?.let { store ->
+            store.edit().apply {
+                if (clean == null) remove(KEY_APPLE_USER_TOKEN) else putString(KEY_APPLE_USER_TOKEN, clean)
+            }.apply()
+        }
+    }
+
+    internal fun refreshVideoConversionPromptHistory() {
+        videoConversionPromptHistory.value = prefs.getStringSet(KEY_VIDEO_CONVERSION_PROMPTS, emptySet())
+            .orEmpty()
+            .toSet()
+    }
+
+    fun markVideoConversionPromptShown(trackId: String) {
+        if (trackId.isBlank() || trackId in videoConversionPromptHistory.value) return
+        val updated = videoConversionPromptHistory.value + trackId
+        videoConversionPromptHistory.value = updated
+        prefs.edit().putStringSet(KEY_VIDEO_CONVERSION_PROMPTS, updated).apply()
     }
 
     fun setSmartVersionAlignment(value: Boolean) {
@@ -2690,9 +2856,25 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_ZOOM_OUT_ALBUM_ART, value).apply()
     }
 
+    fun setShowTotalDuration(value: Boolean) {
+        showTotalDuration.value = value
+        prefs.edit().putBoolean(KEY_SHOW_TOTAL_DURATION, value).apply()
+    }
+
+    fun setReplayPeriod(value: ReplayPeriod) {
+        if (replayPeriod.value == value) return
+        replayPeriod.value = value
+        prefs.edit().putString(KEY_REPLAY_PERIOD, value.name).apply()
+    }
+
     fun setLegacyMeshGradient(value: Boolean) {
         legacyMeshGradient.value = value
         prefs.edit().putBoolean(KEY_LEGACY_MESH_GRADIENT, value).apply()
+    }
+
+    fun setBackdropOverlay(value: Boolean) {
+        backdropOverlay.value = value
+        prefs.edit().putBoolean(KEY_BACKDROP_OVERLAY, value).apply()
     }
 
     fun setLastPlayerScreen(value: LastPlayerScreen) {
@@ -2834,6 +3016,11 @@ object AppSettings {
     fun setExportDownloads(value: Boolean) {
         exportDownloads.value = value
         prefs.edit().putBoolean(KEY_EXPORT_DOWNLOADS, value).apply()
+    }
+
+    fun setDownloadLikedSongs(value: Boolean) {
+        downloadLikedSongs.value = value
+        prefs.edit().putBoolean(KEY_DOWNLOAD_LIKED_SONGS, value).apply()
     }
 
     fun setLastfmPrimaryArtistOnly(value: Boolean) {
@@ -3257,6 +3444,8 @@ object AppSettings {
         "downloaded_collections",
         KEY_LOCAL_MUSIC_FOLDER_URI,
         KEY_LAST_VERSION_CODE,
+        // Which stretch of this phone's listening the Replay was left on.
+        KEY_REPLAY_PERIOD,
     )
 
     const val DEFAULT_CACHE_LIMIT_BYTES = 512L * 1024 * 1024
@@ -3293,10 +3482,15 @@ object AppSettings {
     private const val KEY_QUALITY_DOWNLOAD = "audio_quality_download"
     private const val KEY_WIFI_ONLY_DOWNLOADS = "wifi_only_downloads"
     private const val KEY_EXPORT_DOWNLOADS = "export_downloads"
+    private const val KEY_DOWNLOAD_LIKED_SONGS = "download_liked_songs"
     private const val KEY_LOSSLESS = "lossless_audio"
     private const val KEY_CROSSFADE = "crossfade_seconds"
     private const val KEY_SMART_FADE = "smart_fade_enabled"
+    private const val KEY_AUTOMIX_ART_TRANSITION = "automix_art_transition"
+    private const val KEY_AUTOMIX_MINI_ART_TRANSITION = "automix_mini_art_transition"
+    private const val KEY_SLEEP_TIMER_FADE_OUT = "sleep_timer_fade_out"
     private const val KEY_SEAMLESS_QUALITY_UPGRADE = "seamless_quality_upgrade"
+    private const val KEY_YOUTUBE_PREMIUM_AUDIO = "youtube_premium_audio"
     private const val KEY_AUTO_UPGRADE_LOCAL_STORAGE = "auto_upgrade_local_storage"
     private const val KEY_AUTOMIX_PERFORMANCE_MODE = "automix_performance_mode"
     private const val KEY_HOME_PROVIDER = "home_provider"
@@ -3360,6 +3554,7 @@ object AppSettings {
     private const val KEY_SHUFFLE_ENABLED = "shuffle_enabled"
     private const val KEY_REPEAT_MODE = "repeat_mode"
     private const val KEY_NERD_STATS = "show_nerd_stats"
+    private const val KEY_BEST_PART = "show_best_part"
     private const val KEY_CACHE_LIMIT = "audio_cache_limit_bytes"
 
     private const val KEY_CONCURRENT_DOWNLOADS = "concurrent_downloads"
@@ -3386,6 +3581,9 @@ object AppSettings {
     private const val KEY_SWIPE_TO_PLAY_NEXT = "swipe_to_play_next"
     private const val KEY_DONT_REPEAT_SUGGESTIONS = "dont_repeat_suggestions"
     private const val KEY_PREFER_MUSIC_ONLY = "prefer_music_only"
+    private const val KEY_VIDEO_CONVERSION_PROMPTS = "video_conversion_prompts_shown"
+    private const val KEY_VIDEO_CONVERSION_PROMPT_ENABLED = "video_conversion_prompt_enabled"
+    private const val KEY_APPLE_USER_TOKEN = "apple_user_token"
     private const val KEY_SMART_VERSION_ALIGNMENT = "smart_version_alignment"
     private const val KEY_REDUCE_BLUR = "reduce_dynamic_blur"
     private const val KEY_LIQUID_GLASS = "liquid_glass"
@@ -3411,7 +3609,10 @@ object AppSettings {
     private const val KEY_SPOTIFY_CANVAS_ENABLED = "spotify_canvas_enabled"
     private const val KEY_FULL_BLEED_ARTWORK = "full_bleed_artwork"
     private const val KEY_ZOOM_OUT_ALBUM_ART = "zoom_out_album_art"
+    private const val KEY_SHOW_TOTAL_DURATION = "show_total_duration"
+    private const val KEY_REPLAY_PERIOD = "replay_period"
     private const val KEY_LEGACY_MESH_GRADIENT = "legacy_mesh_gradient"
+    private const val KEY_BACKDROP_OVERLAY = "backdrop_overlay"
     private const val KEY_LAST_PLAYER_SCREEN = "last_player_screen"
     private const val KEY_SYNCED_LYRICS = "synced_lyrics"
     private const val KEY_LYRICS_SOURCES = "lyrics_sources"

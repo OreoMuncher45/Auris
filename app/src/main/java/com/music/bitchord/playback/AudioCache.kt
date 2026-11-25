@@ -38,15 +38,16 @@ import com.music.bitchord.data.spotify.SpotifyHomeSource
 import com.music.bitchord.download.Downloads
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -89,6 +90,13 @@ object AudioCache {
      * carry the name with it.
      */
     private const val SPOTIFY_ROW_PREFIX = SpotifyHomeSource.SPOTIFY_KEY_PREFIX
+
+    /** Prefix of a catalogue row that exists only in Apple's catalogue. */
+    private const val APPLE_ROW_PREFIX = com.music.bitchord.data.model.APPLE_ROW_PREFIX
+
+    /** Whether [videoId] is a catalogue row — Spotify's or Apple's — not a YouTube id. */
+    private fun catalogueRow(videoId: String): Boolean =
+        videoId.startsWith(SPOTIFY_ROW_PREFIX) || videoId.startsWith(APPLE_ROW_PREFIX)
 
     /**
      * The disk budget, straight from [AppSettings] — 512MB by default, roughly
@@ -539,7 +547,6 @@ object AudioCache {
                     // And the tail's own guard, for the same reason: the copy it
                     // pulled was thrown off disk, so the next tick has to be free
                     // to ask for a tail off whatever replaces it.
-                    analysisTails.remove(videoId)
                 }
             }
             .onFailure {
@@ -1172,12 +1179,19 @@ object AudioCache {
     suspend fun remove(mediaId: String): Int = withContext(Dispatchers.IO) {
         if (!::cache.isInitialized || mediaId.isBlank()) return@withContext 0
         playedIds.remove(mediaId)
-        // The same per-track bookkeeping [clear] drops for every track, and
-        // for the same reason: it describes bytes that are about to be gone.
+        // Drop the analysis bookkeeping with the bytes, so a later round
+        // starts from what is actually on disk rather than from a claim about
+        // the copy that was just removed. A writer still holding an entry is
+        // left alone by SimpleCache; the failed removal is logged below.
         analysisHeads.remove(mediaId)
         analysisHeadRounds.remove(mediaId)
         analysisHeadWant.remove(mediaId)
+        analysisOpenings.remove(mediaId)
+        analysisOpeningsInFlight.remove(mediaId)
+        analysisInFlight.remove(mediaId)
+        analysisProgress.remove(mediaId)
         analysisTails.remove(mediaId)
+        analysisTailsInFlight.remove(mediaId)
         renditionKeys.remove(mediaId)
         var removed = 0
         keysOf(mediaId).forEach { key ->
@@ -1692,6 +1706,23 @@ object AudioCache {
         upstreamFactory = factory
     }
 
+    /**
+     * The audio [song] actually plays, as a source the lyrics video can cut
+     * from: the same media item the player builds, read through the same
+     * cache-and-resolver chain the player reads it through.
+     *
+     * So a share carries the recording the listener is hearing — a downloaded
+     * file, a cached copy, a source substitute — instead of a fresh YouTube
+     * resolve that can be refused or that no source answers. Null until the
+     * player's cache and upstream exist.
+     */
+    fun shareSource(song: Song): Pair<DataSource.Factory, Uri>? {
+        if (!::cache.isInitialized) return null
+        val upstream = upstreamFactory ?: return null
+        val uri = song.toMediaItem().localConfiguration?.uri ?: return null
+        return playbackFactory(upstream) to uri
+    }
+
     private var job: Job? = null
     private var pendingQueue: List<String> = emptyList()
 
@@ -1949,7 +1980,7 @@ object AudioCache {
                     // only find the same nothing.
                     ?.takeIf {
                         !pinnedToYouTube &&
-                            (StreamChoice.isSubstitute(next) || next.startsWith(SPOTIFY_ROW_PREFIX))
+                            (StreamChoice.isSubstitute(next) || catalogueRow(next))
                     }
                 val prepared = alreadyPinned ?: if (substitutable && target != null && !pinnedToYouTube) {
                     // Announced before the search, not after: the player opens
@@ -2010,7 +2041,7 @@ object AudioCache {
                                         // its own answer and throwing the preparation
                                         // away. Which is what the first tap on a radio
                                         // row paid: the wait, and then the search.
-                                        if (next.startsWith(SPOTIFY_ROW_PREFIX)) {
+                                        if (catalogueRow(next)) {
                                             SourceResolver.substituteForYouTube(target)
                                         } else {
                                             SourceResolver.prepareForPlayback(target)
@@ -2061,7 +2092,7 @@ object AudioCache {
                         // recording *by name*, and the name is in the URI — so
                         // the id-only URI asked for an empty title, matched
                         // nothing, and cached nothing.
-                        val rowUri = head.uri?.takeIf { next.startsWith(SPOTIFY_ROW_PREFIX) }
+                        val rowUri = head.uri?.takeIf { catalogueRow(next) }
                         if (rowUri != null) {
                             fetch(cacheKeyOf(rowUri), rowUri, 0, PRELOAD_BYTES, pinKey = true)
                         } else {
@@ -4442,11 +4473,26 @@ object AudioCache {
             withContext(Dispatchers.IO) {
                 // CacheWriter blocks in a read loop and checks this flag between
                 // reads; cancelling the coroutine alone would leave it running.
-                val handle = coroutineContext.job.invokeOnCompletion { writer.cancel() }
+                // Signalled the moment cancellation starts: a completion handler
+                // only runs once the job has finished, which the blocking
+                // cache() below keeps it from doing, so a cancelled fetch used to
+                // run to its end (and [clear], which joins it, waited on that).
+                //
+                // Undispatched, so it is already parked in awaitCancellation()
+                // when cache() blocks: a default-start child cancelled before
+                // its body ran never reached the finally, and the writer was
+                // never told to stop.
+                val watcher = launch(start = CoroutineStart.UNDISPATCHED) {
+                    try {
+                        awaitCancellation()
+                    } finally {
+                        writer.cancel()
+                    }
+                }
                 try {
                     writer.cache()
                 } finally {
-                    handle.dispose()
+                    watcher.cancel()
                 }
             }
         }.onFailure {

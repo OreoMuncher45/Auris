@@ -37,7 +37,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.music.bitchord.R
+import com.music.bitchord.data.model.ROW_ART_PX
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.settings.MediaProgress
 import com.music.bitchord.ui.components.PAGE_GUTTER
 import com.music.bitchord.ui.components.PillTextField
@@ -134,7 +136,7 @@ private fun ContinueEpisodeRow(
             .padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
         AsyncImage(
-            model = episode.thumbnailUrl,
+            model = episode.thumbnailUrl.artworkAt(ROW_ART_PX),
             contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = Modifier

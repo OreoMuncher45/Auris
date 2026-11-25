@@ -52,6 +52,13 @@ internal class PlayerOverlayState {
     var lyricsShare by mutableStateOf<LyricsShareRequest?>(null)
 
     /**
+     * The music video's quality drawer — the heights the picture offers and the
+     * one held — and the full-screen player the corner button opens.
+     */
+    var videoQuality by mutableStateOf(false)
+    var videoFullscreen by mutableStateOf(false)
+
+    /**
      * Who's actually in the party is worth a look before the settings page —
      * see [ListenTogetherMembersSheet]. Only meaningful once there is a party
      * to show, so the pill and the caption fall back to Listen Together itself
@@ -149,6 +156,19 @@ internal fun PlayerOverlays(
             onDismiss = { overlays.lyricsShare = null },
         )
     }
+    if (overlays.videoQuality) {
+        VideoQualitySheet(
+            hazeState = hazeState,
+            onDismiss = { overlays.videoQuality = false },
+        )
+    }
+    if (overlays.videoFullscreen) {
+        FullscreenVideoOverlay(
+            song = song,
+            onDismiss = { overlays.videoFullscreen = false },
+            onOpenQuality = { overlays.videoQuality = true },
+        )
+    }
     // Last, and drawn over everything: the search covers the whole player,
     // the queue behind it included. It is the one overlay here the listener
     // types into, so nothing may sit above it.
@@ -230,6 +250,12 @@ internal fun PlayerBackHandlers(
     // instead of it: back should take away whichever of them is up and leave the
     // lyrics underneath exactly where the reader left them.
     PlayerBackHandler(enabled = overlays.lyricsShare != null) { overlays.lyricsShare = null }
+
+    // The music video's own overlays: the quality drawer, then the full-screen
+    // player under it, so back closes whichever is on top first.
+    PlayerBackHandler(enabled = overlays.videoQuality) { overlays.videoQuality = false }
+
+    PlayerBackHandler(enabled = overlays.videoFullscreen) { overlays.videoFullscreen = false }
 
     // Backing out of a pick drops the pick, not the panel: somebody who changed
     // their mind lands on the same verses they started from rather than having

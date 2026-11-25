@@ -76,7 +76,24 @@ object BiniLyrics {
         val body = lyricsGet(url.toString()) ?: return@withContext null
         val response = runCatching { lyricsJson.decodeFromString<Response>(body) }.getOrNull()
             ?: return@withContext null
-        response.results?.firstOrNull()
+        val results = response.results.orEmpty()
+        if (!isrc.isNullOrBlank()) results.firstOrNull() else best(results, title, artist, durationMs)
+    }
+
+    /**
+     * The search by name can put a different recording first. So a hit is taken only if it
+     * passes the checks in [LrcRed.best].
+     */
+    fun best(results: List<Hit>, title: String, artist: String, durationMs: Long): Hit? {
+        // A hit without a document has nothing to fetch; one without an ISRC
+        // still has, since [lyricsFor] reads [Hit.lyricsUrl], not the ISRC.
+        val usable = results.filter { !it.lyricsUrl.isNullOrBlank() }
+        val asLrcRed = usable.map {
+            LrcRed.Hit(isrc = it.isrc, title = it.trackName, artist = it.artistName, duration = it.duration?.toDouble())
+        }
+        val match = LrcRed.best(asLrcRed, title, artist, durationMs, needsIsrc = false) ?: return null
+        // By position, not ISRC: two hits can share one, and only this one passed the checks.
+        return usable.getOrNull(asLrcRed.indexOfFirst { it === match })
     }
 
     /**

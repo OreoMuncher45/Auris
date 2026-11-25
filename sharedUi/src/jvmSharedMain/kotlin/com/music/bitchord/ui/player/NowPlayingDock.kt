@@ -19,6 +19,7 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.layer.CompositingStrategy
 import androidx.compose.ui.graphics.layer.GraphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -143,6 +144,14 @@ internal fun Modifier.playerDockHost(
                     // be, or it arrives as the right words at the wrong size.
                     val ratio = creditsTitleRatio()
                     val size = 1f + (ratio - 1f) * travel
+                    // Rendered once into a texture of its own and scaled as
+                    // that texture. Drawn as text under a scale that moves on
+                    // every frame, each frame's size was a new glyph strike:
+                    // the whole title rasterised again and uploaded to the
+                    // glyph atlas, dozens of uploads a trip on the render
+                    // thread. The same layer also makes the handover's alpha
+                    // a composite of that texture rather than a save-layer.
+                    creditsLayer.compositingStrategy = CompositingStrategy.Offscreen
                     creditsLayer.alpha = creditsHandoverAlpha(progress)
                     translate(at.x, at.y) {
                         scale(size, size, pivot = Offset.Zero) { drawLayer(creditsLayer) }
@@ -244,14 +253,16 @@ internal class DockFrame {
  * Horizontal fling skips tracks; the artwork follows the finger through
  * [motion] so the gesture has something to hold on to.
  *
- * Stands down while the pipeline or cast dialog is up or a panel's list is
- * scrolling, and answers [onBlockedControl] instead of skipping while a party
+ * Stands down while the pipeline or cast dialog is up, a panel's list is
+ * scrolling, or the queue is open — its rows swipe sideways themselves, and a
+ * swipe on a row must never skip the track — and answers [onBlockedControl] instead of skipping while a party
  * host has locked the controls.
  */
 internal fun Modifier.skipSwipeGesture(
     pipelineOpen: Boolean,
     castOpen: Boolean,
     panelScrolling: Boolean,
+    queueOpen: Boolean,
     controlsLocked: Boolean,
     swipeThreshold: Float,
     haptics: Haptics,
@@ -259,8 +270,8 @@ internal fun Modifier.skipSwipeGesture(
     onNext: () -> Unit,
     onPrevious: () -> Unit,
     motion: TrackChangeMotion,
-): Modifier = pointerInput(pipelineOpen, castOpen, panelScrolling, controlsLocked) {
-        if (pipelineOpen || castOpen || panelScrolling) return@pointerInput
+): Modifier = pointerInput(pipelineOpen, castOpen, panelScrolling, queueOpen, controlsLocked) {
+        if (pipelineOpen || castOpen || panelScrolling || queueOpen) return@pointerInput
         var total = 0f
         // One per gesture block, fed the changes the detector already hands
         // over: the release's speed is what lets a quick flick skip.

@@ -133,15 +133,24 @@ class AddonClient(rawBaseUrl: String) {
      *   catalogue that publishes the immersive mix as its own row — Tidal does
      *   — offers it as a row or not at all, and a search that did not ask
      *   would never bring it back to be preferred.
+     *
+     * [title] and [artist], when known, go along as their own parameters
+     * beside `q`. `q` mixes the two into one string, so an addon cannot tell
+     * which words name the singer; given them apart it can keep the right
+     * recording of a title several artists have sung. An addon that does not
+     * read them ignores them, as it does any unknown parameter.
      */
     suspend fun search(
         query: String,
         tier: String,
         wantsAtmos: Boolean = false,
+        title: String = "",
+        artist: String = "",
     ): Result<List<AddonTrack>> {
         val trimmed = query.trim()
         if (trimmed.isEmpty()) return Result.success(emptyList())
-        val params = settingsFor(tier, atmos = atmosHint(wantsAtmos))
+        val params = settingsFor(tier, atmos = atmosHint(wantsAtmos)) +
+            listOf("title" to title.trim(), "artist" to artist.trim()).filter { it.second.isNotEmpty() }
         return searches.get(
             // The parameters are in the key because they are in the request:
             // the same query at a different quality is a different question,
@@ -309,6 +318,92 @@ class AddonClient(rawBaseUrl: String) {
             ?: options.first()
     }
 
+    // ── Account library ─────────────────────────────────────────────────
+
+    /**
+     * One page of an addon's account library — its playlists, albums or songs.
+     *
+     * The credential is presented exactly as the manifest's `library`
+     * authentication says (bearer, basic, raw header, or none); it travels only
+     * in the header, never in the URL. This is the addon's own token, not
+     * Apple's: the addon links the Apple account server-side, and asking it for
+     * the library is the whole point of it.
+     */
+    suspend fun libraryCollection(
+        collection: String,
+        credential: String,
+        auth: AddonLibraryAuth?,
+        offset: Int = 0,
+        limit: Int = LIBRARY_PAGE_SIZE,
+    ): Result<AddonLibraryPage> {
+        val headers = libraryHeaders(credential, auth)
+            ?: return Result.failure(AddonException("This addon's library credential is not set"))
+        return runCatching {
+            json.decodeFromString<AddonLibraryPage>(
+                body(
+                    endpoint(
+                        listOf("library", collection),
+                        mapOf("offset" to offset.toString(), "limit" to limit.toString()),
+                    ),
+                    headers,
+                ),
+            )
+        }
+    }
+
+    /**
+     * One page of the tracks in an addon-library playlist or album.
+     *
+     * [collectionId] is one path segment: [endpoint] percent-encodes it, so an
+     * id carrying punctuation or a slash cannot rewrite the route.
+     */
+    suspend fun libraryTracks(
+        collection: String,
+        collectionId: String,
+        credential: String,
+        auth: AddonLibraryAuth?,
+        offset: Int = 0,
+        limit: Int = LIBRARY_PAGE_SIZE,
+    ): Result<AddonLibraryPage> {
+        val headers = libraryHeaders(credential, auth)
+            ?: return Result.failure(AddonException("This addon's library credential is not set"))
+        return runCatching {
+            json.decodeFromString<AddonLibraryPage>(
+                body(
+                    endpoint(
+                        listOf("library", collection, collectionId, "tracks"),
+                        mapOf("offset" to offset.toString(), "limit" to limit.toString()),
+                    ),
+                    headers,
+                ),
+            )
+        }
+    }
+
+    /**
+     * The header the library credential goes in, or null when it is required
+     * and wasn't supplied.
+     *
+     * `bearer` and `basic` wrap it the way the protocol says; `header` sends it
+     * raw; `none` needs no credential at all. The default is `libraryToken`, as
+     * the spec sets it, when the addon does not name its own setting.
+     */
+    private fun libraryHeaders(credential: String, auth: AddonLibraryAuth?): Map<String, String>? {
+        val type = auth?.type?.lowercase().orEmpty()
+        val header = auth?.header?.takeIf { it.isNotBlank() } ?: "Authorization"
+        val required = auth?.required ?: true
+        if (type == "none") return emptyMap()
+        if (credential.isBlank()) return if (required) null else emptyMap()
+        return when (type) {
+            "basic" -> mapOf(header to "Basic $credential")
+            "header" -> mapOf(header to credential)
+            // `bearer` is the spec's default and the safe reading of an empty
+            // type: an addon that declares library support and no scheme means
+            // the ordinary one.
+            else -> mapOf(header to "Bearer $credential")
+        }
+    }
+
     // ── Transport ─────────────────────────────────────────────────────────
 
     /** `{base}/{segments…}?{params}`, with every part properly encoded. */
@@ -347,7 +442,8 @@ class AddonClient(rawBaseUrl: String) {
      * is precisely the miss the caller is equipped to handle and not something
      * to log as a fault.
      */
-    private suspend fun body(url: String): String = withContext(Dispatchers.IO) {
+    private suspend fun body(url: String, headers: Map<String, String> = emptyMap()): String =
+        withContext(Dispatchers.IO) {
         var attempt = 0
         while (true) {
             (quietUntilMs - System.currentTimeMillis()).takeIf { it > 0 }?.let { delay(it) }
@@ -355,6 +451,7 @@ class AddonClient(rawBaseUrl: String) {
             val request = Request.Builder().url(url)
                 .header("Accept", "application/json")
                 .header("User-Agent", USER_AGENT)
+                .apply { headers.forEach { (name, value) -> header(name, value) } }
                 .build()
 
             val wait = client.newCall(request).execute().use { response ->
@@ -531,6 +628,9 @@ class AddonClient(rawBaseUrl: String) {
         private const val MAX_RETRIES = 2
         private const val BACKOFF_BASE_MS = 500L
         private const val BACKOFF_CAP_MS = 8_000L
+
+        /** How many library items one page asks for; the spec's own ceiling is 100. */
+        private const val LIBRARY_PAGE_SIZE = 50
 
         /**
          * Deliberately a neutral browser string, not the app's name. Some

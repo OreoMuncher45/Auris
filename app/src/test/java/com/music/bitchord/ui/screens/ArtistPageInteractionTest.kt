@@ -1,9 +1,11 @@
 package com.music.bitchord.ui.screens
 
 import android.app.Application
+import android.content.ComponentName
 import android.content.Context
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
@@ -14,18 +16,26 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeLeft
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.music.bitchord.R
+import com.music.bitchord.auth.AuthStore
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.DetailPage
 import com.music.bitchord.data.model.HomeShelf
+import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UiState
+import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.spotify.SpotifyArtistStats
 import com.music.bitchord.ui.AndroidAppUiHost
 import com.music.bitchord.ui.AppUi
 import com.music.bitchord.ui.components.menu.MenuHostOverlay
 import com.music.bitchord.ui.components.menu.MenuHostState
+import com.music.bitchord.ui.player.AndroidPlayerHost
+import com.music.bitchord.ui.player.PlayerPlatform
+import com.music.bitchord.playback.PlaybackService
 import com.music.bitchord.ui.theme.ArtworkPalette
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -34,6 +44,7 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Shadows
 import org.robolectric.annotation.Config
 
 /**
@@ -52,7 +63,11 @@ class ArtistPageInteractionTest {
 
     @Before
     fun setUp() {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        PlayerPlatform.install(AndroidPlayerHost(app))
         AppUi.install(AndroidAppUiHost)
+        AppSettings.init(app, AuthStore(app))
+        Shadows.shadowOf(app).declareComponentUnbindable(ComponentName(app, PlaybackService::class.java))
     }
 
     private val palette = ArtworkPalette(
@@ -199,5 +214,38 @@ class ArtistPageInteractionTest {
 
         compose.onNodeWithText(context.getString(R.string.remove_ai_mark)).assertIsDisplayed()
         compose.onNodeWithText(context.getString(R.string.mark_as_ai)).assertDoesNotExist()
+    }
+
+    @Test
+    fun `a fling on Top songs turns one column and settles on the heading inset`() {
+        // Twelve songs: three columns of four, each most of the row wide.
+        val songs = (1..12).map { Song(videoId = "v$it", title = "Track $it", artist = "Someone", thumbnailUrl = null) }
+        compose.setContent {
+            MaterialTheme {
+                DetailScreen(
+                    page = artist.copy(songs = UiState.Success(songs)),
+                    currentSong = null,
+                    isPlaying = false,
+                    onSongClick = { _, _ -> },
+                    onSongLongPress = {},
+                    onSongSwipe = {},
+                    onShuffle = {},
+                    onPlay = {},
+                    onSectionItemClick = {},
+                    onArtistClick = { _, _ -> },
+                    onAddSuggested = {},
+                    contentPadding = PaddingValues(),
+                )
+            }
+        }
+        compose.waitForIdle()
+        val restingLeft = compose.onNodeWithText("Track 1").getUnclippedBoundsInRoot().left
+
+        // A quick flick that, unsnapped, ran out partway through a column.
+        compose.onNodeWithText("Track 1").performTouchInput { swipeLeft(durationMillis = 120) }
+        compose.waitForIdle()
+
+        val secondColumn = compose.onNodeWithText("Track 5").getUnclippedBoundsInRoot().left
+        assertEquals("the next column rests where the first one did", restingLeft.value, secondColumn.value, 0.5f)
     }
 }

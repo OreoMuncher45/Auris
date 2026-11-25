@@ -753,10 +753,17 @@ object SourceResolver {
      *   and costs the length check rather than the search.
      * @param request what the download is for, pinned by the caller for the
      *   duration of one file — see [requestForDownload].
+     * @param verify reads a premium claim against the bytes behind it — see
+     *   [walkBitExact]. The default trusts the claim, as everything but a
+     *   download can afford to.
+     * @param fileable whether the caller can keep a file of this format. A
+     *   premium answer it cannot keep does not end the walk — see [walkBitExact].
      */
     suspend fun forDownload(
         target: TrackMatcher.Target,
         request: StreamRequest = requestForDownload(),
+        verify: suspend (SourceStream) -> SourceStream = { it },
+        fileable: (StreamFormat) -> Boolean = { true },
     ): SourceStream? = coroutineScope {
         if (target.title.isBlank()) return@coroutineScope null
         // Standard, and the one rung the sources are no use for: it is a
@@ -833,41 +840,18 @@ object SourceResolver {
             }
         }
 
+        val walk = walkBitExact(bitExact, target, request, strictLength, verify, fileable)
+        walk.winner?.let {
+            // Nothing is waiting on it any more, and leaving it running
+            // would hold this whole call open on a source whose answer has
+            // just been beaten by the requested premium rendition.
+            elsewhereBest.cancel()
+            return@coroutineScope it
+        }
         // The best lossy copy seen so far and who offered it — carried together
         // so the log line at the end can say where the file came from, which is
         // the only record of it there will be once it is on disk.
-        var best: Pair<MusicSource, SourceStream>? = null
-        for (source in bitExact) {
-            val stream = matchAndStream(
-                source,
-                target,
-                // The request the guard above already narrowed, rather than a
-                // second statement of it that could drift from the first.
-                request,
-                waitForAll = true,
-                strictLength = strictLength,
-            ) ?: continue
-            // Dolby Atmos is not bit-exact PCM, but it is the native premium
-            // rendition that playback already prefers.  Keep it on the same
-            // first-class download path instead of throwing it away and
-            // falling back to YouTube solely because it has no bitrate tag.
-            if (stream.format.isLossless == true || stream.format.isDolbyAtmos) {
-                TrackLog.d(
-                    TAG,
-                    "download: '${target.title}' from ${source.displayName} at ${stream.format.summary}",
-                )
-                // Nothing is waiting on it any more, and leaving it running
-                // would hold this whole call open on a source whose answer has
-                // just been beaten by the requested premium rendition.
-                elsewhereBest.cancel()
-                return@coroutineScope stream
-            }
-            TrackLog.d(
-                TAG,
-                "${source.displayName} offered ${stream.format.summary} to download; not lossless or Dolby",
-            )
-            if (isBetter(stream.format, best?.second?.format)) best = source to stream
-        }
+        var best: Pair<MusicSource, SourceStream>? = walk.bestLossy
 
         // Nothing bit-exact anywhere — or nothing was being looked for.
         // Whatever is left competes on rendition alone, wherever it came from.
@@ -894,6 +878,89 @@ object SourceResolver {
                 if (SourceRegistry.youtubeEnabled()) ", over YouTube's AAC" else ", YouTube is off",
         )
         chosen
+    }
+
+    /** What [walkBitExact] found: the premium answer, else the best lossy one it was offered. */
+    internal class BitExactWalk(
+        val winner: SourceStream?,
+        val bestLossy: Pair<MusicSource, SourceStream>?,
+    )
+
+    /**
+     * [forDownload]'s first step: [sources] asked in rank order for the
+     * premium rendition, stopping at the first that serves one.
+     *
+     * Every premium answer goes through [verify] before it is accepted. A
+     * source's codec is a claim, and the stream checks in [streamBest] can
+     * only read the claim — a SoundCloud extension that labels AAC-over-HLS
+     * `LOSSLESS` passes them all. For playback that costs nothing worse than a
+     * wrong badge; for a download the claim names the file and picks its
+     * assembler, so the lie surfaced as `Stream is mp4a, not FLAC` with the
+     * track failed and every other source passed over. [verify] reads the
+     * bytes (see `ManifestFile.verified`) and hands back the stream as it
+     * really is; one that is not premium after all is treated exactly like a
+     * source that admitted to being lossy — refused here, kept only as a
+     * lossy candidate for the floor below.
+     *
+     * A premium answer that [fileable] says cannot be kept (a source caught
+     * serving TrueHD under a FLAC label, say) is passed over rather than
+     * returned: returning it would end the walk, the caller would then decline
+     * it, and a genuine FLAC further down the list would never be asked.
+     */
+    internal suspend fun walkBitExact(
+        sources: List<MusicSource>,
+        target: TrackMatcher.Target,
+        request: StreamRequest,
+        strictLength: Boolean,
+        verify: suspend (SourceStream) -> SourceStream = { it },
+        fileable: (StreamFormat) -> Boolean = { true },
+    ): BitExactWalk {
+        var best: Pair<MusicSource, SourceStream>? = null
+        for (source in sources) {
+            val claimed = matchAndStream(
+                source,
+                target,
+                // The request the guard above already narrowed, rather than a
+                // second statement of it that could drift from the first.
+                request,
+                waitForAll = true,
+                strictLength = strictLength,
+            ) ?: continue
+            val premiumClaim = claimed.format.isLossless == true || claimed.format.isDolbyAtmos
+            val stream = if (premiumClaim) verify(claimed) else claimed
+            if (stream.format != claimed.format) {
+                TrackLog.w(
+                    TAG,
+                    "${source.displayName} claimed ${claimed.format.summary} to download but serves " +
+                        "${stream.format.summary}; judging it as what it is",
+                )
+            }
+            // Dolby Atmos is not bit-exact PCM, but it is the native premium
+            // rendition that playback already prefers.  Keep it on the same
+            // first-class download path instead of throwing it away and
+            // falling back to YouTube solely because it has no bitrate tag.
+            if (stream.format.isLossless == true || stream.format.isDolbyAtmos) {
+                if (!fileable(stream.format)) {
+                    TrackLog.d(
+                        TAG,
+                        "${source.displayName} offered ${stream.format.summary} to download; " +
+                            "nothing to file that as, looking further",
+                    )
+                    continue
+                }
+                TrackLog.d(
+                    TAG,
+                    "download: '${target.title}' from ${source.displayName} at ${stream.format.summary}",
+                )
+                return BitExactWalk(stream, best)
+            }
+            TrackLog.d(
+                TAG,
+                "${source.displayName} offered ${stream.format.summary} to download; not lossless or Dolby",
+            )
+            if (isBetter(stream.format, best?.second?.format)) best = source to stream
+        }
+        return BitExactWalk(null, best)
     }
 
     /**
@@ -1316,6 +1383,7 @@ object SourceResolver {
                     // catalogue that files its rows by tier should describe
                     // them at the tier this is about to ask for.
                     request = request,
+                    target = target,
                 )
             } ?: return null
             var matches = TrackMatcher.ranked(candidates, target)

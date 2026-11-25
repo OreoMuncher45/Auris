@@ -1,10 +1,5 @@
 package com.music.bitchord.ui.player
 
-import com.music.bitchord.ui.components.menuOriginOf
-import com.music.bitchord.ui.components.rememberMenuButtonOrigin
-import com.music.bitchord.ui.components.MenuButtonOrigin
-import com.music.bitchord.ui.components.menu.MenuChoiceRow
-import com.music.bitchord.ui.components.menu.LocalMenuHost
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -151,11 +146,7 @@ fun AutomixPanelSheet(
     // The listener's working copy. Kept apart from the published profile so a
     // drag can move the line before anything has been planned for it, and so
     // a plan that lands mid-gesture cannot pull the line out from under it.
-    val draftState = remember(panel.trackId) { mutableStateOf(panel.profile) }
-    var draft by draftState
-    // What was last written for this track, so the dispose below writes only
-    // what has not been.
-    val written = remember(panel.trackId) { arrayOf(panel.profile) }
+    var draft by remember(panel.trackId) { mutableStateOf(panel.profile) }
     var edited by remember(panel.trackId) { mutableStateOf(false) }
     val latestDraft by rememberUpdatedState(draft)
     val trackId = panel.trackId
@@ -163,20 +154,14 @@ fun AutomixPanelSheet(
     LaunchedEffect(draft, edited, trackId) {
         if (!edited || trackId.isBlank()) return@LaunchedEffect
         delay(WRITE_DEBOUNCE_MS)
-        val toWrite = latestDraft
-        PlayerSettings.setAutomixProfile(trackId, toWrite)
-        written[0] = toWrite
+        PlayerSettings.setAutomixProfile(trackId, latestDraft)
     }
-    // A pending change is not lost because the sheet went away first, or
-    // because the track changed inside the pause. This track's own draft is
-    // held here, so the write goes under its id and not the next track's. The
+    // A pending change is not lost because the sheet went away first. The
     // write itself is off the main thread, so this costs nothing to leave.
     DisposableEffect(trackId) {
-        val ownDraft = draftState
-        val ownWritten = written
         onDispose {
-            if (trackId.isNotBlank() && ownDraft.value != ownWritten[0]) {
-                PlayerSettings.setAutomixProfile(trackId, ownDraft.value)
+            if (trackId.isNotBlank() && latestDraft != panel.profile) {
+                PlayerSettings.setAutomixProfile(trackId, latestDraft)
             }
         }
     }
@@ -526,7 +511,6 @@ private fun AutomixBarsChip(
     modifier: Modifier = Modifier,
 ) {
     var open by remember { mutableStateOf(false) }
-    val origin = rememberMenuButtonOrigin()
     val label = if (bars > 0) {
         stringResource(Res.string.automix_planned_bars, bars)
     } else if (planned > 0) {
@@ -538,7 +522,6 @@ private fun AutomixBarsChip(
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
-                .menuOriginOf(origin)
                 .clip(RoundedCornerShape(12.dp))
                 .background(Color.White.copy(alpha = 0.08f))
                 .clickable { open = true }
@@ -561,7 +544,6 @@ private fun AutomixBarsChip(
         AutomixMenu(
             open = open,
             onDismiss = { open = false },
-            anchor = origin,
             options = BAR_CHOICES.map { choice ->
                 AutomixOption(
                     label = if (choice == 0) {
@@ -724,7 +706,6 @@ private fun AutomixSettingRow(
     haptic: () -> Unit,
 ) {
     var open by remember { mutableStateOf(false) }
-    val origin = rememberMenuButtonOrigin()
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
@@ -749,30 +730,27 @@ private fun AutomixSettingRow(
             modifier = Modifier.padding(start = 12.dp),
         )
         Spacer(Modifier.weight(1f))
-        Box(Modifier.menuOriginOf(origin)) {
-            // Side by side: stacked in the box, the arrow was drawn over the
-            // value's last letters.
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = value,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = AutomixInkTertiary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.widthIn(max = 200.dp),
-                )
-                Icon(
-                    imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-                    contentDescription = null,
-                    tint = AutomixInkFaint,
-                    modifier = Modifier
-                        .padding(start = 8.dp)
-                        .size(18.dp),
-                )
-            }
+        Box {
+            Text(
+                text = value,
+                style = MaterialTheme.typography.bodyMedium,
+                color = AutomixInkTertiary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 200.dp),
+            )
+            Icon(
+                imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                contentDescription = null,
+                tint = AutomixInkFaint,
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .padding(start = 8.dp)
+                    .size(18.dp),
+            )
             // Anchored to the value rather than to the row: the menu belongs
             // under the thing it changes.
-            AutomixMenu(open = open, onDismiss = { open = false }, options = options, anchor = origin)
+            AutomixMenu(open = open, onDismiss = { open = false }, options = options)
         }
     }
 }
@@ -818,49 +796,18 @@ private fun AutomixSwitchRow(
 }
 
 /**
- * The row's choices.
+ * The row's choices, as a dark menu over the dark sheet.
  *
- * On Android they are the app's anchored menu, through [LocalMenuHost]: hung
- * off [anchor], dark whatever the app theme is doing, because the player
- * sheet always is. [open] is only the request there — it is handed to the
- * host and cleared at once, and the host owns the menu from then on.
- *
- * Where there is no host (desktop) they stay a dark dropdown over the dark
- * sheet: its own surface covered rather than re-themed, because a light popup
- * with the sheet's white type on it would be unreadable.
+ * The menu's own surface is covered rather than re-themed: the player sheet
+ * is always dark whatever the app theme is doing, and a light popup with the
+ * sheet's white type on it would be unreadable.
  */
 @Composable
 private fun AutomixMenu(
     open: Boolean,
     onDismiss: () -> Unit,
     options: List<AutomixOption>,
-    anchor: MenuButtonOrigin,
 ) {
-    val host = LocalMenuHost.current
-    if (host != null) {
-        // Read when the rows compose, so the check follows a choice live.
-        val latest by rememberUpdatedState(options)
-        val selectedLabel = stringResource(Res.string.selected)
-        LaunchedEffect(open) {
-            if (!open) return@LaunchedEffect
-            host.open(anchor.boundsInWindow(), dark = true) { close ->
-                latest.forEach { option ->
-                    MenuChoiceRow(
-                        label = option.label,
-                        selected = option.selected,
-                        ink = AutomixInk,
-                        accent = AutomixGreen,
-                        selectedDescription = selectedLabel,
-                    ) {
-                        option.action()
-                        close()
-                    }
-                }
-            }
-            onDismiss()
-        }
-        return
-    }
     DropdownMenu(
         expanded = open,
         onDismissRequest = onDismiss,

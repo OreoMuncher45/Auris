@@ -1,7 +1,7 @@
 package com.music.bitchord.ui.player
 
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.Animatable
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -9,7 +9,6 @@ import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
@@ -21,11 +20,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.toArgb
+import coil3.PlatformContext
 import coil3.compose.LocalPlatformContext
 import com.music.bitchord.ui.graphics.forPixelAccess
 import com.music.bitchord.ui.graphics.paletteSwatches
@@ -39,6 +41,7 @@ import coil3.request.ImageRequest
 import coil3.request.SuccessResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.PI
 import kotlin.math.abs
@@ -110,18 +113,35 @@ fun MeshGradientBackground(
      */
     blackWash: () -> Float = { 0f },
     whiteWash: () -> Float = { 0f },
+    /**
+     * Dark theme: the four colours are brought down the way the artwork mesh's
+     * cells are — see [darkThemeMeshCell]. Only the player passes it; Home and
+     * the Replay cards keep their colours.
+     */
+    darkTheme: Boolean = false,
+    /**
+     * The legibility scrim and the ink's dark-or-bright wash over the blobs. Off
+     * draws the blur bare, as 3.1 had it — the Now Playing setting's switch.
+     */
+    overlay: Boolean = true,
 ) {
     val reduceAnimation by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
 
-    val tuned = palette.drawnColors()
+    val tuned = remember(palette, darkTheme) { palette.drawnColors(darkTheme) }
 
     // Each colour slot crossfades independently when the track (palette) changes,
     // unless "reduce animation" is on, in which case colours snap straight to target.
-    val colorSpec: AnimationSpec<Color> = if (reduceAnimation || !animated) snap() else tween(1400)
-    val animatedColors = tuned.mapIndexed { index, color ->
-        animateColorAsState(color, colorSpec, label = "meshColor$index").value
+    //
+    // Animatables read in the draw lambda, not animated states read here: read
+    // in composition, the 1400ms crossfade recomposed this backdrop on every one
+    // of its frames, to hand the drawing five colours it could read itself.
+    val slots = remember { List(tuned.size) { Animatable(tuned[it]) } }
+    val baseColor = remember { Animatable(tuned.first().dimmed()) }
+    LaunchedEffect(tuned, reduceAnimation, animated) {
+        val spec: AnimationSpec<Color> = if (reduceAnimation || !animated) snap() else tween(1400)
+        slots.forEachIndexed { index, slot -> launch { slot.animateTo(tuned[index], spec) } }
+        launch { baseColor.animateTo(tuned.first().dimmed(), spec) }
     }
-    val baseColor by animateColorAsState(tuned.first().dimmed(), colorSpec, label = "meshBase")
 
     // Read in the draw lambda, not here: an Animatable read during draw
     // invalidates only the drawing, leaving composition out of the loop.
@@ -168,23 +188,20 @@ fun MeshGradientBackground(
                 scaleX = 1.3f
                 scaleY = 1.3f
             }
-            .background(baseColor)
+            .drawBehind {
+                drawRect(baseColor.value)
+            }
             .blur(blurRadius),
     ) {
-        val anchors = listOf(
-            Offset(0.20f, 0.25f),
-            Offset(0.80f, 0.20f),
-            Offset(0.75f, 0.80f),
-            Offset(0.25f, 0.75f),
-        )
-        val speeds = listOf(1f, -0.7f, 0.85f, -1.15f)
         val drift = phase.value
 
-        animatedColors.forEachIndexed { index, color ->
-            val anchor = anchors[index]
+        slots.forEachIndexed { index, slot ->
+            val color = slot.value
+            val anchor = BLOB_ANCHORS[index]
+            val speed = BLOB_SPEEDS[index]
             val center = Offset(
-                x = (anchor.x + 0.16f * cos(drift * speeds[index] + index * 1.7f)) * size.width,
-                y = (anchor.y + 0.16f * sin(drift * speeds[index] * 0.9f + index * 2.3f)) * size.height,
+                x = (anchor.x + 0.16f * cos(drift * speed + index * 1.7f)) * size.width,
+                y = (anchor.y + 0.16f * sin(drift * speed * 0.9f + index * 2.3f)) * size.height,
             )
             val radius = size.maxDimension * 0.62f
             drawCircle(
@@ -199,17 +216,20 @@ fun MeshGradientBackground(
         }
 
         // Gentle scrim so white text stays legible over bright art, with the
-        // player ink's grade folded into the same draw.
-        val black = blackWash()
-        val white = whiteWash()
-        drawRect(
-            brush = Brush.verticalGradient(
-                colors = listOf(
-                    gradedScrimStop(LEGACY_SCRIM_TOP, black, white),
-                    gradedScrimStop(LEGACY_SCRIM_BOTTOM, black, white),
+        // player ink's grade folded into the same draw. Turned off, the blur
+        // is seen bare.
+        if (overlay) {
+            val black = blackWash()
+            val white = whiteWash()
+            drawRect(
+                brush = Brush.verticalGradient(
+                    colors = listOf(
+                        gradedScrimStop(LEGACY_SCRIM_TOP, black, white),
+                        gradedScrimStop(LEGACY_SCRIM_BOTTOM, black, white),
+                    ),
                 ),
-            ),
-        )
+            )
+        }
     }
 }
 
@@ -225,10 +245,17 @@ fun MeshGradientBackground(
 @Composable
 fun rememberArtworkColors(imageUrl: String?, canvasFrame: ImageBitmap? = null): MeshPalette {
     val context = LocalPlatformContext.current
-    var palette by remember(imageUrl) { mutableStateOf(MeshPalette(FallbackColors)) }
+    // Seeded from the cache, so a cover read before — the one an Automix
+    // reveal just brought in, above all — is on its colours in its first frame.
+    var palette by remember(imageUrl) { mutableStateOf(cachedArtworkPalette(imageUrl) ?: MeshPalette(FallbackColors)) }
 
     LaunchedEffect(imageUrl) {
         if (imageUrl == null) return@LaunchedEffect
+        // Filled since the state above was seeded — by an Automix prefetch, say.
+        cachedArtworkPalette(imageUrl)?.let {
+            palette = it
+            return@LaunchedEffect
+        }
         val request = ImageRequest.Builder(context)
             .data(imageUrl)
             .size(128) // palette quality is fine at thumbnail size, and it's fast
@@ -244,7 +271,7 @@ fun rememberArtworkColors(imageUrl: String?, canvasFrame: ImageBitmap? = null): 
         // screen that loads a cover, and the cover's palette is the first
         // thing it wants.
         val colors = withContext(Dispatchers.Default) { paletteOf(bitmap) }
-        palette = MeshPalette(colors)
+        palette = MeshPalette(colors).also { paletteCache[imageUrl] = it }
     }
 
     LaunchedEffect(canvasFrame) {
@@ -265,6 +292,32 @@ fun rememberArtworkColors(imageUrl: String?, canvasFrame: ImageBitmap? = null): 
  * that would land the blobs back where they started.
  */
 private const val DRIFT_RADIANS = (PI * 0.45f).toFloat()
+
+// Where each blob orbits, and how fast: constants, not lists built on every frame.
+private val BLOB_ANCHORS = listOf(
+    Offset(0.20f, 0.25f),
+    Offset(0.80f, 0.20f),
+    Offset(0.75f, 0.80f),
+    Offset(0.25f, 0.75f),
+)
+private val BLOB_SPEEDS = floatArrayOf(1f, -0.7f, 0.85f, -1.15f)
+
+// The still covers' palettes, by URL. Main only.
+private val paletteCache = object : LinkedHashMap<String, MeshPalette>(8, 0.75f, true) {
+    override fun removeEldestEntry(eldest: Map.Entry<String, MeshPalette>) = size > 8
+}
+
+/** The palette already read for [url]'s still cover, if any. Main only. */
+internal fun cachedArtworkPalette(url: String?): MeshPalette? = url?.let(paletteCache::get)
+
+/** Reads [url]'s palette into the cache ahead of time. Main only. */
+internal suspend fun prepareArtworkPalette(context: PlatformContext, url: String) {
+    if (paletteCache[url] != null) return
+    val request = ImageRequest.Builder(context).data(url).size(128).forPixelAccess().build()
+    val result = SingletonImageLoader.get(context).execute(request)
+    val bitmap = (result as? SuccessResult)?.image?.toImageBitmap() ?: return
+    paletteCache[url] = MeshPalette(withContext(Dispatchers.Default) { paletteOf(bitmap) })
+}
 
 /**
  * Four mesh colours drawn from the artwork.
@@ -333,8 +386,14 @@ private fun Color.hsl(): FloatArray =
 
 /** Boost saturation and clamp lightness so any artwork yields a rich, non-muddy mesh. */
 /** The four colours [MeshGradientBackground] actually paints for [this] palette. */
-private fun MeshPalette.drawnColors(): List<Color> =
-    (colors.ifEmpty { FallbackColors } + FallbackColors).take(4).map { it.tuned() }
+private fun MeshPalette.drawnColors(darkTheme: Boolean = false): List<Color> =
+    (colors.ifEmpty { FallbackColors } + FallbackColors).take(4).map {
+        val tuned = it.tuned()
+        // HSL lightness 0.58 is still a bright colour when it is saturated —
+        // cyan or yellow there is around 0.7 luminance — so dark theme tones
+        // these the same way as the artwork mesh.
+        if (darkTheme) Color(darkThemeMeshCell(tuned.toArgb())) else tuned
+    }
 
 private const val LEGACY_SCRIM_TOP = 0.10f
 private const val LEGACY_SCRIM_BOTTOM = 0.38f
@@ -349,8 +408,8 @@ private const val BLOB_ALPHA = 0.85f
  * band the ink has to hold over — at the scrim's lightest for light ink, at
  * its darkest for dark.
  */
-internal fun legacyMeshInkSurface(palette: MeshPalette): InkSurface {
-    val drawn = palette.drawnColors()
+internal fun legacyMeshInkSurface(palette: MeshPalette, darkTheme: Boolean = false): InkSurface {
+    val drawn = palette.drawnColors(darkTheme)
     val base = drawn.first().dimmed().toArgb()
     val shown = IntArray(drawn.size + 1) { i ->
         if (i == drawn.size) base else blendArgb(drawn[i].toArgb(), base, BLOB_ALPHA)

@@ -6,13 +6,13 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import com.music.bitchord.data.stats.ArtistFacts
 import com.music.bitchord.data.stats.ListeningStats
 import com.music.bitchord.data.stats.ReplayPeriod
 import com.music.bitchord.data.stats.ReplaySummary
 import com.music.bitchord.R
+import com.music.bitchord.data.settings.AppSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -62,10 +62,20 @@ data class ReplayState(
  *   costing a file merge on every cold start for a page most launches never
  *   open. It also means reopening Replay re-reads: whatever has been played
  *   since is on it.
+ * @param pageOpen whether the Replay page is open (or showing its stories or
+ *   share sheet). Only there can another period be picked: everywhere else,
+ *   the Library cards above all, the period is [ReplayPeriod.DEFAULT]. The page
+ *   opens on the period last picked there, which is remembered across
+ *   launches — see [AppSettings.replayPeriod].
  */
 @Composable
-fun rememberReplayState(active: Boolean): Pair<ReplayState, (ReplayPeriod) -> Unit> {
-    var period by rememberSaveable { mutableStateOf(ReplayPeriod.THIS_YEAR) }
+fun rememberReplayState(active: Boolean, pageOpen: Boolean): Pair<ReplayState, (ReplayPeriod) -> Unit> {
+    // Read once rather than collected: this runs at the app's root, and the
+    // only writer is the setter returned below, which updates this too.
+    var picked by remember { mutableStateOf(AppSettings.replayPeriod.value) }
+    // Read straight off [pageOpen], so the frame the page closes on already
+    // asks for the default period.
+    val period = ReplayPeriod.shown(pageOpen, picked)
     var summary by remember { mutableStateOf<ReplaySummary?>(null) }
     var loading by remember { mutableStateOf(true) }
     var memberSince by remember { mutableStateOf<String?>(null) }
@@ -102,8 +112,15 @@ fun rememberReplayState(active: Boolean): Pair<ReplayState, (ReplayPeriod) -> Un
             summary = ListeningStats.summary(period)
         }
     }
-    return ReplayState(period, summary, loading, memberSince) to
-        { next: ReplayPeriod -> period = next }
+    // The page keeps the last period's charts up while the next one is read
+    // (see above). Outside it they would be the wrong numbers: the period the
+    // page was left on, shown on the Library cards until the default arrives.
+    val shown = summary?.takeIf { pageOpen || it.period == period }
+    return ReplayState(period, shown, loading || (summary != null && shown == null), memberSince) to
+        { next: ReplayPeriod ->
+            picked = next
+            AppSettings.setReplayPeriod(next)
+        }
 }
 
 /** How long a burst of artist lookups is allowed to settle before a rebuild. */

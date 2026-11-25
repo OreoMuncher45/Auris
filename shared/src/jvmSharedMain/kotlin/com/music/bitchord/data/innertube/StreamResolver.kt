@@ -62,6 +62,31 @@ object StreamResolver {
     @Volatile
     var maxKbps: () -> Int = { Int.MAX_VALUE }
 
+    /**
+     * Whether the listener says their account has YouTube Premium and wants
+     * its higher Opus rung — see [InnerTubeXResolver.extract]'s `premium`.
+     */
+    @Volatile
+    var premiumAudio: () -> Boolean = { false }
+
+    /**
+     * Drops the remembered stream URLs, so the next play of a track resolves
+     * afresh — for a setting that changes which stream a resolve picks.
+     */
+    fun forgetResolved() {
+        settingsGeneration.incrementAndGet()
+        recent.clear()
+    }
+
+    /**
+     * Bumped by [forgetResolved]. A walk remembers the generation it started
+     * under: one that finishes after the setting changed is neither stored
+     * nor joined by a caller asking under the new setting.
+     */
+    private val settingsGeneration = java.util.concurrent.atomic.AtomicInteger()
+
+    /** The generation a resolve starting now is made under; see [remember]. */
+    internal fun currentGeneration(): Int = settingsGeneration.get()
 
     private const val TAG = "BitChord"
 
@@ -262,22 +287,21 @@ object StreamResolver {
     suspend fun resolve(videoId: String): String {
         init
 
-        recent[videoId]
-            ?.takeIf { MonotonicClock.nowMs() - it.at < URL_TTL_MS }
-            ?.let { return it.url }
+        rememberedUrl(videoId)?.let { return it }
 
         // A verdict, not a failure: asking again cannot change the answer, so
         // every caller after the first is told so without a request being sent.
         // See [rememberUnplayable] for why this is the fix for "stuck loading".
         unplayableReason(videoId)?.let { throw PermanentlyUnplayableException(it) }
 
-        val stream = coalescedResolve(videoId)
+        val generation = settingsGeneration.get()
+        val stream = coalescedResolve(videoId, generation)
 
         // The container carries no bitrate field, so this is the only place the
         // real figure is ever known.
         NerdStats.onStreamPicked(videoId, stream.kbps)
         stream.loudnessDb?.let { loudness[videoId] = it }
-        remember(videoId, stream.url)
+        remember(videoId, stream.url, generation)
         return stream.url
     }
 
@@ -388,15 +412,17 @@ object StreamResolver {
      * single largest producer of lines in the log, and every one of them was
      * previously filed against whatever happened to be playing while the walk
      * ran, which for read-ahead is the track before this one.
-     */    private suspend fun coalescedResolve(videoId: String): Stream {
-        inFlight[videoId]?.let { return it.await() }
+     */
+    private suspend fun coalescedResolve(videoId: String, generation: Int): Stream {
+        val key = videoId to generation
+        inFlight[key]?.let { return it.await() }
         // Started lazily so that losing the race below costs nothing: the walk
         // that gets discarded has not run a line, so cancelling it fires no
         // requests and leaves no half-finished deferred behind.
         val walk = resolverScope.async(TrackLog.about(videoId), start = CoroutineStart.LAZY) {
             resolveUncached(videoId)
         }
-        val running = inFlight.putIfAbsent(videoId, walk)
+        val running = inFlight.putIfAbsent(key, walk)
         if (running != null) {
             walk.cancel()
             return running.await()
@@ -415,12 +441,12 @@ object StreamResolver {
         // resolves for one track, 4472ms and 4620ms, 2.8s of them concurrent,
         // each paying for the other's round trips. The doc comment above
         // promised one walk per videoId and the finally guaranteed the opposite.
-        walk.invokeOnCompletion { inFlight.remove(videoId, walk) }
+        walk.invokeOnCompletion { inFlight.remove(key, walk) }
         walk.start()
         return walk.await()
     }
 
-    private val inFlight = ConcurrentHashMap<String, Deferred<Stream>>()
+    private val inFlight = ConcurrentHashMap<Pair<String, Int>, Deferred<Stream>>()
 
     private val resolverScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -516,7 +542,7 @@ object StreamResolver {
         val skip = mutableSetOf<String>()
         repeat(INNERTUBEX_ATTEMPTS) { attempt ->
             val found = try {
-                InnerTubeXResolver.extract(videoId, maxKbps, skip, requireM4a, uploaded)
+                InnerTubeXResolver.extract(videoId, maxKbps, skip, requireM4a, uploaded, premiumAudio())
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -549,7 +575,7 @@ object StreamResolver {
     private suspend fun askAsUpload(videoId: String, maxKbps: Int, requireM4a: Boolean): Stream? {
         TrackLog.d(TAG, "first stream for $videoId was refused; asking as an upload")
         val found = try {
-            InnerTubeXResolver.extract(videoId, maxKbps, emptySet(), requireM4a, uploaded = true)
+            InnerTubeXResolver.extract(videoId, maxKbps, emptySet(), requireM4a, uploaded = true, premium = premiumAudio())
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -804,6 +830,14 @@ object StreamResolver {
      */
     suspend fun signatureTimestamp(videoId: String): Int? {
         cachedSignatureTimestamp?.let { return it }
+        // NewPipe fetches the player script through the downloader [init]
+        // installs. Every other caller has already been through [resolve] or
+        // [downloadStream] by the time it gets here, which hid that this one
+        // never touched it. With Direct Source Stream a track plays from an
+        // addon and YouTube is never resolved at all, so the parse failed
+        // with no downloader, the tracker never got a timestamp, and no play
+        // reached the account's history.
+        init
         return runCatching {
             jsPlayerManager { YoutubeJavaScriptPlayerManager.getSignatureTimestamp(videoId) }
         }
@@ -1040,6 +1074,51 @@ object StreamResolver {
         throw failure ?: IllegalStateException("Track unavailable: no audio streams")
     }
 
+    /** A muxed progressive video rendition, for the player's music-video mode. */
+    class VideoStream(val url: String, val mimeType: String, val height: Int)
+
+    /**
+     * A playable YouTube music video for [videoId]: the best muxed progressive
+     * rendition up to [MAX_VIDEO_HEIGHT], so the picture comes from the same
+     * recording the audio is already playing.
+     *
+     * Muxed is the only shape a single ExoPlayer can render without a second
+     * stream, and it tops out at 720p — which is the point: the sleeve is a
+     * phone-sized frame, and a bigger rendition would only cost bandwidth.
+     * Null when the page yields none, and the sleeve keeps its still cover.
+     */
+    suspend fun resolveVideo(videoId: String): VideoStream? = try {
+        extractionGate.withLock {
+            withContext(Dispatchers.IO) {
+                val extractor = ServiceList.YouTube.getStreamExtractor(
+                    "https://www.youtube.com/watch?v=$videoId",
+                )
+                extractor.fetchPage()
+                val candidates = extractor.videoStreams
+                    .filter {
+                        !it.content.isNullOrBlank() &&
+                            it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP
+                    }
+                val chosen = candidates
+                    .filter { it.height in 1..MAX_VIDEO_HEIGHT }
+                    .maxByOrNull { it.height }
+                    ?: candidates.minByOrNull { it.height }
+                chosen?.let {
+                    TrackLog.d(TAG, "video rendition for $videoId: ${it.height}p ${it.format?.name}")
+                    VideoStream(it.content, it.format?.mimeType.orEmpty(), it.height)
+                }
+            }
+        }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Throwable) {
+        TrackLog.w(TAG, "no video rendition for $videoId: ${e.message}")
+        null
+    }
+
+    /** The tallest muxed rendition taken: 720p is plenty for a sleeve. */
+    private const val MAX_VIDEO_HEIGHT = 720
+
     /**
      * Whether [url] is a window onto a live broadcast. googlevideo marks those
      * with `live=1` and `source=yt_live_broadcast`; a finished video has neither.
@@ -1252,7 +1331,7 @@ object StreamResolver {
     suspend fun contentLength(videoId: String): Long? =
         resolve(videoId).toHttpUrlOrNull()?.queryParameter("clen")?.toLongOrNull()
 
-    private class Resolved(val url: String, val at: Long)
+    private class Resolved(val url: String, val at: Long, val generation: Int)
 
     /**
      * Stream URLs already resolved, by videoId — and, since [resolve] only ever
@@ -1272,12 +1351,32 @@ object StreamResolver {
     /** Enough for the queue in hand; this is a latency cache, not a store. */
     private const val MAX_REMEMBERED = 32
 
-    private fun remember(videoId: String, url: String) {
+    /**
+     * The URL remembered for [videoId], if it is fresh and was resolved under
+     * the settings in force now.
+     */
+    internal fun rememberedUrl(videoId: String): String? {
+        val entry = recent[videoId] ?: return null
+        if (MonotonicClock.nowMs() - entry.at >= URL_TTL_MS) return null
+        // A resolve can pass the generation check in [remember] and land just
+        // after [forgetResolved] cleared the map. Tagged with the generation
+        // it was made under, such an entry is never served.
+        if (entry.generation != settingsGeneration.get()) {
+            recent.remove(videoId, entry)
+            return null
+        }
+        return entry.url
+    }
+
+    /** Remember [url] for [videoId], as resolved under settings [generation]. */
+    internal fun remember(videoId: String, url: String, generation: Int) {
+        // Already stale: not worth a slot.
+        if (generation != settingsGeneration.get()) return
         if (recent.size >= MAX_REMEMBERED) {
             val cutoff = MonotonicClock.nowMs() - URL_TTL_MS
             recent.entries.removeAll { it.value.at < cutoff }
             if (recent.size >= MAX_REMEMBERED) recent.clear()
         }
-        recent[videoId] = Resolved(url, MonotonicClock.nowMs())
+        recent[videoId] = Resolved(url, MonotonicClock.nowMs(), generation)
     }
 }

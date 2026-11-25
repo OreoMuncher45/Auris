@@ -43,7 +43,9 @@ import com.music.bitchord.ui.components.backdrop.effects.blur
 import com.music.bitchord.ui.components.backdrop.effects.colorControls
 import com.music.bitchord.ui.components.backdrop.effects.lens
 import com.music.bitchord.ui.components.backdrop.highlight.Highlight
+import com.music.bitchord.ui.components.backdrop.highlight.HighlightElement
 import com.music.bitchord.ui.components.backdrop.highlight.HighlightStyle
+import com.music.bitchord.ui.components.backdrop.internal.ShapeProvider
 import com.music.bitchord.ui.components.backdrop.shadow.Shadow
 import com.music.bitchord.ui.theme.outerDarkRim
 
@@ -473,6 +475,47 @@ fun Modifier.liquidGlass(
             Modifier
         }
     )
+}
+
+/**
+ * The glass's own light rim alone, for glass whose edge is drawn apart from
+ * its capture: the player panel's, captured at the window's size and clipped
+ * to the moving panel. The same colour and opacity [liquidGlass] gives its
+ * rim — the configured highlight, scaled by the intensity setting's
+ * [GlassEffectConfig.highlightOpacity] — and none where [liquidGlass] draws
+ * none: under [GlassStyle.BLUR], or as its translucent tint-only fallback.
+ * Remembered, so the moving panel only re-records the stroke when its
+ * outline changes.
+ */
+@Composable
+internal fun Modifier.glassRim(shape: Shape): Modifier {
+    val config = LocalGlassEffectConfig.current
+    if (!isGlassAllowed() || config.style == GlassStyle.BLUR ||
+        shouldUseTranslucentGlassFallback(config.style, isRenderEffectSupported())
+    ) {
+        return this
+    }
+    val isDark = glassUsesDarkAppearance()
+    val ambientColor = LocalAmbientBackgroundColor.current.value
+    val heroContext = ambientColor.isSpecified && !ambientColor.isHueless()
+    val rimColor = if (config.highlightColor.isSpecified) {
+        config.highlightColor
+    } else {
+        com.music.bitchord.ui.theme.GlassTintTokens.pluckColor(isDark, ambientColor)
+    }
+    val rimAlpha = (
+        com.music.bitchord.ui.theme.GlassTintTokens.pluckOpacity(isDark, heroContext) *
+            (config.highlightOpacity / EdgeHighlightAlpha)
+        ).coerceIn(0f, 1f)
+    val rim = rimColor.copy(alpha = rimAlpha)
+    val shapeProvider = remember(shape) { ShapeProvider { shape } }
+    val highlight = remember(rim) {
+        Highlight(
+            width = EdgeHighlightWidth,
+            style = HighlightStyle.Default(color = rim, angle = HighlightAngleFrozen),
+        )
+    }
+    return then(HighlightElement(shapeProvider = shapeProvider, highlight = { highlight }))
 }
 
 /** Dark outer outline paired with [EdgeHighlightWidth]'s light rim: wider so

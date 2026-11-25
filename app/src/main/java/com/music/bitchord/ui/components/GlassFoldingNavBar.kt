@@ -43,6 +43,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Language
@@ -112,6 +113,8 @@ fun GlassFoldingNavBar(
     onBlockedControl: () -> Unit = {},
     dock: PlayerDock? = null,
     pull: MiniPlayerPull? = null,
+    /** False while the full player covers the bar: its glyphs then swap without motion. */
+    animationsActive: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     AnimatedContent(
@@ -173,6 +176,7 @@ fun GlassFoldingNavBar(
                 onBlockedControl = onBlockedControl,
                 dock = dock,
                 pull = pull,
+                animationsActive = animationsActive,
                 modifier = Modifier.fillMaxWidth(),
             )
         }
@@ -198,6 +202,7 @@ private fun GlassFoldingNavBarChrome(
     onBlockedControl: () -> Unit,
     dock: PlayerDock?,
     pull: MiniPlayerPull?,
+    animationsActive: Boolean,
     modifier: Modifier,
 ) {
     BackHandler(enabled = search.visualActive, onBack = search.onExit)
@@ -227,6 +232,7 @@ private fun GlassFoldingNavBarChrome(
                     onBlockedControl = onBlockedControl,
                     dock = dock,
                     pull = pull,
+                    animationsActive = animationsActive,
                     modifier = accessoryModifier
                         .fillMaxWidth()
                         .then(glassSurface()),
@@ -421,6 +427,7 @@ private fun SearchBarPlaceholder(
                     imageVector = when (state.searchSource) {
                         SearchSource.LIBRARY -> Icons.Rounded.LibraryMusic
                         SearchSource.SPOTIFY -> Icons.Rounded.MusicNote
+                        SearchSource.APPLE -> Icons.Rounded.Album
                         SearchSource.YOUTUBE -> Icons.Rounded.Language
                     },
                     contentDescription = null,
@@ -555,6 +562,7 @@ private fun NavBarSearchInputBar(
                     imageVector = when (state.searchSource) {
                         SearchSource.LIBRARY -> Icons.Rounded.LibraryMusic
                         SearchSource.SPOTIFY -> Icons.Rounded.MusicNote
+                        SearchSource.APPLE -> Icons.Rounded.Album
                         SearchSource.YOUTUBE -> Icons.Rounded.Language
                     },
                     contentDescription = null,

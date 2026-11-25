@@ -33,6 +33,7 @@
     <string name="local_music">Local Music</string>
     <string name="search_source_youtube" translatable="false">YouTube</string>
     <string name="search_source_spotify" translatable="false">Spotify</string>
+    <string name="search_source_apple" translatable="false">Apple Music</string>
     <string name="audio_files_on_device">Audio files on device</string>
     <string name="on_device">On Device</string>
     <string name="playlists">Playlists</string>
@@ -63,6 +64,24 @@
     <string name="auto_empty_offline_subtitle">Download songs on your phone to listen here</string>
     <string name="auto_unavailable_title">Content unavailable</string>
     <string name="auto_unavailable_subtitle">Reopen the folder and try again</string>
+    <string name="auto_made_for_you" translatable="false">Made for you</string>
+    <string name="auto_jump_back_in" translatable="false">Jump back in</string>
+    <string name="auto_recommended" translatable="false">Recommended</string>
+    <string name="auto_recent_and_downloads" translatable="false">Recent &amp; Downloads</string>
+    <string name="auto_playlists_and_albums" translatable="false">Playlists &amp; Albums</string>
+    <string name="auto_spotify_playlists" translatable="false">Spotify playlists</string>
+    <string name="auto_youtube_playlists" translatable="false">YouTube Music playlists</string>
+    <string name="auto_daylist" translatable="false">Daylist</string>
+    <string name="auto_album" translatable="false">Album</string>
+    <string name="auto_artist" translatable="false">Artist</string>
+    <string name="auto_spotify_login_title" translatable="false">Sign in to Spotify</string>
+    <string name="auto_spotify_login_subtitle" translatable="false">Connect Spotify in %1$s on your phone</string>
+    <string name="auto_empty_spotify_title" translatable="false">No Spotify playlists</string>
+    <string name="auto_empty_spotify_subtitle" translatable="false">Open Spotify in %1$s on your phone to refresh</string>
+    <string name="auto_empty_spotify_tracks_title" translatable="false">No tracks found</string>
+    <string name="auto_empty_spotify_tracks_subtitle" translatable="false">Open this playlist on your phone and retry</string>
+    <string name="auto_empty_spotify_album_title" translatable="false">No album tracks found</string>
+    <string name="auto_empty_spotify_album_subtitle" translatable="false">Check your Spotify connection in %1$s</string>
     <string name="add_to_playlist">Add to playlist</string>
     <string name="add_to_library">Add to library</string>
     <string name="remove_from_library">Remove from library</string>
@@ -783,6 +802,11 @@
     <string name="lyrics_share_description">The lines you picked, laid out on a card with the cover.</string>
     <string name="lyrics_share_story">Make it a story</string>
     <string name="lyrics_share_story_revert">Back to the card</string>
+    <string name="lyrics_share_show_logo">Show Auris logo</string>
+    <string name="lyrics_share_video">Video</string>
+    <string name="lyrics_share_image">Image</string>
+    <string name="lyrics_share_video_hint">Synced to the song — up to 60 seconds.</string>
+    <string name="lyrics_share_includes_instrumentals">Includes instrumentals</string>
     <string name="listening_shape">Your listening pattern</string>
     <string name="member_since">Member since</string>
     <string name="member_since_value">Member since %1$s</string>
@@ -1498,4 +1522,102 @@
     <string name="removed_from_cache">Removed from the song cache</string>
     <string name="remove_from_history">Remove from history</string>
     <string name="remove_from_history_failed">Couldn\'t remove from history</string>
+    <string name="show_total_duration">Show total duration</string>
+    <string name="show_total_duration_subtitle">Shows the song\'s full length instead of the time remaining</string>
+    <string name="sleep_timer_fade_out">Fade out before pausing</string>
+    <string name="sleep_timer_fade_out_subtitle">Gradually lowers volume over the last 30 seconds</string>
+    <string name="youtube_premium_audio">YouTube Premium audio</string>
+    <string name="youtube_premium_audio_subtitle">I have Premium: stream the higher-quality ~256 kbps Opus instead of the standard 160 kbps</string>
+    <string name="download_liked_songs">Download liked songs</string>
+    <string name="download_liked_songs_subtitle">Downloads your Liked Music and every song you like from now on</string>
+    <string name="show_best_part">Best Part button</string>
+    <string name="show_best_part_subtitle">Jump to the most-replayed part of a song</string>
+    <string name="automix_art_transition">Art transition</string>
+    <string name="automix_art_transition_subtitle">Smoothly blends cover art between tracks during AutoMix.</string>
+    <string name="automix_mini_art_transition">Mini-player art transition</string>
+    <string name="automix_mini_art_transition_subtitle">Shows artwork transitions in the mini-player during AutoMix.</string>
+    <string name="automix_model">Automix model</string>
+    <string name="automix_models_downloading">Downloading Automix (%1$d MB)… %2$d%%. Songs crossfade normally until it finishes.</string>
+    <string name="automix_model_missing">Not downloaded. Automix fetches it when you turn it on, or download it now.</string>
+    <string name="automix_model_download">Download (%1$d MB)</string>
+    <string name="automix_model_ready">Downloaded, using %1$d MB on this device.</string>
+    <string name="automix_models_failed">Couldn\'t download the model. Check your connection and retry.</string>
+    <string name="automix_model_delete_title">Delete Automix model?</string>
+    <string name="automix_model_delete_warning">This frees %1$d MB and turns Automix off. Turning Automix on again downloads the model again.</string>
+    <string name="song_info">Song info</string>
+    <string name="song_info_title">Title</string>
+    <string name="song_info_artist">Artist</string>
+    <string name="song_info_album">Album</string>
+    <string name="song_info_duration">Duration</string>
+    <string name="song_info_credits">Credits</string>
+    <string name="song_info_unavailable">Not available</string>
+    <string name="song_info_no_credits">No credits listed for this song</string>
+    <string name="song_info_credits_error">Couldn\'t load the credits.</string>
+    <string name="song_info_retry">Retry</string>
+    <string name="find_a_playlist">Find a playlist</string>
+    <string name="no_playlists_match">No playlists match “%1$s”</string>
+    <string name="sort_track_number">Track number</string>
+    <string name="addon_backup_header">Backup</string>
+    <string name="addon_backup_footer">Addons, extensions, their settings and sign-ins, in one file locked with a password you choose. Keep it to restore everything after a reinstall.</string>
+    <string name="export_addons">Export add-ons</string>
+    <string name="export_addons_subtitle">Save them to a password-locked file</string>
+    <string name="import_addons">Import add-ons</string>
+    <string name="import_addons_subtitle">Bring them back from a backup file</string>
+    <string name="addon_backup_export_description">Addons: %1$d · Extensions: %2$d, with their settings and sign-ins.</string>
+    <string name="addon_backup_nothing_to_export">There are no addons or extensions to export yet.</string>
+    <string name="addon_backup_password">Password</string>
+    <string name="addon_backup_confirm_password">Confirm password</string>
+    <string name="addon_backup_show">Show</string>
+    <string name="addon_backup_hide">Hide</string>
+    <string name="addon_backup_password_help">If you forget this password, the file can\'t be opened.</string>
+    <string name="addon_backup_password_short">Use at least %1$d characters.</string>
+    <string name="addon_backup_password_mismatch">The passwords don\'t match.</string>
+    <string name="addon_backup_export_action">Export…</string>
+    <string name="addon_backup_encrypting">Encrypting…</string>
+    <string name="addon_backup_unlocking">Unlocking…</string>
+    <string name="addon_backup_importing">Importing…</string>
+    <string name="addon_backup_exported">Exported %1$d add-ons</string>
+    <string name="addon_backup_export_failed">Couldn\'t save the file. Try another location.</string>
+    <string name="addon_backup_unlock">Unlock</string>
+    <string name="addon_backup_wrong_password">That password doesn\'t open this file.</string>
+    <string name="addon_backup_preview_title">%1$d add-ons in this file</string>
+    <string name="addon_backup_saved_on">Saved %1$s</string>
+    <string name="addon_backup_new">New</string>
+    <string name="addon_backup_already_here">Already here</string>
+    <string name="addon_backup_kind_addon">Addon</string>
+    <string name="addon_backup_kind_extension">Extension</string>
+    <string name="addon_backup_more">%1$d more</string>
+    <string name="addon_backup_more_new">%1$d new</string>
+    <string name="addon_backup_skip_existing">Skip ones already here</string>
+    <string name="addon_backup_skip_existing_detail">Keeps your current settings for them</string>
+    <string name="addon_backup_replace_existing">Replace them</string>
+    <string name="addon_backup_replace_existing_detail">Uses the file\'s settings and sign-ins</string>
+    <string name="addon_backup_import_action">Import %1$d</string>
+    <string name="addon_backup_nothing_new">Nothing new to import</string>
+    <string name="addon_backup_imported">Imported %1$d · skipped %2$d already here</string>
+    <string name="addon_backup_imported_failures">Imported %1$d · %2$d couldn\'t be restored</string>
+    <string name="addon_backup_ok">OK</string>
+    <string name="addon_backup_damaged_title">This file is damaged</string>
+    <string name="addon_backup_damaged_message">It changed after it was saved, or didn\'t finish copying. Export it again from the other device.</string>
+    <string name="addon_backup_not_backup_title">Not an add-ons backup</string>
+    <string name="addon_backup_not_backup_message">Pick a file made with Export add-ons.</string>
+    <string name="addon_backup_newer_title">Needs a newer Auris</string>
+    <string name="addon_backup_newer_message">This file was made by a later version. Update the app, then try again.</string>
+    <string name="addon_backup_too_large_title">File too large</string>
+    <string name="addon_backup_too_large_message">This is far bigger than any add-ons backup, so it wasn\'t opened.</string>
+    <string name="addon_backup_read_failed_title">Couldn\'t open the file</string>
+    <string name="addon_backup_read_failed_message">Check the file is still there and try again.</string>
+    <string name="addon_backup_restore_signins">Restore sign-ins</string>
+    <string name="addon_backup_export_too_large">These add-ons are too large for one backup file.</string>
+    <string name="video_conversion_prompt" translatable="false">Offer to convert to video</string>
+    <string name="video_conversion_prompt_help" translatable="false">Shows a one-time, five-second offer over the artwork on a song that has a music video. Off hides it; the song menu still has the switch.</string>
+    <string name="apple_music" translatable="false">Apple Music</string>
+    <string name="apple_token_connected" translatable="false">Account token set</string>
+    <string name="apple_token_connect" translatable="false">Connect your Apple Music account</string>
+    <string name="apple_token_title" translatable="false">Apple Music account token</string>
+    <string name="apple_token_message" translatable="false">Paste your Apple Music Music-User-Token to read your library — your playlists, albums and songs. It is stored encrypted on this device. Leave it empty to fall back to an addon, if one is configured.</string>
+    <string name="apple_token_placeholder" translatable="false">Music-User-Token</string>
+    <string name="home_provider_apple_subtitle" translatable="false">Apple Music&#8217;s charts and catalog. Audio is matched to a playable source.</string>
+    <string name="player_backdrop_overlay">Overlay for better button visibility</string>
+    <string name="player_backdrop_overlay_help">Lays a dark or bright wash over the blurred backdrop so the buttons stay readable. Off shows the blur as it is.</string>
 </resources>

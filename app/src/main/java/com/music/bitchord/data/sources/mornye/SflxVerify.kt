@@ -1,5 +1,6 @@
 package com.music.bitchord.data.sources.mornye
 
+import com.music.bitchord.data.web.QuietWebChromeClient
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
@@ -54,12 +55,7 @@ object SflxVerify {
     @Volatile
     private var appContext: Context? = null
 
-    /** The prompt already on screen, so three retries do not open three pages. */
-    @Volatile
-    private var showing: String? = null
-
-    @Volatile
-    private var showingAt: Long = 0L
+    private val launches = SflxVerificationLaunchGate()
 
     fun init(context: Context) {
         appContext = context.applicationContext
@@ -68,39 +64,73 @@ object SflxVerify {
     /**
      * Shows the verification page for [extensionId].
      *
-     * Duplicate requests for the same extension within a few seconds are
-     * dropped: a gateway that refuses three requests in a row would otherwise
-     * stack three identical pages.
+     * Only an exact active duplicate is dropped. A new URL is a new gateway
+     * challenge, and another extension is a new request too; [SflxVerifyActivity]
+     * is single-task and replaces its content for either rather than stacking a
+     * second page. The check and reservation are atomic across signed callers.
      */
     fun open(extensionId: String, displayName: String, url: String) {
         if (url.isBlank()) return
-        val now = System.currentTimeMillis()
-        if (showing == extensionId && now - showingAt < DEDUPE_MS) return
         val context = appContext ?: run {
             Log.w(TAG, "sflx[$extensionId] verification requested before the app context was set")
             return
         }
-        showing = extensionId
-        showingAt = now
-        Log.d(TAG, "sflx[$extensionId] opening verification")
         val intent = Intent(context, SflxVerifyActivity::class.java)
             .putExtra(SflxVerifyActivity.EXTRA_ID, extensionId)
             .putExtra(SflxVerifyActivity.EXTRA_NAME, displayName)
             .putExtra(SflxVerifyActivity.EXTRA_URL, url)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-        runCatching { context.startActivity(intent) }
-            .onFailure { Log.w(TAG, "sflx[$extensionId] could not open verification: ${it.message}") }
+        launches.open(extensionId, url, launch = {
+            Log.d(TAG, "sflx[$extensionId] opening verification")
+            context.startActivity(intent)
+        }, onFailure = { error ->
+            Log.w(TAG, "sflx[$extensionId] could not open verification: ${error.message}")
+        })
     }
 
-    /** Called by the page when it closes, so the next refusal may open a new one. */
-    fun closed(extensionId: String?) {
-        if (extensionId == null || extensionId == showing) {
-            showing = null
-            showingAt = 0L
+    /** Called by the page when it closes, so an explicit later request may open it again. */
+    fun closed(extensionId: String?, url: String? = null) = launches.closed(extensionId, url)
+}
+
+/**
+ * One reservation for the verification activity, independent of Android so its
+ * concurrency rules can be tested on every JVM. The launch callback runs under
+ * the same lock as the reservation: two workers cannot both pass before either
+ * has called `startActivity`.
+ */
+internal class SflxVerificationLaunchGate {
+    private data class Challenge(val extensionId: String, val url: String)
+
+    private var showing: Challenge? = null
+
+    @Synchronized
+    fun open(
+        extensionId: String,
+        url: String,
+        onFailure: (Throwable) -> Unit = {},
+        launch: () -> Unit,
+    ) {
+        val challenge = Challenge(extensionId, url)
+        if (showing == challenge) return
+        val previous = showing
+        showing = challenge
+        try {
+            launch()
+        } catch (error: Throwable) {
+            if (showing == challenge) showing = previous
+            onFailure(error)
         }
     }
 
-    private const val DEDUPE_MS = 5_000L
+    @Synchronized
+    fun closed(extensionId: String?, url: String? = null) {
+        val active = showing ?: return
+        if (extensionId == null ||
+            (active.extensionId == extensionId && (url == null || active.url == url))
+        ) {
+            showing = null
+        }
+    }
 }
 
 /**
@@ -114,7 +144,19 @@ class SflxVerifyActivity : AppCompatActivity() {
 
     private var webView: WebView? = null
     private var extensionId: String? = null
+    private var challengeUrl: String? = null
+    private var titleView: TextView? = null
+    private var progressView: ProgressBar? = null
+    private var pasteButton: Button? = null
+    private var pasteStatus: TextView? = null
     private var finished = false
+
+    /**
+     * Advances whenever [showChallenge] loads a challenge. An exchange captures
+     * it when it starts and only closes the page if it still matches, so a late
+     * answer for an earlier challenge can't close the one now on screen.
+     */
+    private var challengeGeneration = 0
 
     /**
      * Grants already handed to an exchange. The WebView reports one callback URL
@@ -138,9 +180,7 @@ class SflxVerifyActivity : AppCompatActivity() {
         // and the extension goes on asking.
         if (handleDeepLink(intent)) return
 
-        extensionId = intent.getStringExtra(EXTRA_ID)
         val displayName = intent.getStringExtra(EXTRA_NAME).orEmpty()
-        val url = intent.getStringExtra(EXTRA_URL).orEmpty()
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -162,12 +202,14 @@ class SflxVerifyActivity : AppCompatActivity() {
             text = "Close"
             setOnClickListener { finish() }
         }
+        titleView = title
         bar.addView(title)
         bar.addView(close)
 
         val progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             isIndeterminate = true
         }
+        progressView = progress
 
         val view = WebView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
@@ -182,6 +224,8 @@ class SflxVerifyActivity : AppCompatActivity() {
             settings.loadWithOverviewMode = true
             settings.useWideViewPort = true
             settings.setSupportMultipleWindows(true)
+            // The page's console stays out of logcat, as on every WebView here.
+            webChromeClient = QuietWebChromeClient()
             settings.javaScriptCanOpenWindowsAutomatically = true
             CookieManager.getInstance().setAcceptCookie(true)
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
@@ -241,11 +285,28 @@ class SflxVerifyActivity : AppCompatActivity() {
         val height = (resources.displayMetrics.heightPixels * 0.85f).toInt()
         window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, height)
 
+        showChallenge(intent)
+    }
+
+    /** Loads a genuinely new challenge into the one existing verification activity. */
+    private fun showChallenge(intent: Intent) {
+        extensionId = intent.getStringExtra(EXTRA_ID)
+        val displayName = intent.getStringExtra(EXTRA_NAME).orEmpty()
+        val url = intent.getStringExtra(EXTRA_URL).orEmpty()
+        challengeUrl = url
+        finished = false
+        challengeGeneration++
+        titleView?.text = if (displayName.isBlank()) "Verify" else "Verify $displayName"
+        progressView?.visibility = ProgressBar.VISIBLE
+        pasteStatus?.visibility = View.GONE
         if (url.isBlank()) {
             finish()
             return
         }
-        view.loadUrl(url)
+        webView?.let { view ->
+            view.stopLoading()
+            view.loadUrl(url)
+        }
     }
 
     /**
@@ -265,10 +326,13 @@ class SflxVerifyActivity : AppCompatActivity() {
      * text field.
      */
     private fun pasteRow(): View {
+        val column = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(24, 8, 24, 16)
+        }
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(24, 8, 24, 16)
         }
         val field = EditText(this).apply {
             hint = "Paste the grant or the verification link"
@@ -281,12 +345,65 @@ class SflxVerifyActivity : AppCompatActivity() {
             text = "Redeem"
             setOnClickListener {
                 val value = field.text?.toString()?.trim().orEmpty()
-                if (value.isNotEmpty()) deliver(value)
+                if (value.isNotEmpty()) redeemPasted(value)
             }
         }
+        // One line under the box: "Redeeming…" while the exchange runs, and the
+        // reason when it is refused. Without it a refusal looked like a dead button.
+        val status = TextView(this).apply {
+            textSize = 12f
+            visibility = View.GONE
+        }
+        pasteButton = redeem
+        pasteStatus = status
         row.addView(field)
         row.addView(redeem)
-        return row
+        column.addView(row)
+        column.addView(status)
+        return column
+    }
+
+    /**
+     * Redeems what the listener pasted, for the extension this page was opened
+     * for, and says what happened under the box. See [SflxHost.redeemGrant] for
+     * why a pasted link's stale `state` is not a reason to refuse it.
+     */
+    private fun redeemPasted(value: String) {
+        val input = SflxGrantInput.parse(value)
+        if (input == null) {
+            showPasteStatus("That isn't a code or a verification link.", error = true)
+            return
+        }
+        if (!redeeming.add(input.grant)) return
+        pasteButton?.isEnabled = false
+        showPasteStatus("Redeeming…", error = false)
+        val id = extensionId
+        val generation = challengeGeneration
+        redeem({ redeemGrant(id, input, typed = true) }) { result ->
+            Log.d(TAG, "sflx verification: pasted grant ${if (result.isSuccess) "redeemed" else "refused"}")
+            // A refused grant (a dropped connection, a BUSY import) wasn't spent,
+            // so it may be tried again whichever challenge is now on screen.
+            if (!result.isSuccess) redeeming.remove(input.grant)
+            if (generation != challengeGeneration) {
+                // Answered for a challenge this page no longer shows.
+                pasteButton?.isEnabled = true
+                pasteStatus?.visibility = View.GONE
+            } else if (result.isSuccess) {
+                finishWith(true)
+            } else {
+                pasteButton?.isEnabled = true
+                val reason = result.exceptionOrNull()?.message ?: SflxGrantRefused.REFUSED
+                showPasteStatus("Couldn't redeem: ${reason.replaceFirstChar { it.lowercase() }}", error = true)
+            }
+        }
+    }
+
+    private fun showPasteStatus(text: String, error: Boolean) {
+        pasteStatus?.apply {
+            this.text = text
+            setTextColor(if (error) ERROR_TEXT else Color.GRAY)
+            visibility = View.VISIBLE
+        }
     }
 
     /**
@@ -328,40 +445,29 @@ class SflxVerifyActivity : AppCompatActivity() {
     }
 
     /**
-     * A grant from any of the delivery paths.
+     * A grant from the bridge or a deep link, matched to its extension by
+     * `state` (pastes go through [redeemPasted]).
      *
      * The page posts `target || grant`, where `target` is the deep link and
-     * `grant` is the bare token; the page's own copy-link fallback shows
-     * `grant=…` as text; and a listener may paste any of the three. All of
-     * them are read here, because a refusal at this point is a refusal the
-     * listener cannot do anything about.
+     * `grant` is the bare token. [SflxGrantInput] reads both.
      */
     private fun deliver(payload: String) {
-        val value = payload.trim()
-        if (value.isEmpty()) return
-        val looksLikeUrl = value.contains("://")
-        val grant: String
-        val state: String?
-        if (looksLikeUrl) {
-            val uri = Uri.parse(value)
-            grant = uri.getQueryParameter("grant").orEmpty()
-            state = uri.getQueryParameter("state")
-        } else if (value.startsWith("grant=", ignoreCase = true)) {
-            // The page's copy-link text: `grant=<token>` on its own.
-            grant = value.substringAfter('=').trim()
-            state = null
-        } else {
-            grant = value
-            state = null
-        }
-        if (grant.isBlank()) return
-        if (!redeeming.add(grant)) return
-        redeem({ SflxCatalog.host?.completeGrantForState(grant, state) == true }) { ok ->
-            Log.d(TAG, "sflx verification: grant ${if (ok) "redeemed" else "refused"}")
+        val input = SflxGrantInput.parse(payload) ?: return
+        if (!redeeming.add(input.grant)) return
+        val generation = challengeGeneration
+        redeem({ redeemGrant(null, input, typed = false) }) { result ->
+            Log.d(TAG, "sflx verification: grant ${if (result.isSuccess) "redeemed" else "refused"}")
             // A refusal (a dropped connection, say) can be pasted and tried again.
-            if (ok) finishWith(true) else redeeming.remove(grant)
+            if (!result.isSuccess) redeeming.remove(input.grant)
+            else if (generation == challengeGeneration) finishWith(true)
         }
     }
+
+    private fun redeemGrant(id: String?, input: SflxGrantInput, typed: Boolean): Result<Unit> =
+        runCatching {
+            SflxCatalog.host?.redeemGrant(id, input.grant, input.state, typed)
+                ?: Result.failure(SflxGrantRefused(SflxGrantRefused.NOT_WAITING))
+        }.getOrElse { Result.failure(SflxGrantRefused.from(it)) }
 
     /**
      * Redeems a grant off the main thread, then answers on it.
@@ -371,10 +477,9 @@ class SflxVerifyActivity : AppCompatActivity() {
      * callbacks) arrive on the main thread, where Android refuses network I/O.
      * The JS bridge arrives on its own thread, and goes the same way for one rule.
      */
-    private fun redeem(exchange: () -> Boolean, done: (Boolean) -> Unit) {
+    private fun <T> redeem(exchange: () -> T, done: (T) -> Unit) {
         lifecycleScope.launch {
-            val ok = withContext(Dispatchers.IO) { runCatching(exchange).getOrDefault(false) }
-            done(ok)
+            done(withContext(Dispatchers.IO) { exchange() })
         }
     }
 
@@ -400,9 +505,12 @@ class SflxVerifyActivity : AppCompatActivity() {
         }
 
         if (!redeeming.add(grant)) return true
-        redeem({ SflxCatalog.host?.completeGrant(id, grant, state) == true }) { ok ->
+        val generation = challengeGeneration
+        redeem({ runCatching { SflxCatalog.host?.completeGrant(id, grant, state) == true }.getOrDefault(false) }) { ok ->
             Log.d(TAG, "sflx[$id] verification callback: grant ${if (ok) "redeemed" else "refused"}")
-            finishWith(ok)
+            // A refused grant wasn't spent; free it so a paste can retry it.
+            if (!ok) redeeming.remove(grant)
+            if (generation == challengeGeneration) finishWith(ok)
         }
         return true
     }
@@ -417,7 +525,8 @@ class SflxVerifyActivity : AppCompatActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        handleDeepLink(intent)
+        if (handleDeepLink(intent)) return
+        if (!intent.getStringExtra(EXTRA_URL).isNullOrBlank()) showChallenge(intent)
     }
 
     /**
@@ -427,13 +536,15 @@ class SflxVerifyActivity : AppCompatActivity() {
     private fun handleDeepLink(intent: Intent?): Boolean {
         val uri = intent?.data ?: return false
         if (uri.getQueryParameter("grant").isNullOrBlank()) return false
-        extensionId = intent.getStringExtra(EXTRA_ID)
+        // An outside deep link carries no extension id. It must not wipe the id
+        // of the page already open, which the paste box redeems for.
+        intent.getStringExtra(EXTRA_ID)?.let { extensionId = it }
         deliver(uri.toString())
         return true
     }
 
     override fun onDestroy() {
-        SflxVerify.closed(extensionId)
+        SflxVerify.closed(extensionId, challengeUrl)
         webView?.let { view ->
             runCatching {
                 view.stopLoading()
@@ -443,6 +554,10 @@ class SflxVerifyActivity : AppCompatActivity() {
             }
         }
         webView = null
+        titleView = null
+        progressView = null
+        pasteButton = null
+        pasteStatus = null
         super.onDestroy()
     }
 
@@ -451,6 +566,9 @@ class SflxVerifyActivity : AppCompatActivity() {
         const val EXTRA_ID = "sflx.extension.id"
         const val EXTRA_NAME = "sflx.extension.name"
         const val EXTRA_URL = "sflx.verify.url"
+
+        /** Readable red on the page's black, matching the error tone elsewhere. */
+        private val ERROR_TEXT = Color.rgb(0xFF, 0x8A, 0x80)
 
         /**
          * The page-side hook that watches for the grant.

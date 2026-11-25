@@ -20,16 +20,23 @@ import com.music.bitchord.data.model.PlaylistPrivacy
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.ShelfItem
+import com.music.bitchord.data.model.KeyedMix
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.withQuickPicks
+import com.music.bitchord.data.model.withoutRepeatedRecordings
 import com.music.bitchord.data.model.SongMenu
 import com.music.bitchord.data.model.UserPlaylist
 import com.music.bitchord.data.sources.TrackMatcher
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import java.util.Locale
@@ -275,6 +282,45 @@ object YtMusicRepository {
     }
 
     /**
+     * The cards of the signed-in "Mixed for you" page, each beside its English
+     * title.
+     *
+     * The page says what kind of mix a card is only in its title ("Discover
+     * Mix", "Chill Mix 2"), and YouTube translates those titles. So in another
+     * app language the page is read twice, side by side: once in that language
+     * to show, and once in English to sort by, matched up by the mix's
+     * playlist id, which is the same in both. In English one request serves
+     * for both. If the English read fails the whole read fails, so the caller
+     * keeps the last list it had rather than one sorted by translated titles;
+     * a card missing from an English read that worked has no English title
+     * (see [KeyedMix.englishTitle]).
+     *
+     * Signed out there are no mixes, and nothing is asked.
+     */
+    suspend fun mixedForYouKeyed(): Result<List<KeyedMix>> = call("mixed-for-you") {
+        if (Innertube.cookie == null) return@call emptyList()
+        coroutineScope {
+            val shown = async {
+                InnertubeParser.parseTwoRowItemsDeep(Innertube.browse(MIXED_FOR_YOU))
+            }
+            val english = if (Innertube.currentLanguage.startsWith("en")) {
+                null
+            } else {
+                async {
+                    InnertubeParser.parseTwoRowItemsDeep(Innertube.browse(MIXED_FOR_YOU, language = "en"))
+                }
+            }
+            val items = shown.await()
+            val englishTitles = english?.await()
+                ?.associate { (it.browseId ?: it.title) to it.title }
+                ?: return@coroutineScope items.map { KeyedMix(it, it.title) }
+            items.map { KeyedMix(it, englishTitles[it.browseId ?: it.title]) }
+        }
+    }
+
+    private const val MIXED_FOR_YOU = "FEmusic_mixed_for_you"
+
+    /**
      * The playlist shelves behind one mood/genre category. This result also
      * supplies its tile artwork, so caching it avoids a second request when a
      * user taps a category whose cover has already appeared.
@@ -312,7 +358,7 @@ object YtMusicRepository {
                 Innertube.search(query, filter.params),
                 includeVideos = filter == SearchFilter.VIDEOS,
             ).let { page ->
-                SearchPage(page.rows.distinctBy { it.identityKey() }, page.continuation)
+                SearchPage(page.rows.distinctBy { it.identityKey() }.withoutRepeatedRecordings(), page.continuation)
             }
         }
 
@@ -322,7 +368,7 @@ object YtMusicRepository {
             Innertube.searchContinuation(token),
             includeVideos = filter == SearchFilter.VIDEOS,
         ).let { page ->
-            SearchPage(page.rows.distinctBy { it.identityKey() }, page.continuation)
+            SearchPage(page.rows.distinctBy { it.identityKey() }.withoutRepeatedRecordings(), page.continuation)
         }
     }
 
@@ -346,28 +392,102 @@ object YtMusicRepository {
      */
     suspend fun searchSuggestions(input: String): Result<List<String>> =
         call("suggest") {
-            InnertubeParser.parseSearchSuggestions(Innertube.searchSuggestions(input))
+            InnertubeParser.parseSearchSuggestions(rawSuggestions(input))
         }
 
     /**
-     * Live media results for the typeahead phase — a lightweight search that
-     * returns tracks, artists, and albums so the dropdown can show playable
-     * cards alongside text completions. Uses the ALL filter to get mixed
-     * results quickly; callers may want to limit how many they display.
+     * One `get_search_suggestions` answer per typed input, shared by the
+     * dropdown's text completions ([searchSuggestions]) and its live cards
+     * ([searchTypeahead]): both read the same response, so a keystroke asks
+     * YouTube once rather than twice. Only the latest input is kept — the
+     * field never goes back to an older one without it being typed again.
+     * Run on its own scope so one reader moving on doesn't cancel the other's
+     * answer; a failure isn't kept, so the next ask tries again. The answer is
+     * signed-in and ranked by the account, so it is reused only while
+     * [Innertube.listenerGeneration] is the one it was asked under: comparing
+     * the listener itself would miss a switch away and back while it was out.
+     */
+    private suspend fun rawSuggestions(input: String): JsonObject {
+        val generation = Innertube.listenerGeneration
+        val pending = synchronized(suggestionsLock) {
+            val last = lastSuggestions
+            last?.takeIf { it.input == input && it.generation == generation && !it.answer.isCancelled }?.answer
+                ?: suggestionsScope.async { Innertube.searchSuggestions(input) }
+                    .also {
+                        // A superseded input is never read again, so its request
+                        // stops rather than competing with the newest one over a
+                        // slow connection: at most one is ever in flight.
+                        last?.answer?.cancel()
+                        lastSuggestions = PendingSuggestions(input, generation, it)
+                    }
+        }
+        return try {
+            pending.await().also {
+                // The request reads the account again when it is built, so a
+                // switch while it was out leaves its account unknown: neither
+                // kept nor handed back as the new account's completions.
+                if (Innertube.listenerGeneration != generation) {
+                    synchronized(suggestionsLock) {
+                        if (lastSuggestions?.answer === pending) lastSuggestions = null
+                    }
+                    throw IllegalStateException("account changed while suggestions were loading")
+                }
+            }
+        } catch (failure: Throwable) {
+            if (failure !is CancellationException || pending.isCancelled) {
+                synchronized(suggestionsLock) {
+                    if (lastSuggestions?.answer === pending) lastSuggestions = null
+                }
+            }
+            // Cancelled because a newer input replaced it, not because this
+            // caller was: an ordinary failure, not a cancellation it never had.
+            if (failure is CancellationException && pending.isCancelled && currentCoroutineContext().isActive) {
+                throw IllegalStateException("suggestions superseded by a newer input")
+            }
+            throw failure
+        }
+    }
+
+    private class PendingSuggestions(val input: String, val generation: Long, val answer: Deferred<JsonObject>)
+
+    private val suggestionsLock = Any()
+    private var lastSuggestions: PendingSuggestions? = null
+    private val suggestionsScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * Live media results for the typeahead phase: tracks, artists and albums
+     * so the dropdown can show playable cards alongside text completions.
      *
-     * Deliberately unauthenticated: [Innertube.searchTypeahead] strips the
-     * session cookie so YouTube Music does not log each debounced keystroke
-     * to the account's server-side search history. Confirmed searches (Enter /
-     * IME Search / tapping a suggestion) still use the normal authenticated
-     * [searchPage] path and are recorded properly.
+     * Read from the suggestions endpoint first, signed in, the way YouTube
+     * Music's own search box does it. That is the only way to get cards
+     * ranked by the account's listening without filing every debounced
+     * keystroke in its search history: a signed-in `search` records the
+     * query, and an anonymous one answers with what is popular rather than
+     * what this listener plays — which is how the cards came to be full of
+     * songs the user never listens to.
+     *
+     * Only when the suggestions carry no cards (some short or odd prefixes),
+     * or could not be fetched, does it fall back to [Innertube.searchTypeahead],
+     * the anonymous search, so the dropdown still has something to play.
      */
     suspend fun searchTypeahead(input: String): Result<SearchPage> =
         call("typeahead:$input") {
+            val suggestions = try {
+                rawSuggestions(input)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            }
+            val cards = suggestions?.let(InnertubeParser::parseSearchSuggestionEntities).orEmpty()
+                .distinctBy { it.identityKey() }
+                .withoutRepeatedRecordings()
+            if (cards.isNotEmpty()) return@call SearchPage(cards, continuation = null)
             InnertubeParser.parseSearchPage(
                 Innertube.searchTypeahead(input),
                 includeVideos = false,
             ).let { page ->
-                SearchPage(page.rows.distinctBy { it.identityKey() }, page.continuation)
+                SearchPage(page.rows.distinctBy { it.identityKey() }.withoutRepeatedRecordings(), page.continuation)
             }
         }
 
@@ -489,8 +609,12 @@ object YtMusicRepository {
      * every saved collection has its own browse id. They're fetched in
      * parallel and a feed that fails or is simply empty (a fresh account has
      * no saved albums) is dropped rather than failing the whole page.
+     *
+     * [seedLikes] seeds [LikeState] with the first page of Liked Music. A
+     * caller that must first check whose credentials answered passes false
+     * and seeds from [LibraryPage.likedSongs] itself once it has.
      */
-    suspend fun library(): Result<LibraryPage> = call("library") {
+    suspend fun library(seedLikes: Boolean = true): Result<LibraryPage> = call("library") {
         coroutineScope {
             // Liked Music is read one page at a time. The first page is what
             // the Library tab needs to fill and is published straight away;
@@ -517,7 +641,7 @@ object YtMusicRepository {
             val likedPage = liked.await()
             val likedSongs = likedPage?.songs.orEmpty()
             val likedIds = likedSongs.mapTo(HashSet()) { it.videoId }
-            LikeState.seedLiked(likedIds)
+            if (seedLikes) LikeState.seedLiked(likedIds)
             LibraryPage(
                 likedSongs = likedSongs,
                 // Thumbs-up'd tracks are also in the library feed; only what
@@ -1022,22 +1146,9 @@ object YtMusicRepository {
      * name, rather than offering to reorder something it can't.
      */
     suspend fun playlistEntries(browseId: String): Result<List<Song>> = call("entries:$browseId") {
-        val out = LinkedHashMap<String, Song>()
-        var response = Innertube.browse(browseId)
-        var page = 1
-        while (true) {
-            val shelf = InnertubeParser.parsePlaylistShelf(response) ?: break
-            shelf.songs.forEach { song ->
-                val setVideoId = song.setVideoId ?: error("playlist entry without an id")
-                out.putIfAbsent(setVideoId, song)
-            }
-            val token = shelf.continuation ?: break
-            // Same cap as [songsPaged] — a playlist past it can't be listed
-            // whole, and a partial list can't be reordered safely.
-            if (page++ >= MAX_PAGES) error("playlist too long to reorder")
-            response = Innertube.browseContinuation(token)
-        }
-        out.values.toList()
+        // Same cap as [songsPaged]; a later page it can't read fails the read
+        // rather than cutting the list short — see [collectPlaylistEntries].
+        collectPlaylistEntries(Innertube.browse(browseId), MAX_PAGES) { token -> Innertube.browseContinuation(token) }
     }
 
     /**
@@ -1103,6 +1214,8 @@ object YtMusicRepository {
 
     private suspend fun <T> call(label: String, block: suspend () -> T): Result<T> =
         withContext(Dispatchers.IO) {
+            // Who the request was made as: the retry may only go out as the same one.
+            val identity = Innertube.listener
             runCatching { block() }.recoverCatching { failure ->
                 // Context cookies can rotate while a process is alive. Refresh
                 // once and retry; never loop or silently sign the listener out.
@@ -1112,6 +1225,14 @@ object YtMusicRepository {
                 if (!rejected || Innertube.cookie == null) throw failure
                 Log.w(TAG, "$label rejected; refreshing active session context once")
                 Innertube.refreshSessionScope()
+                // The refresh drops an adopted profile and reads the shell's
+                // default, and a switch can land while it waits: a retry under
+                // another identity could send a rating or playlist edit to an
+                // account the listener did not pick, so it is not made.
+                if (Innertube.listener != identity) {
+                    Log.w(TAG, "$label not retried: the account changed during the refresh")
+                    throw failure
+                }
                 block()
             }
                 // runCatching catches Throwable, cancellation included, which
