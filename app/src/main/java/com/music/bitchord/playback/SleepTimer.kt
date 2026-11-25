@@ -1,7 +1,22 @@
 package com.music.bitchord.playback
 
 import android.os.SystemClock
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.withContext
+
+/**
+ * A Cast receiver's stream volume: the song's own level on the receiver, not
+ * the device's volume and not the phone's.
+ */
+interface StreamVolume {
+    /** The level when the fade began, 0..1. */
+    val level: Double
+
+    /** Ask the receiver for [level]; false when it refused or did not answer. */
+    suspend fun set(level: Double): Boolean
+}
 
 /**
  * Sleep timer. Holds a deadline; [PlaybackService] watches it and pauses
@@ -87,5 +102,54 @@ object SleepTimer {
      */
     inline fun pauseFor(castActive: Boolean, pauseCast: () -> Unit, pauseLocal: () -> Unit) {
         if (castActive) pauseCast() else pauseLocal()
+    }
+
+    /** How often a Cast fade asks the receiver for a new level: each step is a round trip. */
+    const val CAST_FADE_STEP_MS = 500L
+
+    /**
+     * Fade a Cast receiver's stream down to silence over [spanMs], pause it,
+     * then put the stream volume back where it was, so the next play is not
+     * silent.
+     *
+     * [volume] is null when the receiver can't set its stream volume; then,
+     * and when it refuses a step, there is no fade and it just pauses. When
+     * [stillPlaying] turns false (the listener paused or stopped, or the
+     * session ended) the fade is called off without a pause. Called off by
+     * cancellation too: either way the volume is put back.
+     *
+     * @return whether it paused.
+     */
+    suspend fun fadeOutCast(
+        volume: StreamVolume?,
+        spanMs: Long,
+        stepMs: Long,
+        now: () -> Long,
+        stillPlaying: () -> Boolean,
+        pause: () -> Unit,
+    ): Boolean {
+        if (volume == null || spanMs <= 0L) {
+            pause()
+            return true
+        }
+        val original = volume.level
+        val end = now() + spanMs
+        var touched = false
+        try {
+            while (true) {
+                if (!stillPlaying()) return false
+                val left = (end - now()).coerceAtLeast(0L)
+                // Refused: the receiver won't fade, so it just stops.
+                if (!volume.set(original * fadeVolume(left, spanMs))) break
+                touched = true
+                if (left <= 0L) break
+                delay(stepMs)
+            }
+            if (!stillPlaying()) return false
+            pause()
+            return true
+        } finally {
+            if (touched) withContext(NonCancellable) { volume.set(original) }
+        }
     }
 }
