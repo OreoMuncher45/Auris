@@ -93,7 +93,15 @@ class LoopMixSession private constructor(
         if (frames != 0L) inPort.requestShift(-frames)
     }
 
-    fun recordAligned(errorSeconds: Double) {
+    /**
+     * True once a full, stall-free alignment round has measured [alignedErrorMs];
+     * a reading taken after the rounds gave up is recorded but not confirmed.
+     */
+    var alignmentConfirmed: Boolean = false
+        private set
+
+    fun recordAligned(errorSeconds: Double, confirmed: Boolean = true) {
+        alignmentConfirmed = confirmed
         alignedErrorMs = errorSeconds * 1000
     }
 
