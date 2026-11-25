@@ -393,10 +393,10 @@ object Downloads {
                 // replacement that started is its own caller's.
                 val attempt = starting[id]?.takeIf { it.generation == generation }
                 if (attempt == null) {
-                    // Already confirmed by an earlier answer to this same attempt
-                    // (a joined waiter): admitted only if that attempt is the one
-                    // [confirmed] still records for the id.
-                    if (started && confirmed[id] == generation && (id in pending || id in running)) kept += id
+                    // Already confirmed by another waiter's successful answer to this
+                    // same attempt: admitted, whatever this call's own start did,
+                    // as long as [confirmed] still records this attempt for the id.
+                    if (confirmed[id] == generation && (id in pending || id in running)) kept += id
                     continue
                 }
                 if (started) {
