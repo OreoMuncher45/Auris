@@ -2771,9 +2771,9 @@ class CrossfadeController(
             val retry = settingChanged ||
                 (answeredNone && last.tries < LYRIC_RETRIES && now - last.at >= LYRIC_RETRY_MS)
             if (!retry) return
-            lyricsAsked[id] = LyricAsk(now, synced, if (settingChanged) 1 else last.tries + 1)
+            synchronized(lyricsAsked) { lyricsAsked[id] = LyricAsk(now, synced, if (settingChanged) 1 else last.tries + 1) }
         } else {
-            lyricsAsked[id] = LyricAsk(now, synced, 1)
+            synchronized(lyricsAsked) { lyricsAsked[id] = LyricAsk(now, synced, 1) }
         }
         val ask = lyricsAsked[id]
         scope.launch(Dispatchers.IO) {
@@ -2788,7 +2788,8 @@ class CrossfadeController(
                 )
             }
             // An answer to a request a newer one superseded must not replace the newer one's.
-            if (lyricsAsked[id] === ask) lyricSpans[id] = LyricSpans(spans)
+            // Checked and published in one step: a newer request can't slip in between.
+            synchronized(lyricsAsked) { if (lyricsAsked[id] === ask) lyricSpans[id] = LyricSpans(spans) }
         }
     }
 
@@ -3153,6 +3154,9 @@ class CrossfadeController(
         // the old one, and a handoff would fail without restoring the song's
         // position. Settle onto the playing song at the mix's position instead.
         if (!handedOff && !nextStillArmed(out, into)) return loopBail("the next entry changed", settle = true)
+        // Skip silence switched on mid-mix moves a player off the timeline the
+        // decks were cut for: settle rather than mix on off the beat.
+        if (out.skipSilenceEnabled || into.skipSilenceEnabled) return loopBail("skip silence is on", settle = true)
         val now = System.nanoTime()
         val m = session.mixSeconds(now, out.isPlaying) ?: return
         if (!loopIncomingStarted && m >= session.inStartAt) {
@@ -3175,6 +3179,11 @@ class CrossfadeController(
             // otherwise the deck hands over to a player with nothing to give.
             // Not ready yet, the outgoing song is kept, at its mix position.
             if (into.playbackState != Player.STATE_READY) return loopBail("the incoming player wasn't ready", settle = true)
+            // Nor onto one whose alignment never came within [LOOP_HANDOFF_MAX_ERROR_MS]
+            // of the deck (NaN: never measured): its handover would be heard as a flam.
+            if (!(abs(session.alignedErrorMs) <= LOOP_HANDOFF_MAX_ERROR_MS)) {
+                return loopBail("the incoming player never aligned (${session.alignedErrorMs} ms)", settle = true)
+            }
             if (!handOff(out, into, m, visualEnd)) return
         }
         if (m >= 0.0) {
@@ -4794,6 +4803,9 @@ class CrossfadeController(
 
         /** How far the two players' gain ratio may move after the build before the deck's level is wrong: ~0.5 dB. */
         const val LOOP_LEVEL_TOLERANCE = 0.06f
+
+        /** The largest residual alignment error the session moves onto the incoming player with. */
+        const val LOOP_HANDOFF_MAX_ERROR_MS = 5.0
 
         /** After a round a stall spoiled: long enough for both sinks to report again. */
         const val LOOP_ALIGN_STALL_MS = 400L
