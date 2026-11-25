@@ -98,6 +98,8 @@ internal fun LandscapeNowPlaying(
     onOpenArtist: (browseId: String?, name: String) -> Unit,
     lyrics: List<LyricLine>?,
     lyricsUnavailable: Boolean,
+    automixPanelOpen: Boolean,
+    onAutomixPanelOpenChange: (Boolean) -> Unit,
     playerHaze: HazeState,
     overlays: PlayerOverlayState,
     controlsLocked: Boolean,
@@ -356,6 +358,10 @@ internal fun LandscapeNowPlaying(
                             transitionWindow = transitionWindow
                                 ?.takeIf { !scrub.scrubbing && it.end > it.start }
                                 ?.let { it.start..it.end },
+                            transitionWindowInflated = automixPanelOpen,
+                            onTransitionWindowLongPress = {
+                                onAutomixPanelOpenChange(true)
+                            },
                             onScrub = onScrub,
                             onScrubFinished = onScrubFinished,
                         ) {

@@ -263,10 +263,6 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // The Apple account token's own encrypted store; see the call's own
         // note for why it is not inside AppSettings.init.
         AppSettings.initAppleAccount(this)
-        // After AppSettings: fetches Automix's models as soon as Automix is on
-        // (and the connection allows it) rather than waiting for the first
-        // song it would mix.
-        com.music.bitchord.playback.smart.AutomixModels.install(this)
         com.music.bitchord.data.settings.MediaProgress.init(this)
         com.music.bitchord.data.settings.PodcastLibrary.init(this)
         // Before anything resolves a track: an addon with `checkValidLossless`

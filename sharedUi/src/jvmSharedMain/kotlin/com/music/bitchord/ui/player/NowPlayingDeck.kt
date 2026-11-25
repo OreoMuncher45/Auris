@@ -113,6 +113,8 @@ internal fun PortraitControlDeck(
     versionSwitching: Boolean,
     mixing: Boolean,
     scrub: PlayerScrub,
+    automixPanelOpen: Boolean,
+    onAutomixPanelOpenChange: (Boolean) -> Unit,
     onScrub: (Float) -> Unit,
     onScrubFinished: () -> Unit,
     isLoading: Boolean,
@@ -196,6 +198,10 @@ internal fun PortraitControlDeck(
                 transitionWindow = transitionWindow
                     ?.takeIf { !scrub.scrubbing && it.end > it.start }
                     ?.let { it.start..it.end },
+                transitionWindowInflated = automixPanelOpen,
+                onTransitionWindowLongPress = {
+                    onAutomixPanelOpenChange(true)
+                },
                 onScrub = onScrub,
                 onScrubFinished = onScrubFinished,
             ) {

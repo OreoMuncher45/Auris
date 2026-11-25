@@ -92,12 +92,6 @@ internal fun BoxScope.PortraitBackdrop(
     inkWhiteWash: () -> Float,
     /** Dark theme: the mesh tone-maps a pale cover dark — see [darkThemeMeshCell]. */
     darkTheme: Boolean = false,
-    /**
-     * Automix's reveal under way, if any — see [AutoMixAmbientMix]. Asked for
-     * by the backdrop that draws it, so only that backdrop recomposes at the
-     * mix's two ends.
-     */
-    ambientMix: () -> AutoMixAmbientMix? = { null },
 ) {
     // The blur without its dark-or-bright overlay, as 3.1 had it, or with it so
     // the buttons keep their contrast — the Now Playing setting's switch.
@@ -158,7 +152,6 @@ internal fun BoxScope.PortraitBackdrop(
             inkBlackWash = inkBlackWash,
             inkWhiteWash = inkWhiteWash,
             darkTheme = darkTheme,
-            ambientMix = ambientMix,
             overlay = overlay,
         )
     } else if (!tablet && !spotifyCanvasPresentation) {
@@ -180,7 +173,6 @@ internal fun BoxScope.PortraitBackdrop(
                 inkBlackWash = inkBlackWash,
                 inkWhiteWash = inkWhiteWash,
                 darkTheme = darkTheme,
-                ambientMix = ambientMix,
                 overlay = overlay,
             )
         }
@@ -391,17 +383,12 @@ private fun PlayerMeshBackdrop(
     inkBlackWash: () -> Float,
     inkWhiteWash: () -> Float,
     darkTheme: Boolean,
-    ambientMix: () -> AutoMixAmbientMix?,
     /** False draws the mesh bare: no legibility scrim, no ink wash. */
     overlay: Boolean = true,
 ) {
     val mesh = key(trackKey) {
         rememberArtworkMesh(imageUrl, artPx = artPx, liveFrames = liveFrames, darkTheme = darkTheme)
     }
-    // Automix: the next cover's mesh, read ahead of the mix — see
-    // [AutoMixAmbientPrefetch]. Looked up once as the mix starts.
-    val mix = ambientMix()
-    val mixMesh = remember(mix, darkTheme) { mix?.let { cachedArtworkMesh(it.incomingUrl, darkTheme) } }
     // What the chrome stands on, read off the mesh on screen: a 32-texel
     // image, averaged into bands off the main thread whenever the mesh
     // changes. See [MeshInkPublisher] for which mesh that is.
@@ -416,10 +403,7 @@ private fun PlayerMeshBackdrop(
             publish = { inkSurfaces.main = it },
         )
     }
-    LaunchedEffect(mesh, mixMesh) {
-        // During a reveal, the chrome is judged against the next cover's mesh
-        // once the reveal has it half way in, not at the track change.
-        if (mix != null && mesh != null && mesh === mixMesh) awaitAutoMixAmbientHalfway(mix)
+    LaunchedEffect(mesh) {
         // The cover's top band, for the header: read with the mesh, so this
         // is a few contrast-free blends and no pixels. A clip frame carries
         // none and leaves the still sleeve's answer in place.
@@ -434,8 +418,6 @@ private fun PlayerMeshBackdrop(
         liftFrom = liftFrom,
         blackWash = inkBlackWash,
         whiteWash = inkWhiteWash,
-        mix = mix,
-        mixMesh = mixMesh,
         overlay = overlay,
     )
 }
@@ -457,7 +439,6 @@ private fun LegacyMeshBackdrop(
     inkBlackWash: () -> Float,
     inkWhiteWash: () -> Float,
     darkTheme: Boolean,
-    ambientMix: () -> AutoMixAmbientMix?,
     /** False draws the blobs bare: no legibility scrim, no ink wash. */
     overlay: Boolean = true,
 ) {
@@ -467,15 +448,10 @@ private fun LegacyMeshBackdrop(
         liveFrames?.collectLatest { frame = it }
     }
     val palette = rememberArtworkColors(imageUrl, frame)
-    // Automix: the next cover's colours, read ahead of the mix — see
-    // [AutoMixAmbientPrefetch]. Looked up once as the mix starts.
-    val mix = ambientMix()
-    val mixPalette = remember(mix) { mix?.let { cachedArtworkPalette(it.incomingUrl) } }
     // The blobs' own colours, published for the ink — four colours and a
     // base, so cheap enough to read wherever the palette lands. During a
     // reveal, once it has the next cover's colours half way in.
-    LaunchedEffect(palette, darkTheme, mixPalette) {
-        if (mix != null && palette == mixPalette) awaitAutoMixAmbientHalfway(mix)
+    LaunchedEffect(palette, darkTheme) {
         inkSurfaces.main = legacyMeshInkSurface(palette, darkTheme)
     }
     // No cover band is read here; the header keeps the player's own ink.
@@ -487,8 +463,6 @@ private fun LegacyMeshBackdrop(
         blackWash = inkBlackWash,
         whiteWash = inkWhiteWash,
         darkTheme = darkTheme,
-        mix = mix,
-        mixPalette = mixPalette,
         overlay = overlay,
     )
 }

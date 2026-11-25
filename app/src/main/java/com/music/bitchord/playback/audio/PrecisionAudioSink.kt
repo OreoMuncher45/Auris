@@ -1,6 +1,5 @@
 package com.music.bitchord.playback.audio
 
-import com.music.bitchord.playback.loopmix.LoopMixPort
 import android.util.Log
 import android.os.SystemClock
 import androidx.media3.common.C
@@ -231,47 +230,6 @@ class PrecisionAudioSink(
      */
     private var processedEndUs: Long = C.TIME_UNSET
 
-    // ---- The Automix loop mix (see [LoopMixPort]) -----------------------------------------
-
-    private val loop: LoopMixPort get() = dspChain.transition.loop
-
-    /** The port generation this sink's loop state belongs to. */
-    private var loopGeneration = -1
-
-    /** Outgoing: writing the renderer's mix and no longer consuming the song. */
-    private var loopGenerating = false
-    private var loopNextFrame = 0L
-    private var loopNextUs = 0L
-
-    /**
-     * Where generation began: [loopNextUs] is derived from the frames generated
-     * since, never summed block by block — each block's duration is truncated
-     * to whole µs, and at 44.1 kHz that adds up to milliseconds over a mix.
-     */
-    private var loopEpochUs = 0L
-    private var loopEpochFrame = 0L
-
-    /** Outgoing: the renderer has been fed at least once (its decks keep state from then on). */
-    private var loopRendering = false
-
-    /** True once a block has mixed some of the 25 ms crossing: from then on it is finished, bit-perfect or not. */
-    private var loopCrossing = false
-
-    /** Incoming: a block has been processed since it was armed. */
-    private var loopInStarted = false
-
-    /**
-     * What the delegate's timeline is ahead of the track's by: silence
-     * inserted adds to it, frames dropped take from it. Its [ShiftTimeline.writtenUs]
-     * is handed to the delegate so its clock runs on without a jump, and each
-     * shift is taken back off the positions reported once it is heard, so the
-     * player still sees the true track position.
-     */
-    private val shifts = ShiftTimeline()
-    private val delegateOffsetUs: Long get() = shifts.writtenUs
-
-    private val loopScratch = FloatArray(AudioBlock.DEFAULT_CAPACITY_FRAMES * 2)
-
     override fun configure(audioSinkConfig: AudioSink.AudioSinkConfig) {
         // A reconfigure starts a new format: a session latched to the old one
         // would be fed the wrong clock, so let it go before anything else.
@@ -302,13 +260,6 @@ class PrecisionAudioSink(
 
                 // 1. Configure the Float32 DSP chain
                 dspChain.configure(sampleRate, channelCount)
-
-                // A loop mix armed across a format change is over: its frames and
-                // timestamps are counted at the old rate, and it renders stereo
-                // into a block about to be replaced.
-                if (sampleRate != configuredSampleRate || channelCount != audioBlock.channelCount) {
-                    retireLoopForFormatChange()
-                }
 
                 // 2. Ensure internal buffers are sized for max frames and channel count
                 ensureBuffers(channelCount)
@@ -344,7 +295,6 @@ class PrecisionAudioSink(
                     inputPcmEncoding = encoding
                     targetOutputEncoding = targetEncoding
                     isPrecisionActive = true
-                    publishLoopFormat(sampleRate, channelCount, true)
                     publishTelemetry(encoding, targetEncoding)
                     logConfig(
                         precisionActive = true,
@@ -371,7 +321,6 @@ class PrecisionAudioSink(
                             inputPcmEncoding = encoding
                             targetOutputEncoding = PcmEncoding.PCM_16BIT
                             isPrecisionActive = true
-                            publishLoopFormat(sampleRate, channelCount, true)
                             publishTelemetry(encoding, PcmEncoding.PCM_16BIT)
                             logConfig(
                                 precisionActive = true,
@@ -403,7 +352,6 @@ class PrecisionAudioSink(
         inputPcmEncoding = null
         targetOutputEncoding = null
         configuredSampleRate = 0
-        publishLoopFormat(0, 0, false)
         // Bit-perfect is a promise about decoded PCM; a bitstream that was
         // never decoded has nothing for it to promise.
         dspBypassLatched = false
@@ -510,7 +458,6 @@ class PrecisionAudioSink(
         exclusiveActive = true
         // The exclusive USB route writes the decoder's PCM straight to the DAC:
         // there is no float block for a loop mix to render into.
-        loop.precision = false
         boundSession = session
         exclusiveEnded = false
         if (isAudible()) {
@@ -554,8 +501,6 @@ class PrecisionAudioSink(
         val input = inputPcmEncoding
         val output = targetOutputEncoding
         if (input != null && output != null) publishTelemetry(input, output)
-        // Back on the float path the exclusive route had taken a loop mix off.
-        if (isPrecisionActive && loop.sampleRate > 0) loop.precision = true
         if (resume && playing) runCatching { delegate.play() }
     }
 
@@ -705,11 +650,6 @@ class PrecisionAudioSink(
             }
         }
         if (!isPrecisionActive) {
-            // Nothing here can mute or shift a stream that never decodes to
-            // PCM, so a loop mix armed on it can't hand over: it is called off
-            // (the controller reads interrupted) rather than heard over the mix.
-            val port = loop
-            if (port.inArm != null || port.outArm != null) port.interrupted = true
             return delegate.handleBuffer(inputBuffer, presentationTimeUs, encodedAccessUnitCount)
         }
 
@@ -785,23 +725,6 @@ class PrecisionAudioSink(
             publishTelemetry(inEncoding, outEncoding)
         }
 
-        // The Automix loop mix, when one is armed on this sink. Bit-perfect never
-        // arms one (the crossfade controller refuses every blend under it).
-        val port = loop
-        // One read: the arm and its generation can't come from two different arms.
-        val armed = port.armed
-        if (armed.generation != loopGeneration) adoptLoopGeneration(port, armed.generation)
-        // An arm a flush interrupted is over here and now, not on the
-        // controller's next tick: pre-roll buffers that come back in the
-        // meantime would feed the renderer a region it has already played.
-        // One that never processed anything is not marked interrupted, so the
-        // start-up flush still leaves it armed.
-        val outArm = armed.out?.takeIf { !port.interrupted }
-        if (outArm != null && loopGenerating) return generateLoop(outArm, outEncoding)
-        // Likewise the incoming side: no more muting or shifting once a flush
-        // has ended the mix it was lining up for.
-        val inArm = armed.inn?.takeIf { !port.interrupted }
-
         // 1. Drain pending output from previous cycle if delegate had backpressure
         if (outputByteBuffer.hasRemaining()) {
             val consumed = delegate.handleBuffer(
@@ -832,29 +755,16 @@ class PrecisionAudioSink(
         // silently skipped under bit-perfect: if any stage is engaged,
         // isBypassed() is false and the block is decoded and processed. Bit-
         // perfect still passes through untouched when every stage is idle.
-        //
-        // Never while a loop mix is armed here: its splice, its shifts and its
-        // fade-in all work on the decoded block.
-        if (inEncoding == outEncoding && dspChain.isBypassed() && userGain >= 0.999f &&
-            outArm == null && inArm == null
-        ) {
+        if (inEncoding == outEncoding && dspChain.isBypassed() && userGain >= 0.999f) {
             timestampedInputTimeUs = C.TIME_UNSET
             framesEmittedForInput = 0L
             if (!inputBuffer.hasRemaining()) return true
-            // Still on the delegate's clock after a loop mix shifted this
-            // player: the silence it inserted, or the frames it dropped, stay
-            // counted until a flush, and the position reports take them off.
-            val delegateTimeUs = if (presentationTimeUs != C.TIME_UNSET) {
-                presentationTimeUs + delegateOffsetUs
-            } else {
-                presentationTimeUs
-            }
-            val accepted = delegate.handleBuffer(inputBuffer, delegateTimeUs, encodedAccessUnitCount)
+            val accepted = delegate.handleBuffer(inputBuffer, presentationTimeUs, encodedAccessUnitCount)
             if (!accepted || inputBuffer.hasRemaining()) {
                 // Keep the buffer (not a copy) so isEnded/hasPendingData answer
                 // for the bytes still in the delegate's hands.
                 passthroughBuffer = inputBuffer
-                passthroughPresentationTimeUs = delegateTimeUs
+                passthroughPresentationTimeUs = presentationTimeUs
                 passthroughAccessUnitCount = encodedAccessUnitCount
                 return false
             }
@@ -866,40 +776,6 @@ class PrecisionAudioSink(
             framesEmittedForInput = 0L
         }
         while (inputBuffer.remaining() >= bytesPerFrame) {
-            if (inArm != null) {
-                // Lining up with the deck, while this player is still silent:
-                // frames dropped, or silence written in their place.
-                val shift = inArm.pendingShift.get()
-                if (shift != 0L && canShift(inArm, presentationTimeUs)) {
-                    if (shift > 0) {
-                        // No further than the shift cutoff: frames past it are heard.
-                        // What is left of the correction stays pending.
-                        val drop = minOf(
-                            shift,
-                            (inputBuffer.remaining() / bytesPerFrame).toLong(),
-                            framesBeforeShiftCutoff(inArm, presentationTimeUs),
-                        )
-                        inputBuffer.position(inputBuffer.position() + (drop * bytesPerFrame).toInt())
-                        // Where the next written frame lands on the delegate's timeline.
-                        val boundaryUs = advanceTimestamp(presentationTimeUs, framesEmittedForInput) + delegateOffsetUs
-                        framesEmittedForInput += drop
-                        shifts.drop(boundaryUs, Util.sampleCountToDurationUs(drop, configuredSampleRate))
-                        // Shifted: a flush from here on ends the arm (see [loopInterrupted]).
-                        loopInStarted = true
-                        inArm.pendingShift.addAndGet(-drop)
-                        continue
-                    } else {
-                        val insert = minOf(-shift, audioBlock.capacityFrames.toLong()).toInt()
-                        loopInStarted = true
-                        if (!writeSilence(insert, advanceTimestamp(presentationTimeUs, framesEmittedForInput), outEncoding)) {
-                            return false
-                        }
-                        inArm.pendingShift.addAndGet(insert.toLong())
-                        if (outputByteBuffer.hasRemaining()) return false
-                        continue
-                    }
-                }
-            }
             val availableFrames = inputBuffer.remaining() / bytesPerFrame
             if (availableFrames <= 0) break
 
@@ -930,17 +806,8 @@ class PrecisionAudioSink(
                 }
             }
 
-            val loopBlockUs = advanceTimestamp(presentationTimeUs, framesEmittedForInput)
-            var tookOverHere = false
-            if (outArm != null) {
-                tookOverHere = spliceLoop(outArm, loopBlockUs, decodedFrames, refuse = skipDsp)
-            } else if (inArm != null) {
-                silenceUntilHandover(inArm, loopBlockUs, decodedFrames)
-            }
-
             // Process normalized Float32 samples through custom DSP chain
             if (!skipDsp) {
-                dspChain.mixing = outArm != null && loopRendering
                 dspChain.process(audioBlock)
             } else if (userGain < 0.999f) {
                 scaleBlock(audioBlock, userGain)
@@ -966,24 +833,9 @@ class PrecisionAudioSink(
             pendingAccessUnitCount = blockAccessUnits
             framesEmittedForInput += decodedFrames
 
-            if (blockTimeUs != C.TIME_UNSET) pendingPresentationTimeUs = blockTimeUs + delegateOffsetUs
-            if (inArm != null && blockTimeUs != C.TIME_UNSET) {
-                port.processedUs = blockTimeUs - port.streamOffsetUs +
-                    Util.sampleCountToDurationUs(decodedFrames.toLong(), configuredSampleRate)
-            }
-            if (tookOverHere) {
-                // From here the mix is what plays: the rest of the song's input
-                // stays where it is, and the renderer's blocks follow on.
-                loopGenerating = true
-                loopNextUs = blockTimeUs + Util.sampleCountToDurationUs(decodedFrames.toLong(), configuredSampleRate)
-                loopEpochUs = loopNextUs
-                loopEpochFrame = loopNextFrame
-                port.tookOver = true
-            }
-
             val consumed = delegate.handleBuffer(
                 outputByteBuffer,
-                pendingPresentationTimeUs,
+                blockTimeUs,
                 blockAccessUnits,
             )
 
@@ -991,7 +843,6 @@ class PrecisionAudioSink(
                 // Delegate could not accept all output frames in this cycle
                 return false
             }
-            if (tookOverHere) return false
         }
 
         // Drop any incomplete trailing frame bytes so we don't stall
@@ -1019,7 +870,6 @@ class PrecisionAudioSink(
      */
     override fun setOutputStreamOffsetUs(outputStreamOffsetUs: Long) {
         if (streaming) dspChain.onStreamBoundary()
-        loop.streamOffsetUs = outputStreamOffsetUs
         super.setOutputStreamOffsetUs(outputStreamOffsetUs)
     }
 
@@ -1036,225 +886,17 @@ class PrecisionAudioSink(
             // The USB clock, not AudioTrack's: no track exists on this path.
             return exclusiveUsb?.getCurrentPositionUs() ?: AudioSink.CURRENT_POSITION_NOT_SET
         }
-        // Before the clock is read: see [LoopMixPort.publishPosition].
-        val loopGenerationBefore = loop.generation
-        val delegatePosition = super.getCurrentPositionUs(sourceEnded)
-        if (delegatePosition == AudioSink.CURRENT_POSITION_NOT_SET) return delegatePosition
-        // The delegate counts any silence the loop mix inserted, and none of the
-        // frames it dropped; the player is told the track's own position, each
-        // shift taken off from the moment it is heard.
-        val position = shifts.trackPositionUs(delegatePosition)
+        val position = super.getCurrentPositionUs(sourceEnded)
         val processed = processedEndUs
-        if (processed != C.TIME_UNSET) {
+        if (position != AudioSink.CURRENT_POSITION_NOT_SET && processed != C.TIME_UNSET) {
             dspChain.transition.leadUs = (processed - position).coerceAtLeast(0L)
         }
-        val port = loop
-        if (port.outArm != null || port.inArm != null) {
-            port.publishPosition(position - port.streamOffsetUs, System.nanoTime(), loopGenerationBefore)
-        }
         return position
-    }
-
-    // ---- The Automix loop mix ---------------------------------------------------------------
-
-    private fun publishLoopFormat(sampleRate: Int, channelCount: Int, precision: Boolean) {
-        loop.sampleRate = sampleRate
-        loop.channelCount = channelCount
-        loop.precision = precision
-    }
-
-    /** A new arm (or a disarm): whatever the sink was doing for the last one is dropped. */
-    private fun adoptLoopGeneration(port: LoopMixPort, generation: Int) {
-        loopGeneration = generation
-        loopGenerating = false
-        loopRendering = false
-        loopCrossing = false
-        loopInStarted = false
-        port.tookOver = false
-        port.interrupted = false
-        port.resetSplice()
-    }
-
-    /**
-     * The outgoing side, block by block until the loop start: renders the mix
-     * from its decks' pre-roll on, and from 25 ms before mix frame 0 crosses the
-     * song's own audio over to it. True once the block reaches frame 0.
-     */
-    private fun spliceLoop(arm: LoopMixPort.OutArm, blockUs: Long, frames: Int, refuse: Boolean): Boolean {
-        if (blockUs == C.TIME_UNSET || frames <= 0 || audioBlock.channelCount != 2) return false
-        val trackUs = blockUs - loop.streamOffsetUs
-        val start = Math.round((trackUs - arm.takeoverUs) * arm.sampleRate / 1_000_000.0)
-        val end = start + frames
-        if (end <= arm.firstFrame) return false
-        if (!loopRendering && start > arm.firstFrame + frames) {
-            // Armed too late to pre-roll the decks: no splice at all, rather than a cut.
-            loop.interrupted = true
-            return false
-        }
-        val handover = (LOOP_HANDOVER_SECONDS * arm.sampleRate).toLong()
-        if (refuse && !loopCrossing) {
-            // Bit-perfect came on before any of the crossing was mixed: the song
-            // plays on untouched — this block too, even one that would start it.
-            // Once the crossing has started, it is finished instead.
-            loop.interrupted = true
-            return false
-        }
-        if (!arm.renderer.render(start, loopScratch, 0, frames)) {
-            // Closed under the arm: no mix to cross into, so the song plays on.
-            loop.interrupted = true
-            return false
-        }
-        loopRendering = true
-        if (end > -handover) loopCrossing = true
-        val samples = audioBlock.samples
-        val port = loop
-        val capture = LoopMixPort.SPLICE_CAPTURE
-        for (i in 0 until frames) {
-            val frame = start + i
-            if (frame >= -capture && frame < 0) {
-                val at = (frame + capture).toInt()
-                port.spliceSong[at] = (samples[2 * i] + samples[2 * i + 1]) * 0.5f
-                port.spliceDeck[at] = (loopScratch[2 * i] + loopScratch[2 * i + 1]) * 0.5f
-            }
-            if (frame < -handover) continue
-            val keep = if (frame < 0) (-frame).toFloat() / handover else 0f
-            val l = 2 * i
-            samples[l] = samples[l] * keep + loopScratch[l]
-            samples[l + 1] = samples[l + 1] * keep + loopScratch[l + 1]
-        }
-        if (end >= 0) {
-            loopNextFrame = end
-            port.spliceCaptured = true
-            return true
-        }
-        return false
-    }
-
-    /**
-     * The outgoing side after the takeover: the renderer's mix, block after
-     * block, for as long as the delegate takes it. The song's own input is
-     * never consumed again (false, always), so the renderer keeps coming back.
-     */
-    private fun generateLoop(arm: LoopMixPort.OutArm, outEncoding: PcmEncoding): Boolean {
-        if (outputByteBuffer.hasRemaining()) {
-            // Retried with the count its first write carried (the takeover block's).
-            val consumed = delegate.handleBuffer(outputByteBuffer, pendingPresentationTimeUs, pendingAccessUnitCount)
-            if (!consumed || outputByteBuffer.hasRemaining()) return false
-        }
-        // The renderer writes two floats a frame: never into a block of any other width.
-        if (audioBlock.channelCount != 2) {
-            loop.interrupted = true
-            loopGenerating = false
-            return false
-        }
-        repeat(LOOP_MAX_GENERATED_BLOCKS) {
-            val frames = minOf(LOOP_GENERATED_FRAMES, audioBlock.capacityFrames)
-            audioBlock.reset(frames)
-            if (!arm.renderer.render(loopNextFrame, audioBlock.samples, 0, frames)) {
-                // Closed under the arm: silence, not a stale block, until the controller retires it.
-                audioBlock.samples.fill(0f, 0, frames * audioBlock.channelCount)
-                loop.interrupted = true
-            }
-            loopNextFrame += frames
-            dspChain.mixing = true
-            dspChain.process(audioBlock)
-            outputByteBuffer.clear()
-            PcmBoundary.encode(sourceBlock = audioBlock, encoding = outEncoding, outputBuffer = outputByteBuffer)
-            outputByteBuffer.flip()
-            // loopNextUs is track time; the delegate is still on its own clock,
-            // shifted by any silence or drops an earlier mix left on this player.
-            val blockUs = loopNextUs + delegateOffsetUs
-            loopNextUs = loopEpochUs + Util.sampleCountToDurationUs(loopNextFrame - loopEpochFrame, configuredSampleRate)
-            processedEndUs = loopNextUs
-            pendingPresentationTimeUs = blockUs
-            pendingAccessUnitCount = 0
-            val consumed = delegate.handleBuffer(outputByteBuffer, blockUs, 0)
-            if (!consumed || outputByteBuffer.hasRemaining()) return false
-        }
-        return false
-    }
-
-    /** The incoming side: nothing heard before the handover, then 25 ms up to full. */
-    private fun silenceUntilHandover(arm: LoopMixPort.InArm, blockUs: Long, frames: Int) {
-        if (blockUs == C.TIME_UNSET || frames <= 0) return
-        loopInStarted = true
-        val rate = configuredSampleRate
-        val start = blockUs - loop.streamOffsetUs
-        val handoverFrames = LOOP_HANDOVER_SECONDS * rate
-        // Frames from the handover to this block's start (negative: still before it).
-        val past = (start - arm.handoverUs) * rate / 1_000_000.0
-        if (past >= handoverFrames) return
-        val channels = audioBlock.channelCount
-        val samples = audioBlock.samples
-        for (i in 0 until frames) {
-            val into = past + i
-            val gain = when {
-                into <= 0 -> 0f
-                into >= handoverFrames -> 1f
-                else -> (into / handoverFrames).toFloat()
-            }
-            if (gain >= 1f) break
-            val base = i * channels
-            for (c in 0 until channels) samples[base + c] *= gain
-        }
-    }
-
-    /** Shifts are applied only while this player is silent with time to spare. */
-    /** How many frames from the next input frame on still lie before [canShift]'s cutoff; at least 1 when it allows a shift. */
-    private fun framesBeforeShiftCutoff(arm: LoopMixPort.InArm, presentationTimeUs: Long): Long {
-        val trackUs = advanceTimestamp(presentationTimeUs, framesEmittedForInput) - loop.streamOffsetUs
-        val us = arm.handoverUs - LOOP_SHIFT_MARGIN_US - trackUs
-        return maxOf(1L, us * configuredSampleRate / 1_000_000L)
-    }
-
-    private fun canShift(arm: LoopMixPort.InArm, presentationTimeUs: Long): Boolean {
-        if (presentationTimeUs == C.TIME_UNSET) return false
-        val trackUs = advanceTimestamp(presentationTimeUs, framesEmittedForInput) - loop.streamOffsetUs
-        return trackUs < arm.handoverUs - LOOP_SHIFT_MARGIN_US
-    }
-
-    /** [frames] of silence, timed as the next frames on the delegate's clock. */
-    private fun writeSilence(frames: Int, trackBlockUs: Long, outEncoding: PcmEncoding): Boolean {
-        if (outputByteBuffer.hasRemaining()) {
-            val consumed = delegate.handleBuffer(outputByteBuffer, pendingPresentationTimeUs, pendingAccessUnitCount)
-            if (!consumed || outputByteBuffer.hasRemaining()) return false
-        }
-        audioBlock.reset(frames)
-        audioBlock.samples.fill(0f, 0, frames * audioBlock.channelCount)
-        outputByteBuffer.clear()
-        PcmBoundary.encode(sourceBlock = audioBlock, encoding = outEncoding, outputBuffer = outputByteBuffer)
-        outputByteBuffer.flip()
-        val blockUs = trackBlockUs + delegateOffsetUs
-        shifts.insertSilence(blockUs, Util.sampleCountToDurationUs(frames.toLong(), configuredSampleRate))
-        pendingPresentationTimeUs = blockUs
-        pendingAccessUnitCount = 0
-        // Accepted or not, the frames are the delegate's now (a partial write drains next call).
-        delegate.handleBuffer(outputByteBuffer, blockUs, 0)
-        return true
-    }
-
-    /**
-     * A flush or a reset drops everything queued: a loop mix this sink had
-     * started on is over (the controller reads [LoopMixPort.interrupted]).
-     * One merely armed, with nothing processed yet, survives: the incoming
-     * player's own start-up seek lands here.
-     */
-    private fun loopInterrupted() {
-        val port = loop
-        if ((port.outArm != null && loopRendering) || (port.inArm != null && loopInStarted)) {
-            port.interrupted = true
-        }
-        loopGenerating = false
-        loopRendering = false
-        loopCrossing = false
-        loopInStarted = false
-        shifts.reset()
     }
 
     override fun flush() {
         processedEndUs = C.TIME_UNSET
         dspChain.transition.leadUs = 0L
-        loopInterrupted()
         streaming = false
         outputByteBuffer.clear()
         outputByteBuffer.flip()
@@ -1296,7 +938,6 @@ class PrecisionAudioSink(
         exclusiveEnded = false
         processedEndUs = C.TIME_UNSET
         dspChain.transition.leadUs = 0L
-        loopInterrupted()
         streaming = false
         processCounter = 0L
         outputByteBuffer.clear()
@@ -1317,8 +958,6 @@ class PrecisionAudioSink(
         targetOutputEncoding = null
         activeFormat = null
         configuredSampleRate = 0
-        // Unconfigured, it can't take a loop mix (a flush keeps the format; a reset doesn't).
-        publishLoopFormat(0, 0, false)
         if (isAudible()) {
             AudioOutputStatus.publishOutputExactness(exact = false, detail = null)
             AudioOutputStatus.publishExclusiveUsb(active = false, detail = null)
@@ -1535,18 +1174,6 @@ class PrecisionAudioSink(
         return true
     }
 
-    private fun retireLoopForFormatChange() {
-        val port = loop
-        val armed = port.armed
-        // Adopted first: an arm this sink had not seen a buffer for yet would
-        // otherwise be adopted on the next one, and adoption clears the flag.
-        if (armed.generation != loopGeneration) adoptLoopGeneration(port, armed.generation)
-        if (armed.out != null || armed.inn != null) port.interrupted = true
-        loopGenerating = false
-        loopRendering = false
-        loopCrossing = false
-    }
-
     private fun ensureBuffers(channelCount: Int) {
         if (audioBlock.channelCount != channelCount) {
             audioBlock = AudioBlock(channelCount = channelCount, capacityFrames = DEFAULT_CAPACITY_FRAMES)
@@ -1701,16 +1328,6 @@ class PrecisionAudioSink(
     companion object {
         private const val TAG = "PrecisionAudioSink"
         const val DEFAULT_CAPACITY_FRAMES: Int = 4096
-
-        /** The loop mix's crossover between a song and its deck, either way. */
-        private const val LOOP_HANDOVER_SECONDS = 0.025
-
-        /** Frames per block the outgoing sink renders once the loop mix has taken over. */
-        private const val LOOP_GENERATED_FRAMES = 1024
-        private const val LOOP_MAX_GENERATED_BLOCKS = 16
-
-        /** How close to its handover the incoming side stops accepting shifts. */
-        private const val LOOP_SHIFT_MARGIN_US = 300_000L
 
         /** How often an unclaimed exclusive session is retried mid-track. */
         private const val EXCLUSIVE_RETRY_MS = 5_000L

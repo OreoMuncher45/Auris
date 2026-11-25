@@ -185,7 +185,7 @@ private fun fullBlurKey(url: String, darkTheme: Boolean): String = if (darkTheme
 internal fun cachedFullArtworkBlur(url: String, darkTheme: Boolean): ImageBitmap? =
     fullBlurCache[fullBlurKey(url, darkTheme)]
 
-/** Makes [url]'s full-cover blur ahead of time — see [AutoMixAmbientPrefetch]. Main only. */
+/** Makes [url]'s full-cover blur ahead of time. Main only. */
 internal suspend fun prepareFullArtworkBlur(context: PlatformContext, url: String, artPx: Int, darkTheme: Boolean) {
     if (cachedFullArtworkBlur(url, darkTheme) == null) loadFullArtworkBlur(context, url, artPx, darkTheme)
 }
@@ -254,36 +254,17 @@ fun FullArtworkBlurBackdrop(
     onShown: suspend (ImageBitmap) -> Unit = {},
     /** Dark theme: a clip's live blur is toned like the still one. */
     darkTheme: Boolean = false,
-    /**
-     * Automix: the reveal under way, while the cover is drawing one — see
-     * [AutoMixAmbientMix]. The next cover's blur is laid over this one's at
-     * the reveal's own progress, in place of the track change's crossfade.
-     */
-    mix: AutoMixAmbientMix? = null,
 ) {
     val reduceAnimation by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
     // The blur of the frame, re-blurred as the frame changes. While there is
     // one it *is* the backdrop.
     val liveBlur = rememberLiveBlurImage(liveFrames, darkTheme)
-    // The mix's own blur of the next cover, if it was prepared in time; a mix
-    // without one leaves this backdrop on its ordinary crossfade.
-    val mixBlur = remember(mix, darkTheme) { mix?.let { cachedFullArtworkBlur(it.incomingUrl, darkTheme) } }
-    val liveMix = mix.takeIf { mixBlur != null }
-    // The still on screen. A state of its own rather than [image] itself, so
-    // a track change a mix is drawing does not land on screen ahead of it.
+    // The still on screen.
     var still by remember { mutableStateOf(image) }
-    // The next cover's blur, over [still], while a mix is drawing it and while
-    // it settles after.
-    var held by remember { mutableStateOf<ImageBitmap?>(null) }
-    val heldLayer = remember { AutoMixAmbientLayer() }
     val shown = liveBlur ?: still
-    // The ink is judged against the image this backdrop is going to — but
-    // during a reveal, only once the reveal has it half way in, not at the
-    // track change before any of it shows.
+    // The ink is judged against the image this backdrop is going to.
     val inkTarget = liveBlur ?: image
-    LaunchedEffect(inkTarget, mixBlur) {
-        val reveal = liveMix
-        if (reveal != null && inkTarget != null && inkTarget === mixBlur) awaitAutoMixAmbientHalfway(reveal)
+    LaunchedEffect(inkTarget) {
         inkTarget?.let { onShown(it) }
     }
     // One cover's blur crossfading straight into the next on a skip, with the
@@ -292,42 +273,7 @@ fun FullArtworkBlurBackdrop(
     // outside a skip there is one image drawn, as before.
     val imageAlpha = remember { Animatable(if (shown != null) 1f else 0f) }
     var under by remember { mutableStateOf<ImageBitmap?>(null) }
-    LaunchedEffect(image, mixBlur) {
-        if (mixBlur != null) {
-            // A crossfade still running is finished where it stands; the mix
-            // owns the change from here.
-            under = null
-            if (still != null) imageAlpha.snapTo(1f)
-            if (held !== mixBlur) {
-                held?.let { if (heldLayer.lastShown >= 0.5f) still = it }
-                held = mixBlur
-                heldLayer.begin()
-            }
-            return@LaunchedEffect
-        }
-        val wasHeld = held
-        if (wasHeld != null) {
-            when {
-                // The listener is on the new track: the rest of the way in,
-                // from wherever the reveal left it, and it is the backdrop.
-                image === wasHeld -> {
-                    heldLayer.settleTo(1f, FULL_BLUR_FADE_MS, reduceAnimation)
-                    still = wasHeld
-                    imageAlpha.snapTo(1f)
-                    held = null
-                    return@LaunchedEffect
-                }
-                // Cancelled, or back on the old track: back out again.
-                image === still -> {
-                    heldLayer.settleTo(0f, FULL_BLUR_FADE_MS, reduceAnimation)
-                    held = null
-                    return@LaunchedEffect
-                }
-                // Somewhere else entirely: the blend stays where the reveal
-                // stopped while the new cover crossfades in over it.
-                else -> Unit
-            }
-        }
+    LaunchedEffect(image) {
         val outgoing = still
         still = image
         when {
@@ -346,7 +292,6 @@ fun FullArtworkBlurBackdrop(
             }
             else -> imageAlpha.animateTo(1f, tween(FULL_BLUR_FADE_MS, easing = FastOutSlowInEasing))
         }
-        held = null
     }
 
     Box(modifier = modifier.fillMaxSize().background(FallbackBackdrop)) {
@@ -359,24 +304,6 @@ fun FullArtworkBlurBackdrop(
                 modifier = Modifier.fillMaxSize(),
             )
         }
-        // The next cover's blur, at the reveal's own progress: a layer whose
-        // alpha alone moves, so each frame of the reveal is a property change
-        // on it and nothing is re-recorded. Over the old cover's blur during
-        // the reveal and as it settles; under a third cover crossfading in
-        // over the blend a skip left behind, with the old one under both.
-        val heldLayerContent: @Composable () -> Unit = {
-            held?.let { bitmap ->
-                val painter = remember(bitmap) { BitmapPainter(bitmap) }
-                Image(
-                    painter = painter,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize().graphicsLayer { alpha = heldLayer.alpha(liveMix) },
-                )
-            }
-        }
-        val heldUnderShown = under != null
-        if (heldUnderShown) heldLayerContent()
         shown?.let { bitmap ->
             val painter = remember(bitmap) { BitmapPainter(bitmap) }
             Image(
@@ -386,7 +313,6 @@ fun FullArtworkBlurBackdrop(
                 modifier = Modifier.fillMaxSize().graphicsLayer { alpha = imageAlpha.value },
             )
         }
-        if (!heldUnderShown) heldLayerContent()
 
         // Lyrics and queue are dense foregrounds. Preserve the cover's
         // colour and layout, but keep bright sleeves from lowering contrast.
@@ -558,7 +484,7 @@ private fun meshRequest(context: PlatformContext, url: String, artPx: Int): Imag
 /** The mesh already read for [url] in this theme, if any. Main only. */
 internal fun cachedArtworkMesh(url: String, darkTheme: Boolean): ArtworkMesh? = meshCache[meshKey(url, darkTheme)]
 
-/** Reads [url]'s mesh into the cache ahead of time — see [AutoMixAmbientPrefetch]. Main only. */
+/** Reads [url]'s mesh into the cache ahead of time. Main only. */
 internal suspend fun prepareArtworkMesh(context: PlatformContext, url: String, artPx: Int, darkTheme: Boolean) {
     val key = meshKey(url, darkTheme)
     if (meshCache[key] != null) return
@@ -661,14 +587,6 @@ fun ArtworkMeshBackdrop(
     blackWash: () -> Float = { 0f },
     whiteWash: () -> Float = { 0f },
     /**
-     * Automix: the reveal under way, while the cover is drawing one — see
-     * [AutoMixAmbientMix] — and [mixMesh], the next cover's mesh, laid over
-     * this one at the reveal's own progress in place of the track change's
-     * fade. Without [mixMesh] (not read in time) the backdrop fades as ever.
-     */
-    mix: AutoMixAmbientMix? = null,
-    mixMesh: ArtworkMesh? = null,
-    /**
      * The legibility scrim and the ink's dark-or-bright wash over the mesh. Off
      * draws the blur bare, as 3.1 had it — the Now Playing setting's switch.
      */
@@ -686,11 +604,6 @@ fun ArtworkMeshBackdrop(
     var shown by remember { mutableStateOf(mesh) }
     var incoming by remember { mutableStateOf<ArtworkMesh?>(null) }
     val fade = remember { Animatable(0f) }
-    // Automix: the next cover's mesh over [shown], while a mix draws it and
-    // while it settles after.
-    var held by remember { mutableStateOf<ArtworkMesh?>(null) }
-    val heldLayer = remember { AutoMixAmbientLayer() }
-    val liveMix = mix.takeIf { mixMesh != null }
 
     // A moving wash does not get the GPU's blur at all.
     //
@@ -706,22 +619,10 @@ fun ArtworkMeshBackdrop(
     // stretched by the sampler like any other. The wash on screen is the same
     // wash of the same colours, and the GPU is left to do the one thing it is
     // good at, which is putting a texture on a screen.
-    val liveOnScreen = shown?.live == true || incoming?.live == true || held?.live == true
+    val liveOnScreen = shown?.live == true || incoming?.live == true
     val canBlur = !reduceDynamicBlur && renderEffectBlurSupported && !liveOnScreen
 
-    LaunchedEffect(mesh, mixMesh) {
-        if (mixMesh != null) {
-            // A fade still running is finished where it stands; the mix owns
-            // the change from here, the track change it spans included.
-            incoming?.let { shown = it }
-            incoming = null
-            if (held !== mixMesh) {
-                held?.let { if (heldLayer.lastShown >= 0.5f) shown = it }
-                held = mixMesh
-                heldLayer.begin()
-            }
-            return@LaunchedEffect
-        }
+    LaunchedEffect(mesh) {
         val next = mesh ?: return@LaunchedEffect
         // A change arriving mid-fade. Whatever was fading in has been on screen
         // for a while and is what the new one should fade *from*; leaving it in
@@ -729,28 +630,6 @@ fun ArtworkMeshBackdrop(
         // sending frames faster than the fade runs would never settle at all.
         incoming?.let { shown = it }
         incoming = null
-        val wasHeld = held
-        if (wasHeld != null) {
-            when {
-                // The listener is on the new track: the rest of the way in,
-                // from wherever the reveal left it, and it is the backdrop.
-                next === wasHeld -> {
-                    heldLayer.settleTo(1f, MESH_FADE_MS, reduceAnimation)
-                    shown = wasHeld
-                    held = null
-                    return@LaunchedEffect
-                }
-                // Cancelled, or back on the old track: back out again.
-                next === shown -> {
-                    heldLayer.settleTo(0f, MESH_FADE_MS, reduceAnimation)
-                    held = null
-                    return@LaunchedEffect
-                }
-                // Somewhere else entirely: the blend stays where the reveal
-                // stopped while the new mesh fades in over it.
-                else -> Unit
-            }
-        }
         val current = shown
         if (next === current) return@LaunchedEffect
 
@@ -758,7 +637,6 @@ fun ArtworkMeshBackdrop(
         // when the user has asked for less motion.
         if (current == null || reduceAnimation) {
             shown = next
-            held = null
             return@LaunchedEffect
         }
         incoming = next
@@ -774,7 +652,6 @@ fun ArtworkMeshBackdrop(
         )
         shown = next
         incoming = null
-        held = null
     }
 
     Canvas(
@@ -794,11 +671,6 @@ fun ArtworkMeshBackdrop(
     ) {
         val seamY = seam().toPx().coerceIn(0f, size.height)
         shown?.let { drawMesh(it, seamY, alpha = 1f) }
-        // The next cover's mesh, at the reveal's own progress: read here, so a
-        // frame of the reveal redraws this and composes nothing.
-        val heldMesh = held
-        val heldAlpha = if (heldMesh != null) heldLayer.alpha(liveMix) else 0f
-        heldMesh?.let { drawMesh(it, seamY, alpha = heldAlpha) }
         // Read here rather than in composition: an Animatable read inside a
         // draw lambda invalidates the drawing and leaves composition out of it.
         incoming?.let { drawMesh(it, seamY, alpha = fade.value) }
@@ -813,7 +685,6 @@ fun ArtworkMeshBackdrop(
         if (liftPx > 0.5f && liftFromPx > 0f && liftFromPx < size.height) {
             clipRect(top = liftFromPx) {
                 shown?.let { drawMeshLifted(it, seamY, liftPx, alpha = 1f) }
-                heldMesh?.let { drawMeshLifted(it, seamY, liftPx, alpha = heldAlpha) }
                 incoming?.let { drawMeshLifted(it, seamY, liftPx, alpha = fade.value) }
             }
         }

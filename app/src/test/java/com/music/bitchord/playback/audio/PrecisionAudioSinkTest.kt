@@ -520,84 +520,6 @@ class PrecisionAudioSinkTest {
         assertSame(input, fakeDelegate.lastHandledBuffer)
     }
 
-    /**
-     * A loop mix that lined the incoming player up by inserting silence leaves
-     * the delegate's clock that far ahead of the track until a flush. Once the
-     * loop disarms, the buffer forwarded untouched must still carry the
-     * shifted time, or the delegate sees a gap and resyncs.
-     */
-    @Test
-    fun `the forwarded buffer keeps the loop mix's shift after it disarms`() {
-        val fakeDelegate = FakeAudioSink()
-        val transition = TransitionFilterProcessor()
-        val sink = createSink(
-            fakeDelegate,
-            enableFloatOutput = false,
-            dspChain = DspChain(
-                spatial = SpatialAudioProcessor(),
-                equalizer = EqualizerProcessor(),
-                transition = transition,
-            ),
-        )
-        sink.configure(AudioSink.AudioSinkConfig.Builder(rawFormat(C.ENCODING_PCM_16BIT)).build())
-        fun block(): ByteBuffer = ByteBuffer.allocate(480 * 2 * 2).order(ByteOrder.nativeOrder()).also {
-            repeat(480 * 2) { _ -> it.putShort(0) }
-            it.flip()
-        }
-
-        val port = transition.loop
-        port.armIncoming(com.music.bitchord.playback.loopmix.LoopMixPort.InArm(handoverUs = 10_000_000L))
-        port.requestShift(-480) // 10 ms of silence ahead of the song
-        assertTrue(sink.handleBuffer(block(), 0L, 1))
-        // The silence really went out, then the song's block after it.
-        assertEquals(listOf(0L to 480 * 2 * 2, 10_000L to 480 * 2 * 2), fakeDelegate.writes)
-
-        port.disarm()
-        val next = block()
-        assertTrue(sink.handleBuffer(next, 10_000L, 1))
-
-        assertSame("forwarded untouched", next, fakeDelegate.lastHandledBuffer)
-        assertEquals(20_000L, fakeDelegate.lastPresentationTimeUs)
-    }
-
-    /**
-     * A flush after the incoming side started ends the mix: the next buffer is
-     * neither muted nor shifted for it, even before the controller disarms.
-     */
-    @Test
-    fun `an incoming arm a flush interrupted is no longer applied`() {
-        val fakeDelegate = FakeAudioSink()
-        val transition = TransitionFilterProcessor()
-        val sink = createSink(
-            fakeDelegate,
-            enableFloatOutput = false,
-            dspChain = DspChain(
-                spatial = SpatialAudioProcessor(),
-                equalizer = EqualizerProcessor(),
-                transition = transition,
-            ),
-        )
-        sink.configure(AudioSink.AudioSinkConfig.Builder(rawFormat(C.ENCODING_PCM_16BIT)).build())
-        fun block(): ByteBuffer = ByteBuffer.allocate(480 * 2 * 2).order(ByteOrder.nativeOrder()).also {
-            repeat(480 * 2) { _ -> it.putShort(1000) }
-            it.flip()
-        }
-
-        val port = transition.loop
-        port.armIncoming(com.music.bitchord.playback.loopmix.LoopMixPort.InArm(handoverUs = 10_000_000L))
-        assertTrue(sink.handleBuffer(block(), 0L, 1))
-        assertNotNull(fakeDelegate.lastHandledBuffer)
-
-        sink.flush()
-        assertTrue(port.interrupted)
-        port.requestShift(-480)
-        val next = block()
-        assertTrue(sink.handleBuffer(next, 0L, 1))
-
-        assertSame("forwarded untouched, not muted", next, fakeDelegate.lastHandledBuffer)
-        assertEquals(0L, fakeDelegate.lastPresentationTimeUs)
-    }
-
     /** Switched on, the chain is reached and does colour the audio. */
     @Test
     fun `the DSP chain is reached when it is switched on`() {
@@ -1092,7 +1014,6 @@ class PrecisionAudioSinkTest {
         sink.flush()
         assertTrue(fakeDelegate.flushed)
         assertTrue(sink.isPrecisionActive) // flush maintains configured format
-        assertTrue(sink.dspChain.transition.loop.supportsLoopMix)
 
         // Reset
         sink.reset()
@@ -1101,7 +1022,6 @@ class PrecisionAudioSinkTest {
         assertNull(sink.inputPcmEncoding)
         assertNull(sink.targetOutputEncoding)
         assertNull(sink.activeFormat)
-        assertFalse(sink.dspChain.transition.loop.supportsLoopMix)
     }
 
     @Test

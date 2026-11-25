@@ -120,15 +120,6 @@ fun MeshGradientBackground(
      */
     darkTheme: Boolean = false,
     /**
-     * Automix: the reveal under way, while the player's cover is drawing one —
-     * see [AutoMixAmbientMix] — and [mixPalette], the next cover's colours,
-     * blended in at the reveal's own progress in place of the track change's
-     * crossfade. Without [mixPalette] (not read in time) the colours fade as
-     * ever. Only the player passes them.
-     */
-    mix: AutoMixAmbientMix? = null,
-    mixPalette: MeshPalette? = null,
-    /**
      * The legibility scrim and the ink's dark-or-bright wash over the blobs. Off
      * draws the blur bare, as 3.1 had it — the Now Playing setting's switch.
      */
@@ -137,12 +128,6 @@ fun MeshGradientBackground(
     val reduceAnimation by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
 
     val tuned = remember(palette, darkTheme) { palette.drawnColors(darkTheme) }
-    val mixTuned = remember(mixPalette, darkTheme) { mixPalette?.drawnColors(darkTheme) }
-    val liveMix = mix.takeIf { mixTuned != null }
-    // The next cover's colours, blended over the slots while a mix draws them
-    // and until they are handed to the slots after.
-    var held by remember { mutableStateOf<HeldColors?>(null) }
-    val heldLayer = remember { AutoMixAmbientLayer() }
 
     // Each colour slot crossfades independently when the track (palette) changes,
     // unless "reduce animation" is on, in which case colours snap straight to target.
@@ -152,24 +137,7 @@ fun MeshGradientBackground(
     // of its frames, to hand the drawing five colours it could read itself.
     val slots = remember { List(tuned.size) { Animatable(tuned[it]) } }
     val baseColor = remember { Animatable(tuned.first().dimmed()) }
-    LaunchedEffect(tuned, mixTuned, reduceAnimation, animated) {
-        if (mixTuned != null) {
-            // The slots hold still on the old colours; the mix owns the change.
-            if (held?.slots != mixTuned) {
-                heldLayer.begin()
-                held = HeldColors(mixTuned)
-            }
-            return@LaunchedEffect
-        }
-        held?.let { blend ->
-            // What the reveal left on screen becomes the slots' own colour,
-            // and they carry on from there to wherever the player now is: no
-            // change at all on the track the reveal brought in.
-            val e = heldLayer.lastShown
-            slots.forEachIndexed { index, slot -> slot.snapTo(lerp(slot.value, blend.slots[index], e)) }
-            baseColor.snapTo(lerp(baseColor.value, blend.base, e))
-            held = null
-        }
+    LaunchedEffect(tuned, reduceAnimation, animated) {
         val spec: AnimationSpec<Color> = if (reduceAnimation || !animated) snap() else tween(1400)
         slots.forEachIndexed { index, slot -> launch { slot.animateTo(tuned[index], spec) } }
         launch { baseColor.animateTo(tuned.first().dimmed(), spec) }
@@ -221,20 +189,14 @@ fun MeshGradientBackground(
                 scaleY = 1.3f
             }
             .drawBehind {
-                val blend = held
-                drawRect(
-                    if (blend == null) baseColor.value
-                    else lerp(baseColor.value, blend.base, heldLayer.alpha(liveMix)),
-                )
+                drawRect(baseColor.value)
             }
             .blur(blurRadius),
     ) {
         val drift = phase.value
-        val blend = held
-        val e = if (blend != null) heldLayer.alpha(liveMix) else 0f
 
         slots.forEachIndexed { index, slot ->
-            val color = if (blend == null) slot.value else lerp(slot.value, blend.slots[index], e)
+            val color = slot.value
             val anchor = BLOB_ANCHORS[index]
             val speed = BLOB_SPEEDS[index]
             val center = Offset(
@@ -331,11 +293,6 @@ fun rememberArtworkColors(imageUrl: String?, canvasFrame: ImageBitmap? = null): 
  */
 private const val DRIFT_RADIANS = (PI * 0.45f).toFloat()
 
-/** The next cover's colours as drawn, and the base under them. */
-private class HeldColors(val slots: List<Color>) {
-    val base = slots.first().dimmed()
-}
-
 // Where each blob orbits, and how fast: constants, not lists built on every frame.
 private val BLOB_ANCHORS = listOf(
     Offset(0.20f, 0.25f),
@@ -353,7 +310,7 @@ private val paletteCache = object : LinkedHashMap<String, MeshPalette>(8, 0.75f,
 /** The palette already read for [url]'s still cover, if any. Main only. */
 internal fun cachedArtworkPalette(url: String?): MeshPalette? = url?.let(paletteCache::get)
 
-/** Reads [url]'s palette into the cache ahead of time — see [AutoMixAmbientPrefetch]. Main only. */
+/** Reads [url]'s palette into the cache ahead of time. Main only. */
 internal suspend fun prepareArtworkPalette(context: PlatformContext, url: String) {
     if (paletteCache[url] != null) return
     val request = ImageRequest.Builder(context).data(url).size(128).forPixelAccess().build()

@@ -1380,6 +1380,8 @@ fun NowPlayingScreen(
      * seekbar's long-press have to agree about whether the panel is already
      * showing.
      */
+    automixPanelOpen: Boolean = false,
+    onAutomixPanelOpenChange: (Boolean) -> Unit = {},
     /** Opens the Sing vocal-level sheet. A no-op on hosts without one. */
     onOpenSing: () -> Unit = {},
     /** Whether the vocal cut is currently engaged, for the lyrics mic disc. */
@@ -1681,6 +1683,8 @@ fun NowPlayingScreen(
         overlays = overlays,
         lyricsOffsetOpen = lyricsOffsetOpen,
         onDismissLyricsOffset = onDismissLyricsOffset,
+        automixPanelOpen = automixPanelOpen,
+        onAutomixPanelOpenChange = onAutomixPanelOpenChange,
         lyricPicker = lyricPicker,
     )
 
@@ -1834,22 +1838,6 @@ fun NowPlayingScreen(
     // never fires again. Keyed on the cover there is nothing to reset: the
     // bitmap really is still loaded, so the state stays true.
     val art = rememberPlayerArtwork(remoteArt, artPx)
-    // Automix's artwork transition: the next cover spreads over this one in
-    // step with the audio blend, when the listener has it switched on. See
-    // [AutoMixCoverState].
-    val coverEntry = remember(song.videoId, song.queueEntryId, queue, queueIndex) {
-        coverOccurrence(song, queue, queueIndex)
-    }
-    val autoMixGate = autoMixStillArtworkGate(coverEntry, canvasShown = canvas != null)
-    val autoMixCover = rememberAutoMixCover(coverEntry, art, autoMixGate)
-    val autoMixFrames: () -> AutoMixCoverFrames? = remember(autoMixCover, coverEntry, autoMixGate) {
-        { autoMixCover.framesFor(coverEntry, autoMixGate) }
-    }
-    // The backdrops follow that reveal — see [AutoMixAmbientMix]. A lambda, read
-    // by the backdrops alone, so the mix's two ends recompose them and not this.
-    val autoMixAmbient: () -> AutoMixAmbientMix? = remember(autoMixCover, coverEntry, autoMixGate) {
-        { autoMixCover.ambientFor(coverEntry, autoMixGate) }
-    }
     // Sticky, unlike [PlayerArtwork.loaded]: the banner is the shape of the player rather
     // than a property of the track in it. Waiting on each new cover would
     // collapse the banner into a card and blow it back out on every skip —
@@ -2100,7 +2088,6 @@ fun NowPlayingScreen(
     // the same way in each — see [PlayerScrub.pendingSeek].
     val scrubControlsLocked = rememberUpdatedState(controlsLocked)
     val onScrub: (Float) -> Unit = { fraction ->
-        if (!scrubControlsLocked.value) PlayerPlatform.host.onAutoMixScrubIntent()
         scrub.drag(fraction)
     }
     val onScrubFinished: () -> Unit = {
@@ -2149,6 +2136,8 @@ fun NowPlayingScreen(
             onSelectLyricsProvider = onSelectLyricsProvider,
             lyricsOffsetOpen = lyricsOffsetOpen,
             onDismissLyricsOffset = onDismissLyricsOffset,
+            automixPanelOpen = automixPanelOpen,
+            onAutomixPanelOpenChange = onAutomixPanelOpenChange,
             onAddToQueue = onAddToQueue,
             onPlayNext = onPlayNext,
         )
@@ -2201,9 +2190,6 @@ fun NowPlayingScreen(
             playerPrewarmStage >= 1,
         darkTheme = darkTheme,
     )
-    // The next cover's mesh or colours, and its blur, made while an Automix
-    // reveal is armed, so the backdrops can follow it from its first frame.
-    AutoMixAmbientPrefetch(artPx, darkTheme, legacyPalette = legacyMeshBackdrop)
     // Where the backdrops publish what they show under the chrome — see
     // [resolveInk]. Written by the backdrops' own effects and read only by the
     // ink's, so neither recomposes this screen.
@@ -2305,7 +2291,6 @@ fun NowPlayingScreen(
     // Only the portrait sleeve draws the cover reveal, so only there does the
     // blur follow it: in landscape the sleeve changes at the track change and
     // the blur keeps its ordinary crossfade with it.
-    val currentAutoMixAmbient = rememberUpdatedState(if (landscape) NoAutoMixAmbient else autoMixAmbient)
     val currentDarkTheme = rememberUpdatedState(darkTheme)
     // The frame off a playing cover, when there is one — so the blur behind
     // an animated cover is that cover, moving, rather than the still sleeve
@@ -2333,7 +2318,6 @@ fun NowPlayingScreen(
                 whiteWash = { inkStates.panelWhiteWash.value },
                 onShown = publishPanelInk,
                 darkTheme = currentDarkTheme.value,
-                mix = currentAutoMixAmbient.value(),
             )
         }
     }
@@ -2406,17 +2390,13 @@ fun NowPlayingScreen(
                 lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
         }
     }
-    val trackMotionAllowed: () -> Boolean = remember(trackMotionVisible, autoMixCover) {
-        { trackMotionVisible() && !autoMixCover.holdsCover() }
-    }
     val trackCoverLoaded: () -> Boolean = remember(art) { { art.loaded } }
     SideEffect {
         trackMotion.widthPx = with(density) { windowWidth.toPx() }
         trackMotion.banner = heroMode && !landscape
         trackMotion.reduced = reduceAnimation
         trackMotion.hasNext = hasNext
-        // A track change the Automix reveal is drawing needs no slide of its own.
-        trackMotion.canAnimate = trackMotionAllowed
+        trackMotion.canAnimate = trackMotionVisible
         trackMotion.coverLoaded = trackCoverLoaded
     }
     LaunchedEffect(song.videoId, queueIndex) { trackMotion.onTrackChanged(song.videoId, queueIndex) }
@@ -2517,6 +2497,8 @@ fun NowPlayingScreen(
                 onOpenArtist = onOpenArtist,
                 lyrics = lyrics,
                 lyricsUnavailable = lyricsUnavailable,
+                automixPanelOpen = automixPanelOpen,
+                onAutomixPanelOpenChange = onAutomixPanelOpenChange,
                 playerHaze = playerHaze,
                 overlays = overlays,
                 controlsLocked = controlsLocked,
@@ -2629,7 +2611,6 @@ fun NowPlayingScreen(
             inkBlackWash = { inkStates.mainBlackWash.value },
             inkWhiteWash = { inkStates.mainWhiteWash.value },
             darkTheme = darkTheme,
-            ambientMix = autoMixAmbient,
         )
 
         // Mount once, behind the controls. A known portrait aspect changes the
@@ -3258,7 +3239,6 @@ fun NowPlayingScreen(
                     onOpenVideoQuality = { overlays.videoQuality = true },
                     spotifyChromeAlpha = { spotifyChromeAlpha },
                     onDismissBandTop = { measures.dismissBandTop = it },
-                    autoMixFrames = autoMixFrames,
                     bestPart = { pillModifier ->
                         BestPartPill(
                             song = song,
@@ -3490,6 +3470,8 @@ fun NowPlayingScreen(
                 versionSwitching = versionSwitching,
                 mixing = mixing,
                 scrub = scrub,
+                automixPanelOpen = automixPanelOpen,
+                onAutomixPanelOpenChange = onAutomixPanelOpenChange,
                 onScrub = onScrub,
                 onScrubFinished = onScrubFinished,
                 isLoading = isLoading,

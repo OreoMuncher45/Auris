@@ -158,24 +158,6 @@ internal class PlayerArtwork(
 
     /** This cover's memory-cache entry, once it has been drawn. */
     private var shown: MemoryCache.Key? = null
-
-    /**
-     * The decoded cover, for an Automix reveal to start from: the pixels on
-     * screen when the mix began, rather than a fresh load. [decodedDuringMix]
-     * keeps a decode that only landed once a mix was already under way from
-     * being taken for the outgoing cover of that same mix.
-     */
-    private var decodedCover: DecodedAutoMixCover? = null
-    private var decodedDuringMix: Long? = null
-
-    fun decodedCoverBefore(generation: Long): DecodedAutoMixCover? =
-        decodedCover?.takeIf { decodedDuringMix != generation }
-
-    /** The reveal's finished cover is on screen in this one's place: the next track stands on it. */
-    fun noteDisplayedCover(cover: DecodedAutoMixCover) {
-        shown = cover.cacheKey
-    }
-
     /**
      * What the next cover should stand on while it loads: this one, or, if it
      * never got as far as the screen — a track skipped straight past — the one
@@ -233,8 +215,6 @@ internal class PlayerArtwork(
         if (state is AsyncImagePainter.State.Success) {
             failed = false
             shown = state.result.memoryCacheKey
-            decodedCover = state.result.decodedAutoMixCover()
-            decodedDuringMix = PlayerPlatform.host.autoMixVisualState?.value?.takeIf { it.mixActive }?.generation
         }
         if (state is AsyncImagePainter.State.Error) failed = true
     }

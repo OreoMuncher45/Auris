@@ -177,9 +177,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import com.music.bitchord.data.model.playerArtPx
-import com.music.bitchord.data.remote.RemoteArtworkStore
-import com.music.bitchord.ui.player.prefetchAutoMixArtwork
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
@@ -2264,7 +2261,6 @@ class PlaybackService : MediaLibraryService() {
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
             // The crossfade controller may use an end-of-item hold to hand off late.
             if (!playWhenReady && reason != Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM) {
-                crossfade?.cancelAutoMixVisual()
             }
             // usbdevfs has no AudioTrack to pause; the writer's own gate has
             // to follow the listener's transport state. playWhenReady stays
@@ -2392,7 +2388,6 @@ class PlaybackService : MediaLibraryService() {
          * broken app looks like from the outside.
          */
         override fun onPlayerError(error: PlaybackException) {
-            crossfade?.cancelAutoMixVisual()
             // The player this fired on, which is by definition the one the
             // session is currently pointed at.
             val exoPlayer = player ?: return
@@ -2402,7 +2397,6 @@ class PlaybackService : MediaLibraryService() {
         // Nothing follows the last track, so there is no transition to
         // pause on — the queue simply runs out and the timer is spent.
         override fun onPlaybackStateChanged(state: Int) {
-            if (state == Player.STATE_IDLE) crossfade?.cancelAutoMixVisual()
             // The player this fired on, which is by definition the one the
             // session is currently pointed at.
             val exoPlayer = player ?: return
@@ -2476,7 +2470,6 @@ class PlaybackService : MediaLibraryService() {
             // stage switches to that track on its own at the boundary.
             activeLoudness().nextMediaId = nextMediaIdOf(exoPlayer)
             if (reason == Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) {
-                crossfade?.checkAutoMixVisualTimeline(exoPlayer)
                 val activePending = synchronized(spotifyQueueAppendLock) {
                     pendingSpotifyQueueAppends.keys.toList()
                 }
@@ -3112,68 +3105,13 @@ class PlaybackService : MediaLibraryService() {
         }
     }
 
-    private var autoMixArtworkJob: Job? = null
-    private var autoMixArtworkGeneration: Long? = null
-
-    private fun allowsAutoMixArtwork(generation: Long, mini: Boolean = false): Boolean =
-        AppSettings.autoMixArtwork.value.allows(AppSettings.smartFadeEnabled.value, generation, mini)
-
-    private fun allowsAnyAutoMixArtwork(generation: Long): Boolean =
-        allowsAutoMixArtwork(generation) || allowsAutoMixArtwork(generation, mini = true)
-
-    /**
-     * Decodes the incoming track's cover as soon as a mix is armed, so the
-     * artwork transition starts from pixels already in memory. Nothing runs
-     * unless one of the two artwork switches is on. Ported from BitChord
-     * (without its Canvas lookup).
-     */
-    private fun prefetchAutoMixIncoming(item: MediaItem) {
-        autoMixArtworkJob?.cancel()
-        val coverGeneration = AutoMixVisualFeed.state.value?.takeIf {
-            it.phase == AutoMixVisualPhase.ARMED && allowsAnyAutoMixArtwork(it.generation)
-        }?.generation
-        autoMixArtworkGeneration = coverGeneration
-        if (coverGeneration == null) return
-        autoMixArtworkJob = scope.launch {
-            try {
-                val song = item.toSong()
-                val artUrl = song.thumbnailUrl ?: if (
-                    song.videoId.startsWith("webdav:") || song.videoId.startsWith("smb:")
-                ) {
-                    withContext(Dispatchers.IO) { RemoteArtworkStore.resolveArt(this@PlaybackService, song) }
-                } else {
-                    null
-                }
-                if (artUrl != null) {
-                    val metrics = resources.displayMetrics
-                    prefetchAutoMixArtwork(
-                        this@PlaybackService,
-                        artUrl,
-                        // The copy the player asks for on this screen, so the
-                        // prepared decode is the one it then reads.
-                        playerArtPx(metrics.widthPixels / metrics.density, metrics.density),
-                        coverGeneration,
-                        prepareCover = { allowsAutoMixArtwork(it) },
-                        prepareMiniCover = { allowsAutoMixArtwork(it, mini = true) },
-                    ) { generation ->
-                        AutoMixVisualFeed.pending(generation)?.phase == AutoMixVisualPhase.ARMED
-                    }
-                }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Log.w("BitChord", "Automix artwork prefetch failed", e)
-            }
-        }
-    }
-
     private fun createCrossfadeController() = CrossfadeController(
             scope,
             active = { requireNotNull(player) },
             standby = { requireNotNull(spare) },
             onHandoff = ::adoptPlayer,
             analysisFor = { item -> trackAnalyzer.analysisFor(item.mediaId) },
-            requestAnalysis = { item, durationMs ->
+            requestAnalysis = { item, durationMs, outgoing ->
                 // Nothing the eye cannot see is worth a decode. Off screen, or
                 // with the display off, an analysis pass is the largest thing
                 // this process would otherwise do — a full decode of a track's
@@ -3182,9 +3120,30 @@ class PlaybackService : MediaLibraryService() {
                 // analyser stays a plain object with no Android lifecycle in it.
                 if (com.music.bitchord.perf.AppAwake.isAwake()) {
                     item.localConfiguration?.uri?.let { uri ->
-                        trackAnalyzer.request(item.mediaId, uri, durationMs / 1000.0)
+                        trackAnalyzer.request(item.mediaId, uri, durationMs / 1000.0, outgoing)
                     }
                 }
+            },
+            // The panel's demand: the same work, asked for at the listener's
+            // request rather than the tick's, and with the cache's one-round
+            // guard set aside. The bytes go out even if a fetch for the same
+            // track is already in the air, because the lane the listener is
+            // looking at is worth a second fetch.
+            forceAnalysisFor = { item, durationMs, outgoing ->
+                if (com.music.bitchord.perf.AppAwake.isAwake()) {
+                    item.localConfiguration?.uri?.let { uri ->
+                        trackAnalyzer.force(item.mediaId, uri, durationMs / 1000.0, outgoing)
+                    }
+                }
+            },
+            // How far each track's analysis fetch has got. The panel's
+            // progress line: without it, "waiting" and "fetching" are the
+            // same word, and a fetch that takes several seconds over a slow
+            // connection looks like a hang.
+            analysisProgressFor = { item ->
+                item.localConfiguration?.uri?.let { uri ->
+                    trackAnalyzer.analysisProgress(uri)
+                } ?: 0f
             },
             // "Incoming" and "outgoing" here are session roles, not players:
             // the session player's sink and the spare's. The controller maps
@@ -3213,65 +3172,44 @@ class PlaybackService : MediaLibraryService() {
                     transitionFilterA.parkEcho()
                     transitionFilterB.parkEcho()
                 }
+
+                // The tone shape the listener chose for this song's handoff.
+                // It rides on the track that is arriving, so it is put on
+                // whichever sink that track is being written to.
+                override fun incomingEq(centerHz: Float, gainDb: Float) =
+                    activeFilter.setEq(centerHz, gainDb)
+
+                override fun outgoingEq(centerHz: Float, gainDb: Float) =
+                    spareFilter.setEq(centerHz, gainDb)
             },
             analysisRunningFor = { item -> trackAnalyzer.isAnalysing(item.mediaId) },
+            // Whether the result came from the track's opening only. The panel
+            // marks such an analysis as partial rather than showing it as the
+            // whole answer.
+            analysisProvisionalFor = { item -> trackAnalyzer.isProvisional(item.mediaId) },
             // The standby is still the spare when this runs — it only becomes
             // the session player at the handoff — so the incoming track is
             // levelled on its own sink before it renders a frame, and the
             // outgoing track keeps its own gain for the rest of the blend.
             onArmIncoming = { item, nextId -> spareLoudness().track(item.mediaId, nextId) },
-            onArmAutoMixIncoming = ::prefetchAutoMixIncoming,
             // Both sinks, not a role: the trim is about what the pair sums to.
             onBlendHeadroom = { trim ->
                 loudnessA.setBlendTrim(trim)
                 loudnessB.setBlendTrim(trim)
             },
             versionSwapActive = { versionSwapJob?.isActive == true || upgradeFadeActive },
-            // Each sink's loop-mix port rides on its transition filter, so the
-            // player and the port trade roles together at every handoff.
-            loopPortOf = { target ->
-                when {
-                    target === player -> activeFilter.loop
-                    target === spare -> spareFilter.loop
-                    else -> null
-                }
-            },
-            loopRegion = { item, durationMs, from, to, rate ->
-                item.localConfiguration?.uri?.let { uri ->
-                    trackAnalyzer.loopRegion(item.mediaId, uri, durationMs / 1000.0, from, to, rate)
-                }
-            },
-            syncedLines = ::loopMixLyrics,
-            loudnessGain = ::loudnessGainFor,
-            onMixPositionJump = { wrapped, fromMs ->
-                (mediaSession?.player as? SessionPlayer)?.announceMixPosition(wrapped, fromMs)
-            },
-        )
-
-    /**
-     * A track's synced lyrics for the loop mix, which lets a loop be vouched
-     * instrumental by when its lines are sung rather than by the vocal model.
-     * Only with synced lyrics switched on, and never for longer than
-     * [LOOP_MIX_LYRICS_TIMEOUT_MS]: the mask stands in for whatever doesn't come.
-     */
-    private suspend fun loopMixLyrics(item: MediaItem, durationMs: Long): List<LyricLine>? {
-        if (!AppSettings.syncedLyrics.value) return null
-        val song = item.toSong()
-        return kotlinx.coroutines.withTimeoutOrNull(LOOP_MIX_LYRICS_TIMEOUT_MS) {
-            // Only timed lines say when a loop is sung; the file's plain words can't.
-            song.localUri?.let { EmbeddedLyrics.forUri(this@PlaybackService, it) }
-                ?.takeIf(EmbeddedLyrics::isSynced)
-                ?: LyricsRepository.lyrics(
-                    videoId = song.videoId,
-                    title = song.title,
-                    artist = song.artist,
-                    durationMs = durationMs,
-                    album = song.albumName,
-                    sources = AppSettings.lyricsSources.value,
-                    order = AppSettings.lyricsSourceOrder.value,
-                )?.lines
+        ).also { controller ->
+            // The Automix panel's preview. Installed here rather than at the
+            // call site so that the handler always belongs to the controller
+            // that is actually playing, whichever one that is.
+            AutomixPreview.install { start -> controller.previewAutomix(start) }
+            // The panel's other request: the analysis it is waiting on, now.
+            // The engine already analyses the pair in the background, on its
+            // own schedule; this is the listener asking for the bytes to be
+            // on their way the moment they open the panel, because both lanes
+            // are on screen and they are looking at them.
+            AutomixAnalysisDemand.install { controller.forceAnalysis() }
         }
-    }
 
     /** Favorite and Shuffle: the only actions shown on the phone notification. */
     private fun notificationButtons(): List<CommandButton> {
@@ -4753,7 +4691,6 @@ class PlaybackService : MediaLibraryService() {
     }
 
     private fun toggleShuffleFromSession() {
-        crossfade?.cancelAutoMixVisual()
         player?.let(QueueShuffle::toggle)
         refreshCustomLayouts()
     }
@@ -8771,6 +8708,11 @@ class PlaybackService : MediaLibraryService() {
                     mediaId = item.mediaId,
                     target = TrackMatcher.targetOf(item.toSong()),
                     uri = item.localConfiguration?.uri,
+                    // The runtime, from the timeline window when the player has
+                    // one and from the item's own claim otherwise — the same
+                    // pair [claimedDurationMs] reads. Read-ahead sizes a
+                    // source-backed track's analysis opening from it.
+                    durationMs = item.claimedDurationMs(),
                 )
             },
         )
@@ -9820,19 +9762,6 @@ class PlaybackService : MediaLibraryService() {
 
     private fun observeSettings() {
         scope.launch {
-            AppSettings.smartFadeEnabled.collect { enabled ->
-                if (!enabled) crossfade?.cancelAutoMixVisual()
-            }
-        }
-        scope.launch {
-            AppSettings.autoMixArtwork.collect {
-                if (autoMixArtworkGeneration?.let { !allowsAnyAutoMixArtwork(it) } == true) {
-                    autoMixArtworkJob?.cancel()
-                    autoMixArtworkGeneration = null
-                }
-            }
-        }
-        scope.launch {
             AppSettings.skipSilence.collect { on -> eachPlayer { it.skipSilenceEnabled = on } }
         }
         scope.launch {
@@ -10612,7 +10541,6 @@ class PlaybackService : MediaLibraryService() {
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
         if (AppSettings.stopOnTaskRemoved.value) {
-            crossfade?.cancelAutoMixVisual()
             // A receiver left playing with nothing on the phone to drive it
             // would run out its few queued tracks and stop on its own anyway;
             // better to say so now than leave the TV on a casting screen.
@@ -10626,7 +10554,6 @@ class PlaybackService : MediaLibraryService() {
 
 
     override fun onDestroy() {
-        crossfade?.cancelAutoMixVisual()
         ProcessLifecycleOwner.get().lifecycle.removeObserver(discordIdleObserver)
         // Let go of the receiver's player but leave its session alone: a
         // service that idles out while casting is not the listener choosing to
@@ -10836,7 +10763,7 @@ class PlaybackService : MediaLibraryService() {
         val exoPlayer = player ?: return
         val currentSong = exoPlayer.currentMediaItem?.toSong() ?: return
         val lines = serviceLyrics
-        val pos = crossfade?.loopPositionMs() ?: exoPlayer.currentPosition
+        val pos = exoPlayer.currentPosition
         val subtitleText = if (lines != null && lines.isNotEmpty() && AppSettings.syncedLyrics.value) {
             val idx = lines.indexOfLast { it.timeMs <= pos }
             val currentLine = lines.getOrNull(idx)
@@ -10968,43 +10895,11 @@ class PlaybackService : MediaLibraryService() {
 
         override fun getPlaybackState() = if (cast.active) cast.playbackState else super.getPlaybackState()
 
-        // During a loop mix the song loops and follows the tempo ramp, so its
-        // playhead is the mix's own, not the player's: the seek bar, the
-        // lyrics and every controller read it here.
         override fun getCurrentPosition() =
-            if (cast.active) cast.positionMs else crossfade.loopPositionMs() ?: super.getCurrentPosition()
+            if (cast.active) cast.positionMs else super.getCurrentPosition()
 
         override fun getContentPosition() =
-            if (cast.active) cast.positionMs else crossfade.loopPositionMs() ?: super.getContentPosition()
-
-        /**
-         * Re-anchors every controller on the loop mix's playhead. A wrap is a
-         * deliberate jump back, announced as one (the lyrics follow it); a
-         * re-anchor through the ramp is reported moving forward, so nothing
-         * reads it as a seek.
-         */
-        fun announceMixPosition(wrapped: Boolean, fromMs: Long) {
-            val now = currentPosition
-            // A wrap starts where the loop clock was just before it, which is
-            // what makes it read as the jump back it is.
-            val before = if (wrapped && fromMs >= 0) fromMs else (now - 1).coerceAtLeast(0L)
-            fun info(position: Long) = Player.PositionInfo(
-                null,
-                currentMediaItemIndex,
-                currentMediaItem,
-                null,
-                currentPeriodIndex,
-                position,
-                position,
-                C.INDEX_UNSET,
-                C.INDEX_UNSET,
-            )
-            val old = info(before)
-            val new = info(now)
-            listeners.forEach { it.onPositionDiscontinuity(old, new, Player.DISCONTINUITY_REASON_INTERNAL) }
-            val events = Player.Events(FlagSet.Builder().add(Player.EVENT_POSITION_DISCONTINUITY).build())
-            listeners.forEach { it.onEvents(this, events) }
-        }
+            if (cast.active) cast.positionMs else super.getContentPosition()
 
         override fun getBufferedPosition() = if (cast.active) cast.positionMs else super.getBufferedPosition()
 
@@ -11181,7 +11076,6 @@ class PlaybackService : MediaLibraryService() {
         // is the listener's own business, and the lifecycle paths that call it
         // are not asking to move the party.
         override fun stop() {
-            crossfade.cancelAutoMixVisual()
             if (locked()) { super.stop(); return }
             onUserIntent()
             super.stop()
@@ -11229,7 +11123,6 @@ class PlaybackService : MediaLibraryService() {
 
         /** A pause, seek or queue edit the listener made: no AutoMix artwork reveal survives it. */
         private fun onAutoMixInterruptingIntent() {
-            crossfade.cancelAutoMixVisual()
             onUserIntent()
         }
 
@@ -13766,8 +13659,6 @@ class PlaybackService : MediaLibraryService() {
         const val MEDIA_LOCAL_MUSIC_ID = "local_music"
         /** How often the sleep timer's fade-out steps the volume: ten a second is smooth to the ear. */
         const val FADE_STEP_MS = 100L
-        /** How long the loop mix waits for a track's lyrics before standing in a mask. */
-        const val LOOP_MIX_LYRICS_TIMEOUT_MS = 10_000L
         const val MAX_AUTO_PAGE_SIZE = 50
         /**
          * The most a client can ask for in one page. Far above what any

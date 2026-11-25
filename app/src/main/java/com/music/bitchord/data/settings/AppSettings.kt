@@ -28,8 +28,6 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import com.music.bitchord.playback.SingMethod
-import com.music.bitchord.playback.AutoMixVisualFeed
-import com.music.bitchord.ui.player.AutoMixArtworkPreferences
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -339,15 +337,6 @@ object AppSettings {
     val smartFadeEnabled = MutableStateFlow(false)
 
     /**
-     * Whether Automix's artwork transitions run in the full player and the
-     * mini player, plus the in-memory fences that keep a mix already under way
-     * from picking one up half way through when either is switched. Both off
-     * by default: Automix's audio does not depend on them. Ported from BitChord.
-     */
-    private val _autoMixArtwork = MutableStateFlow(AutoMixArtworkPreferences())
-    val autoMixArtwork = _autoMixArtwork.asStateFlow()
-
-    /**
      * Turns the music down over the sleep timer's last 30 seconds instead of
      * stopping it mid-phrase — see [com.music.bitchord.playback.SleepTimer.fadeVolume].
      * Off by default, so a timer behaves as it always has until asked.
@@ -409,6 +398,15 @@ object AppSettings {
      */
     val homeProvider = MutableStateFlow(HomeProvider.YOUTUBE)
 
+    /**
+     * The transition planner Automix runs.
+     *
+     * Pinned to the phrase-aware engine: the legacy plan it replaced is gone,
+     * so there is nothing to switch back to. Kept as a setting because the
+     * plan reads it, and because an install that still has the old engine
+     * name in its preferences has to land somewhere that resolves.
+     */
+    val automixEngine = MutableStateFlow(AutomixEngine.V2)
     val skipSilence = MutableStateFlow(false)
 
     /** Requested PCM representation at the Android AudioTrack boundary. */
@@ -1474,23 +1472,6 @@ object AppSettings {
      */
     val smartMixBlend = MutableStateFlow<MixBlend?>(null)
 
-    /** The Automix blend in flight laid out for the mix popup, or null between blends. */
-    val smartMixView = MutableStateFlow<MixTransitionView?>(null)
-
-    /** How far through [smartMixView]'s blend playback is, 0..1. Read it in draw. */
-    val smartMixProgress = MutableStateFlow(0f)
-
-    /**
-     * The *next* Automix transition laid out for the mix popup, as the plan
-     * stands right now — for a popup opened by hand from the player's menu
-     * between blends. Only published while [mixViewOpen], and null whenever
-     * [smartMixView] has a blend to show instead.
-     */
-    val smartMixPreview = MutableStateFlow<MixTransitionView?>(null)
-
-    /** The mix popup is up. Written by the player; tells the crossfade controller someone is looking. */
-    val mixViewOpen = MutableStateFlow(false)
-
     /**
      * True while a version switch is fetching and analysing the other cut
      * before playback actually moves. Drains into the loading bar drawn along
@@ -1507,6 +1488,16 @@ object AppSettings {
      * that knows which two tracks the next transition is between.
      */
     val smartAnalysis = MutableStateFlow(SmartAnalysis())
+
+    /**
+     * Everything the Automix panel shows: the analysis in full, the plan that
+     * came out of it, and the listener's own choice for this track.
+     *
+     * Published by the crossfade controller, which is the only thing that
+     * knows which two tracks the next transition is between and what the
+     * planner made of them.
+     */
+    val automixPanel = MutableStateFlow(AutomixPanelState())
 
     /**
      * Where on the *playing* track the next transition is planned to happen, as
@@ -1650,10 +1641,11 @@ object AppSettings {
         offlineModeFlow.value =
             runCatching { prefs.getBoolean(KEY_OFFLINE_MODE, false) }.getOrDefault(false)
         com.music.bitchord.data.spotify.LocalPlaylistStore.init(context)
-        // Once, on the first launch with BitChord's Automix engine: the old
-        // engine's analysis store and profiles go, and its engine switch with
-        // them. Before [readAll], so nothing reads a key that is on its way out.
-        com.music.bitchord.playback.smart.AutomixMigration.run(prefs, context.filesDir)
+        // The listener's own Automix choices, kept with the songs. Initialized
+        // here because this is the first point at which the app has a place to
+        // keep files, and a choice that forgets itself when the app closes is
+        // not a choice.
+        com.music.bitchord.playback.AutomixProfiles.init(context.filesDir)
         readAll()
         watchConnection(context)
         // The offline verdict, published to the one place every request in the
@@ -1728,10 +1720,6 @@ object AppSettings {
         downloadLikedSongs.value = prefs.getBoolean(KEY_DOWNLOAD_LIKED_SONGS, false)
         crossfadeSeconds.value = prefs.getInt(KEY_CROSSFADE, 0)
         smartFadeEnabled.value = prefs.getBoolean(KEY_SMART_FADE, false)
-        _autoMixArtwork.value = AutoMixArtworkPreferences(
-            artTransition = prefs.getBoolean(KEY_AUTOMIX_ART_TRANSITION, false),
-            miniPlayerTransition = prefs.getBoolean(KEY_AUTOMIX_MINI_ART_TRANSITION, false),
-        )
         sleepTimerFadeOut.value = prefs.getBoolean(KEY_SLEEP_TIMER_FADE_OUT, false)
         seamlessQualityUpgrade.value = prefs.getBoolean(KEY_SEAMLESS_QUALITY_UPGRADE, false)
         youtubePremiumAudio.value = prefs.getBoolean(KEY_YOUTUBE_PREMIUM_AUDIO, false)
@@ -1744,6 +1732,13 @@ object AppSettings {
         // An unknown name lands on YouTube rather than on nothing: the provider
         // a listener never chose is the one that works without an account.
         homeProvider.value = HomeProvider.of(prefs.getString(KEY_HOME_PROVIDER, null))
+        // An install that still has the removed engine's name in its
+        // preferences fails the lookup and lands on the one engine there is.
+        automixEngine.value = runCatching {
+            AutomixEngine.valueOf(
+                prefs.getString(KEY_AUTOMIX_ENGINE, null) ?: AutomixEngine.V2.name,
+            )
+        }.getOrDefault(AutomixEngine.V2)
         skipSilence.value = prefs.getBoolean(KEY_SKIP_SILENCE, false)
         outputPcmMode.value = runCatching {
             OutputPcmMode.valueOf(
@@ -2263,47 +2258,16 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_WIFI_ONLY_DOWNLOADS, value).apply()
     }
 
+    fun setSmartFadeEnabled(value: Boolean) {
+        smartFadeEnabled.value = value
+        prefs.edit().putBoolean(KEY_SMART_FADE, value).apply()
+    }
+
     fun setCrossfadeSeconds(value: Int) {
         crossfadeSeconds.value = value
         prefs.edit().putInt(KEY_CROSSFADE, value).apply()
     }
 
-    fun setSmartFadeEnabled(value: Boolean) {
-        if (smartFadeEnabled.value != value) {
-            val previous = _autoMixArtwork.value
-            _autoMixArtwork.value = previous.copy(
-                skipArtworkThrough = artworkCutoff(previous.skipArtworkThrough),
-                skipMiniThrough = artworkCutoff(previous.skipMiniThrough),
-            )
-        }
-        smartFadeEnabled.value = value
-        prefs.edit().putBoolean(KEY_SMART_FADE, value).apply()
-    }
-
-    fun setAutoMixArtTransition(value: Boolean) {
-        val previous = _autoMixArtwork.value
-        if (previous.artTransition == value) return
-        _autoMixArtwork.value = previous.copy(
-            artTransition = value,
-            skipArtworkThrough = artworkCutoff(previous.skipArtworkThrough),
-        )
-        prefs.edit().putBoolean(KEY_AUTOMIX_ART_TRANSITION, value).apply()
-    }
-
-    fun setAutoMixMiniPlayerTransition(value: Boolean) {
-        val previous = _autoMixArtwork.value
-        if (previous.miniPlayerTransition == value) return
-        _autoMixArtwork.value = previous.copy(
-            miniPlayerTransition = value,
-            skipMiniThrough = artworkCutoff(previous.skipMiniThrough),
-        )
-        prefs.edit().putBoolean(KEY_AUTOMIX_MINI_ART_TRANSITION, value).apply()
-    }
-
-    // At either edge, skip the generation already in flight. Even a rapid
-    // off/on round trip cannot revive the artwork on a renderer just mounting.
-    private fun artworkCutoff(previous: Long): Long =
-        maxOf(previous, AutoMixVisualFeed.state.value?.generation ?: 0L)
 
     fun setSleepTimerFadeOut(value: Boolean) {
         sleepTimerFadeOut.value = value
@@ -2346,6 +2310,17 @@ object AppSettings {
      * [com.music.bitchord.util.AppRelaunch] — because a settings write has no
      * business killing the process behind the screen that called it.
      */
+    /**
+     * Records the engine in the preferences.
+     *
+     * The only engine is the phrase-aware one, so this writes what it is
+     * given and nothing can be moved off it.
+     */
+    fun setAutomixEngine(value: AutomixEngine) {
+        automixEngine.value = value
+        prefs.edit().putString(KEY_AUTOMIX_ENGINE, value.name).apply()
+    }
+
     fun setHomeProvider(value: HomeProvider) {
         homeProvider.value = value
         // Committed, not applied: the caller restarts the process as soon as
@@ -3469,9 +3444,6 @@ object AppSettings {
         "downloaded_collections",
         KEY_LOCAL_MUSIC_FOLDER_URI,
         KEY_LAST_VERSION_CODE,
-        // Whether this install's old Automix store has been cleared: a backup
-        // from before the move would otherwise run it again over the new one.
-        com.music.bitchord.playback.smart.AutomixMigration.KEY_DONE,
         // Which stretch of this phone's listening the Replay was left on.
         KEY_REPLAY_PERIOD,
     )
@@ -3522,6 +3494,7 @@ object AppSettings {
     private const val KEY_AUTO_UPGRADE_LOCAL_STORAGE = "auto_upgrade_local_storage"
     private const val KEY_AUTOMIX_PERFORMANCE_MODE = "automix_performance_mode"
     private const val KEY_HOME_PROVIDER = "home_provider"
+    private const val KEY_AUTOMIX_ENGINE = "automix_engine"
     private const val KEY_SKIP_SILENCE = "skip_silence"
     private const val KEY_OUTPUT_PCM_MODE = "output_pcm_mode"
     private const val KEY_BIT_PERFECT = "bit_perfect"

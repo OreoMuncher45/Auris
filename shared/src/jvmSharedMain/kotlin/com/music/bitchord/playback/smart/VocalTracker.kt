@@ -95,7 +95,7 @@ class VocalTracker(
      *
      * A path rather than a [Context]: this is the only thing the tracker ever
      * wanted the platform for, and each application already knows how to put
-     * its own copy of the weights somewhere readable — downloaded on first use on
+     * its own copy of the weights somewhere readable — unpacked from assets on
      * Android, from the jar's resources on the desktop.
      */
     private val modelPath: () -> String,
@@ -104,9 +104,6 @@ class VocalTracker(
 ) {
 
     @Volatile private var session: OrtSession? = null
-
-    /** The options [session] was opened with: native memory of their own, closed after it. */
-    @Volatile private var sessionOptions: OrtSession.SessionOptions? = null
     @Volatile private var sessionThreads = 0
     private val lock = Any()
 
@@ -117,41 +114,23 @@ class VocalTracker(
             session?.takeIf { sessionThreads == threads }?.let { return it }
             runCatching { session?.close() }
             session = null
-            runCatching { sessionOptions?.close() }
-            sessionOptions = null
             return runCatching {
-                val path = File(modelPath()).absolutePath
-                // Same fallback as BeatTracker, for the same reduced Android runtime.
-                runCatching { open(path, threads, OrtSession.SessionOptions.OptLevel.ALL_OPT) }
-                    .recoverCatching {
-                        AnalysisLog.warn("Vocal model failed at ALL_OPT; retrying at BASIC_OPT", it)
-                        open(path, threads, OrtSession.SessionOptions.OptLevel.BASIC_OPT)
-                    }
-                    .getOrThrow()
+                val file = File(modelPath())
+                val options = OrtSession.SessionOptions().apply {
+                    setIntraOpNumThreads(threads)
+                    setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
+                    // Same reasoning as BeatTracker: the arena retains every block it allocates for
+                    // the life of the session, which a backgrounded music player cannot justify.
+                    setCPUArenaAllocator(false)
+                    setMemoryPatternOptimization(false)
+                }
+                OrtEnvironment.getEnvironment().createSession(file.absolutePath, options)
                     .also {
                         session = it
                         sessionThreads = threads
                     }
             }.onFailure { AnalysisLog.warn("Vocal model unavailable; no mask will be produced", it) }
                 .getOrNull()
-        }
-    }
-
-    private fun open(path: String, threads: Int, level: OrtSession.SessionOptions.OptLevel): OrtSession {
-        val options = OrtSession.SessionOptions()
-        // Closed here if the session never opens, a setter that throws
-        // included; on success they belong with it.
-        return try {
-            options.setIntraOpNumThreads(threads)
-            options.setOptimizationLevel(level)
-            // Same reasoning as BeatTracker: the arena retains every block it allocates for
-            // the life of the session, which a backgrounded music player cannot justify.
-            options.setCPUArenaAllocator(false)
-            options.setMemoryPatternOptimization(false)
-            OrtEnvironment.getEnvironment().createSession(path, options).also { sessionOptions = options }
-        } catch (error: Throwable) {
-            runCatching { options.close() }
-            throw error
         }
     }
 
@@ -283,8 +262,6 @@ class VocalTracker(
         synchronized(lock) {
             runCatching { session?.close() }
             session = null
-            runCatching { sessionOptions?.close() }
-            sessionOptions = null
             sessionThreads = 0
         }
     }

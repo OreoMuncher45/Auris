@@ -123,7 +123,6 @@ class SettingsCatalogTest {
             "audio.seamless_quality_upgrades", "audio.auto_upgrade_local_storage",
             "audio.equalizer", "audio.jamesdsp",
             "playback.prefer_music_only", "playback.crossfade", "playback.automix",
-            "playback.automix_art_transition", "playback.automix_mini_art_transition", "playback.automix_model",
             "playback.automix_performance", "playback.skip_silence",
             "playback.spatial_audio", "playback.simulated_atmos", "playback.smart_version_alignment",
             "playback.play_next_on_swipe", "playback.dont_repeat_songs", "playback.stop_music_on_close",

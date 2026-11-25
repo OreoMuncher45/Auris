@@ -30,14 +30,17 @@ import com.music.bitchord.data.settings.LastPlayerScreen
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.playback.AudioOutputStatus
-import com.music.bitchord.playback.AutoMixVisualFeed
 import com.music.bitchord.playback.AudioRouting
 import com.music.bitchord.playback.audio.ListenerVolumePolicy
 import com.music.bitchord.playback.audio.MediaVolumeProbe
+import com.music.bitchord.playback.AutomixAnalysisDemand
+import com.music.bitchord.playback.AutomixPreview
+import com.music.bitchord.playback.AutomixProfiles
 import com.music.bitchord.playback.QueueSearch
 import com.music.bitchord.playback.youtubeSeedFor
 import com.music.bitchord.playback.QueueSuggestion
 import com.music.bitchord.playback.cast.CastController
+import com.music.bitchord.playback.smart.AutomixOverride
 import dev.chrisbanes.haze.HazeState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -62,18 +65,6 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
     private val app = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val main = Handler(Looper.getMainLooper())
-
-    override val autoMixVisualState get() = AutoMixVisualFeed.state
-
-    override fun onAutoMixScrubIntent() = AutoMixVisualFeed.cancel()
-
-    @Composable
-    override fun autoMixIncomingReveal(
-        eased: () -> Float,
-        reducedMotion: () -> Boolean,
-        generation: Long,
-        blur: Boolean,
-    ): Modifier = androidAutoMixIncomingReveal(eased, reducedMotion, generation, blur)
 
     override val settings: PlayerSettingsSource = object : PlayerSettingsSource {
         override val animatedCanvas get() = AppSettings.animatedCanvas
@@ -107,8 +98,8 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
         override val showLosslessBadge get() = AppSettings.showLosslessBadge
         override val showHiResBadge get() = AppSettings.showHiResBadge
         override val smartAnalysis get() = AppSettings.smartAnalysis
+        override val automixPanel get() = AppSettings.automixPanel
         override val smartFadeEnabled get() = AppSettings.smartFadeEnabled
-        override val autoMixArtwork get() = AppSettings.autoMixArtwork
         override val smartMixInProgress get() = AppSettings.smartMixInProgress
         override val smartMixBlend get() = AppSettings.smartMixBlend
         override val smartTransitionWindow get() = AppSettings.smartTransitionWindow
@@ -124,6 +115,24 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
         override fun setZoomOutAlbumArt(value: Boolean) = AppSettings.setZoomOutAlbumArt(value)
         override fun setBackdropOverlay(value: Boolean) = AppSettings.setBackdropOverlay(value)
 
+        // The listener's own choice, kept with the song. The store is the
+        // one place it lives, so the panel and the planner cannot disagree
+        // about what was chosen.
+        override fun setAutomixProfile(trackId: String, override: AutomixOverride) =
+            AutomixProfiles.set(trackId, override)
+
+        override fun clearAutomixProfile(trackId: String) = AutomixProfiles.clear(trackId)
+
+        // The panel's preview of the transition. The engine that can play it
+        // lives in the playback service, which leaves a handler for the panel
+        // to ask.
+        override fun previewAutomix(start: Boolean) = AutomixPreview.request(start)
+
+        // The panel's demand for the analysis it is waiting on. The engine
+        // that can fetch and measure it lives in the playback service, which
+        // leaves a handler for the panel to ask — the same arrangement as the
+        // preview above.
+        override fun forceAutomixAnalysis() = AutomixAnalysisDemand.request()
     }
 
     override fun cachedCanvas(song: Song): CanvasArtwork? = CanvasRepository.cached(song)

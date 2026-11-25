@@ -305,8 +305,6 @@ internal fun BoxScope.PortraitSleeve(
     onDismissBandTop: (Float) -> Unit,
     /** The Best Part pill, over the foot of the artwork; see [BestPartPill]. */
     bestPart: @Composable (Modifier) -> Unit = {},
-    /** The Automix reveal's pictures for the playing track, or null; see [AutoMixCoverState]. */
-    autoMixFrames: () -> AutoMixCoverFrames? = { null },
     /** The one-shot conversion offer, above the artwork's pinned stats. */
     convertToVideo: @Composable (Modifier) -> Unit = {},
 ) {
@@ -508,12 +506,6 @@ internal fun BoxScope.PortraitSleeve(
                 )
             }
         }
-        // The Automix reveal, when one is running or has just finished: the
-        // outgoing and incoming covers, drawn in the picture's place with the
-        // same crop, zoom and corners. The cover's own request stays mounted
-        // underneath, so it goes on loading and [PlayerArtwork.loaded] goes on
-        // flipping, but is not drawn under pictures that cover it.
-        val mixFrames = autoMixFrames()
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -722,13 +714,8 @@ internal fun BoxScope.PortraitSleeve(
                 // or otherwise; the request stays mounted so
                 // loading still finishes in the background and
                 // [PlayerArtwork.loaded] still flips the moment it does.
-                modifier = Modifier
-                    .fillMaxSize()
-                    .drawWithContent { if (mixFrames == null) drawContent() },
+                modifier = Modifier.fillMaxSize(),
             )
-            if (mixFrames != null) {
-                AutoMixCover(mixFrames, Modifier.fillMaxSize(), blur = true) {}
-            }
             // The YouTube music video, when this row is one: the album art, the
             // animated cover and the Canvas all stand down, the blurred backdrop
             // stays, and the picture sits in the sleeve's own square with its

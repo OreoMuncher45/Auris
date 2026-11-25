@@ -1,5 +1,6 @@
 <resources>
     <string name="app_name">Auris</string>
+    <string name="automix_analysis_menu">Automix-Analyse</string>
     <string name="playback_channel_name">Wird wiedergegeben</string>
     <string name="download_channel_name">Downloads</string>
     <string name="download_channel_description">Songs, die in deinem Musikordner gespeichert werden</string>

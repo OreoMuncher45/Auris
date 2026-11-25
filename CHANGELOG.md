@@ -7,6 +7,11 @@ Vassista PR stack carried on top. Generated from the combined branch; not a rele
 
 ## This build — the 3.4 test draft
 
+- **Auris 3.2's Automix is back, including its analysis.** The phrase-aware transition engine, track analyser,
+  analysis panel and editor, per-song profiles, forced analysis and transition preview are restored from
+  `release/v3.2-stable-final`; the long-press seek-window entry and the song menu's **Automix analysis** row are
+  back too. BitChord's replacement engine leaves with it: no loop mix, Automix cover reveal or ambient-backdrop
+  mix, and no separate model-download row. The 3.2 Beat This model is packaged in the APK again.
 - **Spotify comes to Android Auto.** The open **#103** has been merged: Android Auto now browses your **Spotify
   playlists**, **albums** and **artists**, the **Daylist**, and Home's
   recommendations, and plays them in the car; a Spotify queue handed to the

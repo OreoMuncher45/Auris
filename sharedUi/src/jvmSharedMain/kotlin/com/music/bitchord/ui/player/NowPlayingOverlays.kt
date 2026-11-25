@@ -87,6 +87,8 @@ internal fun PlayerOverlays(
     onSelectLyricsProvider: (LyricsSource) -> Unit,
     lyricsOffsetOpen: Boolean,
     onDismissLyricsOffset: () -> Unit,
+    automixPanelOpen: Boolean,
+    onAutomixPanelOpenChange: (Boolean) -> Unit,
     onAddToQueue: (Song) -> Unit,
     onPlayNext: (Song) -> Unit,
 ) {
@@ -139,6 +141,12 @@ internal fun PlayerOverlays(
         LyricsOffsetSheet(
             hazeState = hazeState,
             onDismiss = onDismissLyricsOffset,
+        )
+    }
+    if (automixPanelOpen) {
+        AutomixPanelSheet(
+            hazeState = hazeState,
+            onDismiss = { onAutomixPanelOpenChange(false) },
         )
     }
     overlays.lyricsShare?.let { request ->
@@ -196,6 +204,8 @@ internal fun PlayerBackHandlers(
     overlays: PlayerOverlayState,
     lyricsOffsetOpen: Boolean,
     onDismissLyricsOffset: () -> Unit,
+    automixPanelOpen: Boolean,
+    onAutomixPanelOpenChange: (Boolean) -> Unit,
     lyricPicker: LyricsPicker,
 ) {
     // Back out of the lyrics panel to the player, and only from the player
@@ -232,6 +242,8 @@ internal fun PlayerBackHandlers(
     PlayerBackHandler(enabled = overlays.cast) { overlays.cast = false }
 
     PlayerBackHandler(enabled = lyricsOffsetOpen, onBack = onDismissLyricsOffset)
+
+    PlayerBackHandler(enabled = automixPanelOpen) { onAutomixPanelOpenChange(false) }
 
     // Both of these sit ahead of [lyricsOpen]'s own handler — see the note on
     // the queue above — because both are drawn *over* the panel rather than
