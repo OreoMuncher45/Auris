@@ -296,6 +296,11 @@ object Innertube {
         val pageId: String?,
         val authUser: String,
         val clientVersion: String?,
+        /**
+         * The shell's session-bound visitor id, when this scope was fetched;
+         * installed with the scope or not at all — see [ensureSessionScope].
+         */
+        val visitorData: String? = null,
     )
 
     @Volatile
@@ -451,9 +456,39 @@ object Innertube {
         val visitorData: String?,
     )
 
-    private fun requestCredentials(): RequestCredentials = synchronized(identityLock) {
+    /**
+     * The listener a request must go out as, set by [asListener]. Carried in
+     * the coroutine context so [requestCredentials] can check it in the same
+     * locked read that takes the credentials.
+     */
+    private class ExpectedListener(val listener: String?) :
+        kotlin.coroutines.AbstractCoroutineContextElement(Key) {
+        companion object Key : kotlin.coroutines.CoroutineContext.Key<ExpectedListener>
+    }
+
+    /** Thrown when a request bound by [asListener] would go out as another listener. */
+    class ListenerChangedException : IllegalStateException("the account changed before the request was sent")
+
+    /**
+     * Runs [block] with its requests bound to [listener]: a request whose
+     * credentials, read under [identityLock], belong to anyone else fails
+     * with [ListenerChangedException] instead of being sent.
+     */
+    suspend fun <T> asListener(listener: String?, block: suspend () -> T): T =
+        kotlinx.coroutines.withContext(ExpectedListener(listener)) { block() }
+
+    private suspend fun requestCredentials(): RequestCredentials {
+        val expected = kotlinx.coroutines.currentCoroutineContext()[ExpectedListener]
+        return synchronized(identityLock) {
+            if (expected != null && published.listener != expected.listener) throw ListenerChangedException()
+            snapshotCredentials()
+        }
+    }
+
+    /** Callers hold [identityLock]. */
+    private fun snapshotCredentials(): RequestCredentials {
         val session = scope
-        RequestCredentials(cookie, authUserFor(session), pageIdFor(session), dataSyncIdFor(session), visitorData)
+        return RequestCredentials(cookie, authUserFor(session), pageIdFor(session), dataSyncIdFor(session), visitorData)
     }
 
     /**
@@ -494,6 +529,10 @@ object Innertube {
                     val installed = synchronized(identityLock) {
                         if (cookie != session || scope != null) return@synchronized false
                         scope = fresh
+                        fresh.visitorData?.let {
+                            visitorData = it
+                            visitorDataIsSessionBound = true
+                        }
                         // Its account index can be what the listener names.
                         refreshListener()
                         true
@@ -570,14 +609,11 @@ object Innertube {
         // pings are attributed against the visitor the player response was
         // issued to, so a signed-in play reported under an anonymous id is a
         // play reported about nobody.
-        CONFIG_VISITOR_DATA.find(html)?.groupValues?.get(1)
-            ?.takeIf { it.isNotBlank() }
-            ?.let {
-                visitorData = it
-                visitorDataIsSessionBound = true
-            }
+        // Returned, not installed: a scope the guard in [ensureSessionScope]
+        // rejects must not leave its visitor id behind either.
+        val shellVisitor = CONFIG_VISITOR_DATA.find(html)?.groupValues?.get(1)?.takeIf { it.isNotBlank() }
 
-        return SessionScope(dataSyncId, pageId, authUser ?: "0", clientVersion)
+        return SessionScope(dataSyncId, pageId, authUser ?: "0", clientVersion, shellVisitor)
     }
 
     private val CONFIG_LOGGED_IN = Regex(""""LOGGED_IN"\s*:\s*(true|false)""")
