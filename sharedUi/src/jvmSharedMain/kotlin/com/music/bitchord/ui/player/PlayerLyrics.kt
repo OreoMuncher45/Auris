@@ -1682,7 +1682,7 @@ internal fun LyricsPanel(
     val clock = rememberLyricClock(trackKey, playhead, isPlaying, active)
     val subReveal = rememberSubLyricsReveal(subLines, trackKey)
 
-    val isSynced = remember(lines) { lines.any { it.timeMs > 0L } }
+    val isSynced = remember(lines) { lines.any { it.isTimed } }
     // Only a song that actually names a second voice is laid out as one. A
     // single-voice song has every line on the left already, so splitting the
     // panel into lanes for it would just be a narrower panel.
@@ -2637,7 +2637,7 @@ private fun CurrentLyricLine(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val isSynced = remember(lines) { lines.any { it.timeMs > 0L } }
+    val isSynced = remember(lines) { lines.any { it.isTimed } }
     // A pinned lyric colour wins; otherwise the strip follows the player ink,
     // which is always a light tint of the sleeve's accent — see
     // [computeNowPlayingPalette].

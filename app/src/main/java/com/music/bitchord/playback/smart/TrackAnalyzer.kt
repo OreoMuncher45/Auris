@@ -224,7 +224,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             measuredCopies.remove(trackId)
             // A model-less result was never stored, so nothing restores it;
             // its record goes with it rather than pinning its curves in memory.
-            modelless.release(trackId) { results[it] }
+            modelless.release(trackId, headAttempts) { results[it] }
         }
     }
     private val running = ConcurrentHashMap.newKeySet<String>()
@@ -1973,7 +1973,9 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             // match: the copy it names is the matched YouTube copy.
             sourceAnalysisUris[trackId]
                 ?: results[trackId]?.measuredOn
-                    ?.let(AutomixAnalysisSource::videoIdOfAnalysisKey)
+                    // A bare video id is the canonical copy too; a source key
+                    // (`source|track`) names no YouTube copy.
+                    ?.let { key -> AutomixAnalysisSource.videoIdOfAnalysisKey(key) ?: key.takeIf(BARE_VIDEO_ID::matches) }
                     ?.let { Uri.parse(AutomixAnalysisSource.opusUri(it)) }
                 ?: return null
         }
@@ -2030,6 +2032,9 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
 
     private companion object {
         const val TAG = "BitChordTrackAnalyzer"
+
+        /** A YouTube video id on its own: how a canonical copy's key reads. */
+        val BARE_VIDEO_ID = Regex("[A-Za-z0-9_-]{11}")
 
         /** First wait before a failed catalogue search is retried; doubles per failure, to 16 minutes. */
         const val SOURCE_RETRY_BASE_MS = 30_000L
@@ -2185,8 +2190,19 @@ internal class ModellessResults {
      * describes: after an eviction. A newer record whose result is still
      * cached is kept.
      */
-    fun release(trackId: String, cached: (String) -> TrackAnalysis?) {
-        entries.computeIfPresent(trackId) { _, entry -> entry.takeIf { cached(trackId) === it.analysis } }
+    fun release(
+        trackId: String,
+        headAttempts: MutableMap<String, Long>? = null,
+        cached: (String) -> TrackAnalysis?,
+    ) {
+        entries.computeIfPresent(trackId) { _, entry ->
+            if (cached(trackId) === entry.analysis) return@computeIfPresent entry
+            // An evicted head result gives its prefix claim back too (only that
+            // exact claim, never a newer one), or the unchanged prefix that
+            // produced it would have to grow before it may be tried again.
+            if (entry.headPrefix != null && entry.copyKey != null) headAttempts?.remove(entry.copyKey, entry.headPrefix)
+            null
+        }
     }
 
     fun clear() = entries.clear()
