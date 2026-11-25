@@ -2810,9 +2810,10 @@ private fun CurrentLyricLine(
                 // The whole target, not the index alone: a source that swaps
                 // in a new version of the same line keeps its index, and the
                 // outgoing copy would glow alongside the incoming one. By
-                // reference — the target holds [current] itself — so the
-                // check costs nothing per frame.
-                val sung = itemIndex == index && lineItem === current && lineText == text
+                // reference first (the target usually holds [current] itself,
+                // at no cost per frame), then by value: a refresh can hand over
+                // an equal copy of the line, which must keep its glow.
+                val sung = itemIndex == index && (lineItem === current || lineItem == current) && lineText == text
                 SweptLyricLine(
                     line = swept,
                     clock = clock,
