@@ -61,17 +61,6 @@ Android only. No ads, no telemetry, no account required, no "Pro" tier.
 
 Auris ranks sources itself: your addons first, then JioSaavn if you opt in, then YouTube Music as the fallback. Each addon has a health check and reports stream refusals on its own row instead of failing silently.
 
-For Example:
-
-| Addon | What it does |
-|---|---|
-| **Auris Addon** | Hi-Fi FLAC through community instances, with automatic failover and a refreshed instance list. |
-| **Auris Hi-Res Lossless Addon** | Direct FLAC files at measured quality — no converter, no account, no waiting. |
-
-Those two names belong to the sources Auris ships, and only those are permanent. **Anything you add yourself stays yours**: it is listed under its own name or host, and it can always be deleted — including links that happen to speak one of the built-in protocols. Adding an addon never creates a second "Auris" row.
-
-> **Why the addons aren't named after their backends:** they run on volunteers' servers and free tiers. Naming them draws traffic, and traffic gets things rate-limited or shut down. The endpoints, fallbacks and setup steps are all in the source for anyone who wants to look.
-
 ## Download
 
 Grab the latest signed APK from the [Releases](https://github.com/OreoMuncher45/BitChordNext/releases) page. Current build: **2.2.17** (`versionCode 79`, package `com.dev.bitchord`).
@@ -130,6 +119,7 @@ u1z9k30yyvy63f5w0jypt02kvvw6dcpcgprlhzmsgc57mw6qc8rtuc5tfd9ny4atqhr448udexhkuc8x
 ## Credits & license
 
 - **BitChord** by [kushagra](https://github.com/kushagrasinghx) — the app this fork is built on. If you redistribute Auris, keep that credit.
+- **JamesDSP** by [James Fung](https://github.com/james34602/JamesDSPManager)
 - Everyone whose libraries and community services make the addons possible.
 - Third-party components and their licences are listed in [NOTICE](NOTICE).
 
