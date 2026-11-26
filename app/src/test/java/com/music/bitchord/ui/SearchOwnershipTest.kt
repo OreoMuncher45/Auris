@@ -135,4 +135,21 @@ class SearchOwnershipTest {
         // Published (or failed) while still owned: released as always.
         assertTrue(loadMoreReleasesFlag(settledWhileOwned = true, stillShown = false, ownsNow = true))
     }
+
+    @Test
+    fun `a shown search whose load-more lost ownership is reissued and can page again`() {
+        val shown = ownership.issue(SearchFilter.LIBRARY)
+        generation++ // credentials moved under it; no newer search
+        // Its continuation would fail ownership from here on...
+        assertFalse(ownership.owns(shown))
+        // ...so it is reissued, not merely unblocked,
+        assertTrue(shouldReissueSearch(ownership.owns(shown), ownership.isNewest(shown)))
+        // and the reissued search's ticket owns, so its pages publish again.
+        val reissued = ownership.issue(SearchFilter.LIBRARY)
+        assertTrue(ownership.owns(reissued))
+        // A newer search started meanwhile is left alone: the old one is not reissued.
+        val older = ownership.issue(SearchFilter.LIBRARY)
+        ownership.issue(SearchFilter.LIBRARY)
+        assertFalse(shouldReissueSearch(ownership.owns(older), ownership.isNewest(older)))
+    }
 }
