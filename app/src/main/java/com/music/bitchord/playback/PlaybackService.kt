@@ -7917,16 +7917,47 @@ class PlaybackService : MediaLibraryService() {
                         // The receiver is what is playing, and the phone's
                         // player is held paused: the fade is the song's own
                         // volume on the receiver, put back after the pause.
-                        SleepTimer.fadeOutCast(
+                        val fade = SleepTimer.fadeOutCast(
                             volume = if (fadeMs > 0) castPlayback.streamVolume() else null,
                             spanMs = deadline - SystemClock.elapsedRealtime(),
                             stepMs = SleepTimer.CAST_FADE_STEP_MS,
                             now = SystemClock::elapsedRealtime,
-                            stillPlaying = { castPlayback.active && castPlayback.playWhenReady },
-                            pause = castPlayback::pause,
+                            castActive = { castPlayback.active },
+                            playing = { castPlayback.playWhenReady },
+                            pause = castPlayback::pauseAndConfirm,
                         )
-                        SleepTimer.cancel()
-                        return@collectLatest
+                        when (fade) {
+                            SleepTimer.CastFade.PAUSED -> {
+                                SleepTimer.cancel()
+                                return@collectLatest
+                            }
+                            SleepTimer.CastFade.PAUSE_FAILED -> {
+                                TrackLog.d("BitChordSleepTimer", "the Cast receiver never confirmed the sleep timer's pause")
+                                SleepTimer.cancel()
+                                return@collectLatest
+                            }
+                            // The listener paused: the timer still stands. Whatever
+                            // is playing at the deadline (resumed, or moved to the
+                            // phone) is paused then.
+                            SleepTimer.CastFade.LISTENER_PAUSED -> {
+                                val left = deadline - SystemClock.elapsedRealtime()
+                                if (left > 0) delay(left)
+                                SleepTimer.pauseFor(
+                                    castActive = castPlayback.active,
+                                    pauseCast = castPlayback::pause,
+                                    pauseLocal = {
+                                        val active = player
+                                        active?.pause()
+                                        spare?.takeIf { it !== active }?.pause()
+                                    },
+                                )
+                                SleepTimer.cancel()
+                                return@collectLatest
+                            }
+                            // Moved to the phone: the local path below fades and
+                            // pauses it at the same deadline.
+                            SleepTimer.CastFade.MOVED -> Unit
+                        }
                     }
                     if (fadeMs > 0) {
                         // No new blend from here on — see [SleepTimer.fadingOut].
