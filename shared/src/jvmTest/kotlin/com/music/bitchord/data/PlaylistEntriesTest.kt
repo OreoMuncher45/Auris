@@ -189,4 +189,24 @@ class PlaylistEntriesTest {
             }
         }
     }
+
+    @Test
+    fun `a whole listing fails on an unrecognised later page, and a display listing keeps its earlier rows`() = runBlocking {
+        val first = appended(row("aaaaaaaaaaa", "SET1"), token("P2"))
+        val unrecognised = Json.parseToJsonElement("""{ "contents": {} }""")
+        assertFailsWith<IllegalStateException> { collectSongListing(first, maxPages = 10, whole = true) { unrecognised } }
+        assertEquals(listOf("aaaaaaaaaaa"), collectSongListing(first, maxPages = 10, whole = false) { unrecognised }.map { it.videoId })
+    }
+
+    @Test
+    fun `a whole listing still reads a page the general way, and still ends on a recognised empty last page`() = runBlocking {
+        // An album-like first page: no playlist shelf, rows found by the general walk.
+        val album = Json.parseToJsonElement("""{ "contents": { "rows": [ ${row("aaaaaaaaaaa", "SET1")} ] } }""")
+        assertEquals(listOf("aaaaaaaaaaa"), collectSongListing(album, maxPages = 10, whole = true) { error("no next page") }.map { it.videoId })
+        val lastPage = Json.parseToJsonElement(
+            """{ "continuationContents": { "musicPlaylistShelfContinuation": { "contents": [] } } }""",
+        )
+        val songs = collectSongListing(appended(row("bbbbbbbbbbb", "SET2"), token("P2")), maxPages = 10, whole = true) { lastPage }
+        assertEquals(listOf("bbbbbbbbbbb"), songs.map { it.videoId })
+    }
 }
