@@ -22,6 +22,7 @@ import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.model.QueueEntryIdentity
 import com.music.bitchord.playback.loopmix.LoopAlignmentState
 import com.music.bitchord.playback.loopmix.LoopArmGate
+import com.music.bitchord.playback.loopmix.LoopNextEntry
 import com.music.bitchord.playback.loopmix.LoopMixPort
 import com.music.bitchord.playback.loopmix.LoopMixRenderer
 import com.music.bitchord.playback.loopmix.LoopMixSession
@@ -3017,11 +3018,17 @@ class CrossfadeController(
                     return@launch
                 }
                 // The queue may have changed under the build: the decks are for
-                // [inItem], so it must still be the very next entry.
+                // [outItem] and [inItem], so both must still be where they were,
+                // playing the streams the decks were decoded from.
                 val liveNext = out.nextMediaItemIndex
-                val stillNext = sameQueueEntry(outItem, out.currentMediaItem) &&
-                    liveNext != C.INDEX_UNSET &&
-                    sameQueueEntry(inItem, runCatching { out.getMediaItemAt(liveNext) }.getOrNull())
+                val liveOut = out.currentMediaItem
+                val stillNext = liveOut != null && samePlayableEntry(outItem, liveOut) &&
+                    LoopNextEntry.stillArmed(
+                        out.repeatMode,
+                        runCatching { out.getMediaItemAt(liveNext) }.getOrNull().takeIf { liveNext != C.INDEX_UNSET },
+                        inItem,
+                        ::samePlayableEntry,
+                    )
                 if (!stillNext) {
                     loopFallBack("the queue changed while the decks were building")
                     return@launch
@@ -3147,9 +3154,8 @@ class CrossfadeController(
     /** Whether the session's next entry is still the one [into] was armed with. */
     private fun nextStillArmed(out: ExoPlayer, into: ExoPlayer): Boolean {
         val liveNext = out.nextMediaItemIndex
-        val armed = into.currentMediaItem ?: return false
-        return liveNext != C.INDEX_UNSET &&
-            runCatching { out.getMediaItemAt(liveNext) }.getOrNull()?.let { sameQueueEntry(it, armed) } == true
+        val live = if (liveNext == C.INDEX_UNSET) null else runCatching { out.getMediaItemAt(liveNext) }.getOrNull()
+        return LoopNextEntry.stillArmed(out.repeatMode, live, into.currentMediaItem, ::samePlayableEntry)
     }
 
     /** The incoming deck's level against the outgoing sink's: the ratio of the two players' gains. */
@@ -3202,10 +3208,14 @@ class CrossfadeController(
         // song is the session: this song ends the session, so the mix settles
         // back onto it rather than bring the next one in.
         if (!handedOff && SleepTimer.afterTrack.value) return loopBail("sleep timer", settle = true)
-        // The queue's next entry changed after the takeover: the decks are for
-        // the old one, and a handoff would fail without restoring the song's
+        // The queue's next entry changed after the takeover (or its stream was
+        // replaced, or Repeat One now holds the song): the decks are for the
+        // old one, and a handoff would fail without restoring the song's
         // position. Settle onto the playing song at the mix's position instead.
-        if (!handedOff && !nextStillArmed(out, into)) return loopBail("the next entry changed", settle = true)
+        if (!handedOff && !nextStillArmed(out, into)) {
+            val why = if (out.repeatMode == Player.REPEAT_MODE_ONE) "repeat one is on" else "the next entry changed"
+            return loopBail(why, settle = true)
+        }
         // Skip silence switched on mid-mix moves a player off the timeline the
         // decks were cut for: settle rather than mix on off the beat.
         if (out.skipSilenceEnabled || into.skipSilenceEnabled) return loopBail("skip silence is on", settle = true)
