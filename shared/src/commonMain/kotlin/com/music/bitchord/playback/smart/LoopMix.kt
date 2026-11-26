@@ -341,11 +341,13 @@ object LoopMix {
         var lyrics = 0
         var unmasked = 0
         var sung = 0
+        var unlevelled = 0
 
         override fun toString() = if (loops == 0) {
             "no bar lines in the search"
         } else {
-            "$loops loops: $quiet quiet, $lyrics sung (lyrics), $sung sung (mask), $unmasked unmeasured"
+            "$loops loops: $quiet quiet, $lyrics sung (lyrics), $sung sung (mask), $unmasked unmeasured, " +
+                "$unlevelled no level"
         }
     }
 
@@ -370,7 +372,14 @@ object LoopMix {
             val typical = if (known.isEmpty()) Double.NaN else known[min(known.size - 1, floor(known.size * 0.6).toInt())]
             for ((index, loop) in loops.withIndex()) {
                 val loud = louds[index]
-                if (!loud.isNaN() && (loud < typical * MIN_LOUDNESS || loud <= SILENT_RMS)) {
+                // A loop is only cut from audio whose level was measured: one
+                // the level windows don't reach could be a silent break, and
+                // synced lyrics alone would vouch for it.
+                if (loud.isNaN()) {
+                    count.unlevelled++
+                    continue
+                }
+                if (loud < typical * MIN_LOUDNESS || loud <= SILENT_RMS) {
                     count.quiet++
                     continue
                 }

@@ -317,6 +317,7 @@ class PrecisionAudioSink(
                 // 2. Ensure internal buffers are sized for max frames and channel count
                 ensureBuffers(channelCount)
                 configuredSampleRate = sampleRate
+                shifts.setSampleRate(sampleRate)
 
                 // 3. Determine target output encoding
                 val floatFormat = format.buildUpon()
@@ -800,7 +801,18 @@ class PrecisionAudioSink(
         // meantime would feed the renderer a region it has already played.
         // One that never processed anything is not marked interrupted, so the
         // start-up flush still leaves it armed.
-        val outArm = armed.out?.takeIf { !port.interrupted }
+        val outArm = armed.out?.takeIf { !port.interrupted }?.let { arm ->
+            // Built for another rate than this sink now runs at (a reset and a
+            // reconfigure since it was armed, or a sink that changed rate
+            // before the arm landed): its frames and timestamps would be wrong.
+            if (configuredSampleRate > 0 && arm.sampleRate != configuredSampleRate) {
+                port.interrupted = true
+                loopGenerating = false
+                null
+            } else {
+                arm
+            }
+        }
         if (outArm != null && loopGenerating) return generateLoop(outArm, outEncoding, skipDsp, userGain)
         // Likewise the incoming side: no more muting or shifting once a flush
         // has ended the mix it was lining up for.
@@ -839,7 +851,10 @@ class PrecisionAudioSink(
         //
         // Never while a loop mix is armed here: its splice, its shifts and its
         // fade-in all work on the decoded block.
-        if (inEncoding == outEncoding && dspChain.isBypassed() && userGain >= 0.999f &&
+        // Under bit-perfect the chain never runs, so whatever state it was left
+        // in (a limiter hold from the last loop mix, an EQ switched on) is no
+        // reason to decode: only the listener's software gain is.
+        if (inEncoding == outEncoding && (skipDsp || dspChain.isBypassed()) && userGain >= 0.999f &&
             outArm == null && inArm == null
         ) {
             timestampedInputTimeUs = C.TIME_UNSET
@@ -973,14 +988,15 @@ class PrecisionAudioSink(
                 port.processedUs = blockTimeUs - port.streamOffsetUs +
                     Util.sampleCountToDurationUs(decodedFrames.toLong(), configuredSampleRate)
             }
-            if (tookOverHere) {
+            // Committed against the arm this buffer read: a disarm since then
+            // refuses it, and the song plays on (the controller is settling).
+            if (tookOverHere && port.commitTakeover(armed.generation)) {
                 // From here the mix is what plays: the rest of the song's input
                 // stays where it is, and the renderer's blocks follow on.
                 loopGenerating = true
                 loopNextUs = blockTimeUs + Util.sampleCountToDurationUs(decodedFrames.toLong(), configuredSampleRate)
                 loopEpochUs = loopNextUs
                 loopEpochFrame = loopNextFrame
-                port.tookOver = true
             }
 
             val consumed = delegate.handleBuffer(
