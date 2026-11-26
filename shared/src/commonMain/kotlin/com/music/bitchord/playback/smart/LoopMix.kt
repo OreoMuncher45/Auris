@@ -196,7 +196,10 @@ object LoopMix {
         ) ?: return null.also { why?.append("outgoing: ")?.append(outCount) }
 
         // incoming: the earliest instrumental loop in its opening
-        val inEnd = min(IN_SEARCH_SEC + LOOP_BARS * inGrid.barSec, inDuration - 20)
+        // The loop is cut on the measured opening's bar lines where there are
+        // some, so its length is that grid's bars, not the whole-track grid's.
+        val inBarSec = inn.headBeats?.takeIf(::cutsOnSide)?.let { 240.0 / it.bpm } ?: inGrid.barSec
+        val inEnd = min(IN_SEARCH_SEC + LOOP_BARS * inBarSec, inDuration - 20)
         val inPick = firstClean(
             // Starting inside the opening search, ending where it must.
             candidates = { bars -> loopsBetween(inn.headBeats, inGrid, 0.0, inEnd, bars).filter { it.start <= IN_SEARCH_SEC } },
