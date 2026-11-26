@@ -77,4 +77,17 @@ class QueueReconcileTest {
         )
         assertEquals(QueueReconcile.Same, history)
     }
+
+    @Test
+    fun aHistoryRowWhoseStreamWasReplacedIsRefreshedWithoutStoppingTheHandoff() {
+        // (entry, stream): entry 0 finished downloading after the standby copied the queue.
+        val held = listOf("e0" to "https://a", "e1" to "https://b", "e2" to "https://c")
+        val live = listOf("e0" to "file:///a.opus", "e1" to "https://b", "e2" to "https://c")
+        val same = { x: Pair<String, String>, y: Pair<String, String> -> x.first == y.first }
+        val samePlayable = { x: Pair<String, String>, y: Pair<String, String> -> x == y }
+        assertEquals(QueueReconcile.Same, QueueReconcile.plan(live, 1, held, 1, same, samePlayable))
+        assertEquals(listOf(0), QueueReconcile.historyRefresh(live, held, 1, same, samePlayable))
+        // Nothing to refresh when the history plays what it did.
+        assertEquals(emptyList<Int>(), QueueReconcile.historyRefresh(held, held, 1, same, samePlayable))
+    }
 }
