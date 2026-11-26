@@ -663,6 +663,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val continuation: String?,
         /** Spotify's next page is an offset; YouTube Music's is a token. */
         val nextOffset: Int? = null,
+        /** The listener an account-private answer was given to; see [cachedSearchUsable]. */
+        val answeredFor: Innertube.ListenerStamp? = null,
     )
 
     private data class SearchSession(
@@ -3648,8 +3650,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun prefixMatch(query: String, filter: SearchFilter, source: SearchSource): List<SearchResult>? {
         val prefix = "${source.name}:${filter.name}:"
+        val now = Innertube.listenerStamp()
         return searchCache.snapshot()
-            .filterKeys { it.startsWith(prefix) && query.startsWith(it.removePrefix(prefix), true) }
+            .filter { (k, entry) ->
+                k.startsWith(prefix) && query.startsWith(k.removePrefix(prefix), true) &&
+                    cachedSearchUsable(k, entry.answeredFor, now)
+            }
             .maxByOrNull { it.key.length }
             ?.value
             ?.rows
@@ -3686,6 +3692,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * signed out, is the pipeline saying why there is nothing to search.
      * A catalogue search is nobody's in particular and is left alone.
      */
+    /** Who an answer under [key] is being cached for: the listener, for an account-private one. */
+    private fun answeredFor(key: String): Innertube.ListenerStamp? =
+        if (isAccountPrivateSearchKey(key)) Innertube.listenerStamp() else null
+
     private fun onSearchListenerChanged() {
         searchCache.snapshot().keys
             .filter(::isAccountPrivateSearchKey)
@@ -3729,9 +3739,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun startSearchPipeline() = viewModelScope.launch {
         searchRequests
             .collectLatest { request ->
+                // Lost ownership while still the newest search: ask it again
+                // as the listener now signing requests (see [shouldReissueSearch]).
+                fun reissueIfOnlyCredentialsMoved() {
+                    if (shouldReissueSearch(searchOwnership.owns(request.ticket), searchOwnership.isNewest(request.ticket))) {
+                        onSearchListenerChanged()
+                    }
+                }
                 // Superseded before it was even picked up — by a newer search,
                 // or by the listener it was asked as leaving.
-                if (!searchOwnership.owns(request.ticket)) return@collectLatest
+                if (!searchOwnership.owns(request.ticket)) {
+                    reissueIfOnlyCredentialsMoved()
+                    return@collectLatest
+                }
                 // Library is the account's own songs: signed out there is
                 // nothing to search, so it says why rather than asking. Ahead
                 // of the cache, so a signed-out page can't show an earlier
@@ -3745,6 +3765,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // query has been run before, otherwise the closest earlier
                 // one. Only fall back to a spinner with neither.
                 val exact = searchCache.get(key)
+                    ?.takeIf { cachedSearchUsable(key, it.answeredFor, Innertube.listenerStamp()) }
                 val cached = exact?.rows ?: prefixMatch(request.query, request.filter, request.source)
                 _results.value = cached?.let { UiState.Success(it.withoutBlockedArtists()) }
                     ?: UiState.Loading
@@ -3773,7 +3794,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             request.filter,
                         )
                     }
-                    if (!searchOwnership.owns(request.ticket)) return@collectLatest
+                    if (!searchOwnership.owns(request.ticket)) {
+                    reissueIfOnlyCredentialsMoved()
+                    return@collectLatest
+                }
                     _results.value = page.fold(
                         onSuccess = { spotify ->
                             // The rows are published the usual way, and a
@@ -3814,7 +3838,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // listening, superseding this one.
                 if (request.filter.requiresAuth) {
                     credentialsInValidation.awaitSettled()
-                    if (!searchOwnership.owns(request.ticket)) return@collectLatest
+                    if (!searchOwnership.owns(request.ticket)) {
+                    reissueIfOnlyCredentialsMoved()
+                    return@collectLatest
+                }
                 }
 
                 // Search is YouTube's alone. A module is a *substitution*
@@ -3848,7 +3875,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     // under it — a session scope installed with another
                     // account index, say. Nothing else will ask again, so
                     // this does, as the listener now signing requests.
-                    if (searchOwnership.isNewest(request.ticket)) onSearchListenerChanged()
+                    reissueIfOnlyCredentialsMoved()
                     return@collectLatest
                 }
                 _results.value = result.fold(
@@ -3893,7 +3920,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     // The merge suspended; a search started meanwhile owns the list now.
                     owns = searchSession == session && searchOwnership.owns(session.ticket)
                     if (owns) {
-                        searchCache.put(session.key, SearchCacheEntry(merged, page.continuation))
+                        searchCache.put(session.key, SearchCacheEntry(merged, page.continuation, answeredFor = answeredFor(session.key)))
                         searchSession = session.copy(continuation = page.continuation)
                         _results.value = UiState.Success(merged)
                     }
@@ -3942,7 +3969,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     // The merge suspended; a search started meanwhile owns the list now.
                     owns = searchSession == session && searchOwnership.owns(session.ticket)
                     if (owns) {
-                        searchCache.put(session.key, SearchCacheEntry(merged, null, page.nextOffset))
+                        searchCache.put(session.key, SearchCacheEntry(merged, null, page.nextOffset, answeredFor(session.key)))
                         searchSession = session.copy(nextOffset = page.nextOffset)
                         _results.value = UiState.Success(merged)
                     }
@@ -4062,7 +4089,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     ): UiState<List<SearchResult>> {
         val clean = rows.withoutBlockedArtists()
         if (clean.isEmpty()) return UiState.Error(text(R.string.no_results))
-        searchCache.put(key, SearchCacheEntry(clean, continuation, nextOffset))
+        searchCache.put(key, SearchCacheEntry(clean, continuation, nextOffset, answeredFor(key)))
         searchSession = SearchSession(
             key = key,
             ticket = ticket,
