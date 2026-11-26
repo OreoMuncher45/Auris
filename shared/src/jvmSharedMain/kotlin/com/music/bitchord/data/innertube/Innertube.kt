@@ -481,6 +481,14 @@ object Innertube {
         companion object Key : kotlin.coroutines.CoroutineContext.Key<ExpectedListener>
     }
 
+    /**
+     * Whether the caller bound its requests to a session with [asListener].
+     * Such a request can't be retried under any other session — not even the
+     * same listener after a refresh moved the generation — so a retry is the
+     * caller's to make, under a session it chose.
+     */
+    suspend fun boundToSession(): Boolean = kotlinx.coroutines.currentCoroutineContext()[ExpectedListener] != null
+
     /** Thrown when a request bound by [asListener] would go out as another listener. */
     class ListenerChangedException : IllegalStateException("the account changed before the request was sent")
 
