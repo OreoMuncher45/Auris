@@ -702,9 +702,12 @@ object InnertubeParser {
             playlistScope != null -> PlaylistShelfPage.Kind.ROWS
             // The documented end of an owned playlist: a plain continuation
             // whose only rows are inside its Suggestions shelves.
-            appendedItems == null && root.o("continuationContents") != null &&
-                collectRenderers(scope, "musicResponsiveListItemRenderer").size ==
-                suggestionShelves.sumOf { collectRenderers(it, "musicResponsiveListItemRenderer").size } ->
+            // Nothing but Suggestions shelves, item for item: any other item (an
+            // episode, a row of any renderer) means rows that weren't read.
+            appendedItems == null &&
+                root.o("continuationContents").o("sectionListContinuation").a("contents")
+                    ?.takeIf { it.isNotEmpty() }
+                    ?.all { it.o("musicShelfRenderer")?.o("title").runs() == "Suggestions" } == true ->
                 PlaylistShelfPage.Kind.SUGGESTIONS_ONLY
             else -> PlaylistShelfPage.Kind.UNREADABLE
         }

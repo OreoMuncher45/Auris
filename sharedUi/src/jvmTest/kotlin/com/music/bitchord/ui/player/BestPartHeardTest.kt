@@ -23,4 +23,22 @@ class BestPartHeardTest {
         bestPartTrackChanged("best-c")
         assertTrue(isBestPartHeard("best-c"))
     }
+
+    @Test
+    fun aLockedPartyHidesThePillWithoutMarkingItHeard() {
+        bestPartTrackChanged("best-d")
+        assertFalse(bestPartOffered(found = true, ahead = true, heard = isBestPartHeard("best-d"), mixing = false, locked = true))
+        assertFalse(isBestPartHeard("best-d"))
+    }
+
+    @Test
+    fun liftingTheLockOffersItAgainWhileStillAhead() {
+        bestPartTrackChanged("best-e")
+        val heard = isBestPartHeard("best-e")
+        assertFalse(bestPartOffered(found = true, ahead = true, heard = heard, mixing = false, locked = true))
+        assertTrue(bestPartOffered(found = true, ahead = true, heard = heard, mixing = false, locked = false))
+        // Played through while locked: heard, and gone for the rest of the track.
+        markBestPartHeard("best-e")
+        assertFalse(bestPartOffered(found = true, ahead = true, heard = isBestPartHeard("best-e"), mixing = false, locked = false))
+    }
 }

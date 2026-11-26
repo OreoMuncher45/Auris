@@ -110,14 +110,18 @@ class VocalTracker(
     @Volatile private var sessionThreads = 0
     private val lock = Any()
 
+    /** Keeps a session open until every run on it has returned. */
+    private val retirement = SessionRetirement()
+
     private fun session(): OrtSession? {
         val threads = inferenceThreads()
         session?.takeIf { sessionThreads == threads }?.let { return it }
         synchronized(lock) {
             session?.takeIf { sessionThreads == threads }?.let { return it }
-            runCatching { session?.close() }
+            // Retired rather than closed: a run still in flight keeps it open
+            // until it returns. See [SessionRetirement].
+            retirement.retire(session, sessionOptions)
             session = null
-            runCatching { sessionOptions?.close() }
             sessionOptions = null
             return runCatching {
                 val path = File(modelPath()).absolutePath
@@ -175,42 +179,47 @@ class VocalTracker(
         }
         val active = session() ?: return null
 
-        return runCatching {
-            val bins = spectrogram.bins
-            // Direct, and sized for the model rather than for the input, so the
-            // ~16MB of mix never lands on the Java heap and ORT reads it where it
-            // lies instead of copying it into native memory. Both matter: this
-            // runs on devices whose whole Java heap is 256MB, and the two copies
-            // this replaces were together enough to end the process.
-            val backing = ByteBuffer
-                .allocateDirect(VocalSpectrogram.CHANNELS * bins * FIXED_FRAMES * Float.SIZE_BYTES)
-                .order(ByteOrder.nativeOrder())
-            fillFixedFrames(backing.asFloatBuffer(), spectrogram.values, bins, spectrogram.frames)
-            val environment = OrtEnvironment.getEnvironment()
-            val shape = longArrayOf(1, VocalSpectrogram.CHANNELS.toLong(), bins.toLong(), FIXED_FRAMES.toLong())
+        // See [retirement]. A session closed or replaced since it was handed out
+        // gives no curve for this window rather than a run on a closed session.
+        return retirement.using {
+            if (active !== session) return@using null
+            runCatching {
+                val bins = spectrogram.bins
+                // Direct, and sized for the model rather than for the input, so the
+                // ~16MB of mix never lands on the Java heap and ORT reads it where it
+                // lies instead of copying it into native memory. Both matter: this
+                // runs on devices whose whole Java heap is 256MB, and the two copies
+                // this replaces were together enough to end the process.
+                val backing = ByteBuffer
+                    .allocateDirect(VocalSpectrogram.CHANNELS * bins * FIXED_FRAMES * Float.SIZE_BYTES)
+                    .order(ByteOrder.nativeOrder())
+                fillFixedFrames(backing.asFloatBuffer(), spectrogram.values, bins, spectrogram.frames)
+                val environment = OrtEnvironment.getEnvironment()
+                val shape = longArrayOf(1, VocalSpectrogram.CHANNELS.toLong(), bins.toLong(), FIXED_FRAMES.toLong())
 
-            // A fresh view per reader rather than rewinding one: FloatBuffer's own
-            // rewind() and position(int) are Java 9 covariant overrides that
-            // Android's FloatBuffer does not declare, so they compile against the
-            // current SDK and throw NoSuchMethodError on the API 28 devices this
-            // has to run on. asFloatBuffer() hands back a view at position 0 and
-            // has been there since API 1.
-            OnnxTensor.createTensor(environment, backing.asFloatBuffer(), shape).use { tensor ->
-                active.run(mapOf(active.inputNames.first() to tensor)).use { outputs ->
-                    // The output tensor's buffer, not `outputs.get(0).value`: that
-                    // property boxes this [1, 2, bins, FIXED_FRAMES] result into
-                    // one FloatArray per bin per channel — 4098 objects and ~16MB
-                    // per call — when the only thing read from it is a band
-                    // average.
-                    val target = (outputs.get(0) as OnnxTensor).floatBuffer
-                    val curve = reduceToBandCurve(backing.asFloatBuffer(), target, bins, spectrogram.frames)
-                    AnalysisLog.warn("vocal mask ${spectrogram.frames} frames in " +
-                            "${System.currentTimeMillis() - started}ms",
-                    )
-                    curve
+                // A fresh view per reader rather than rewinding one: FloatBuffer's own
+                // rewind() and position(int) are Java 9 covariant overrides that
+                // Android's FloatBuffer does not declare, so they compile against the
+                // current SDK and throw NoSuchMethodError on the API 28 devices this
+                // has to run on. asFloatBuffer() hands back a view at position 0 and
+                // has been there since API 1.
+                OnnxTensor.createTensor(environment, backing.asFloatBuffer(), shape).use { tensor ->
+                    active.run(mapOf(active.inputNames.first() to tensor)).use { outputs ->
+                        // The output tensor's buffer, not `outputs.get(0).value`: that
+                        // property boxes this [1, 2, bins, FIXED_FRAMES] result into
+                        // one FloatArray per bin per channel — 4098 objects and ~16MB
+                        // per call — when the only thing read from it is a band
+                        // average.
+                        val target = (outputs.get(0) as OnnxTensor).floatBuffer
+                        val curve = reduceToBandCurve(backing.asFloatBuffer(), target, bins, spectrogram.frames)
+                        AnalysisLog.warn("vocal mask ${spectrogram.frames} frames in " +
+                                "${System.currentTimeMillis() - started}ms",
+                        )
+                        curve
+                    }
                 }
-            }
-        }.onFailure { AnalysisLog.warn("Vocal inference failed", it) }.getOrNull()
+            }.onFailure { AnalysisLog.warn("Vocal inference failed", it) }.getOrNull()
+        }
     }
 
     /**
@@ -281,9 +290,10 @@ class VocalTracker(
 
     fun release() {
         synchronized(lock) {
-            runCatching { session?.close() }
+            // Retired rather than closed: a run still in flight keeps it open
+            // until it returns. See [SessionRetirement].
+            retirement.retire(session, sessionOptions)
             session = null
-            runCatching { sessionOptions?.close() }
             sessionOptions = null
             sessionThreads = 0
         }
