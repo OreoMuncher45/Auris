@@ -16,3 +16,13 @@ internal inline fun List<DetailPage>.updateOpening(
     opening: Long,
     transform: (DetailPage) -> DetailPage,
 ): List<DetailPage> = map { if (it.browseId == browseId && it.opening == opening) transform(it) else it }
+
+/**
+ * The page on screen for [browseId]: its latest opening on the stack. An
+ * older copy further down shows the listing as it was when it opened, so
+ * anything that reads the page's rows to decide something now (is this song
+ * already on the playlist?) reads this one.
+ */
+internal fun List<DetailPage>.latestOpening(browseId: String): DetailPage? =
+    lastOrNull { it.browseId == browseId }
+
