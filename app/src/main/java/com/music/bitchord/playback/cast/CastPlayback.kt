@@ -179,6 +179,24 @@ class CastPlayback(
     }
 
     /**
+     * Pause, and wait for the receiver to confirm it: the sleep timer must not
+     * report a pause the receiver never took. False when it refused, timed
+     * out, or there is no session.
+     */
+    suspend fun pauseAndConfirm(): Boolean {
+        if (!active) return false
+        val client = client ?: return false
+        wantsPlay = false
+        val confirmed = try {
+            withTimeoutOrNull(STREAM_VOLUME_TIMEOUT_MS) { client.pause().awaitResult() }?.status?.isSuccess == true
+        } catch (_: IllegalArgumentException) {
+            false
+        }
+        sink?.onRemotePlaybackChanged()
+        return confirmed
+    }
+
+    /**
      * The receiver's stream volume for the sleep timer's fade, or null when
      * this receiver can't set it. Never the device volume: that is the
      * listener's speaker, and a fade must not leave it turned down.

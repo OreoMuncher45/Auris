@@ -93,4 +93,18 @@ class DownloadedPlaylistSyncTest {
         val playlist = SavedCollection(id = "PL1", title = "A playlist", playlist = true)
         assertTrue("downloading a playlist is asking for it to stay whole", playlist.autoDownload)
     }
+
+    @Test
+    fun `a playlist track that reached the device another way is filed, not fetched`() {
+        val remote = listOf(song("refused"), song("recorded"), song("gone"), song("away"))
+        val unrecorded = onDiskNotRecorded(
+            remote,
+            onDisk = setOf("refused", "recorded", "gone"),
+            deletedByHand = setOf("gone"),
+            alreadyRecorded = setOf("recorded"),
+        ).map { it.videoId }
+        // On disk and not in the record: filed. Already recorded, deleted by
+        // hand, or not on the device at all: left alone.
+        assertEquals(listOf("refused"), unrecorded)
+    }
 }
