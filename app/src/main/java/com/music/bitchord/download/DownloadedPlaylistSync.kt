@@ -281,13 +281,15 @@ object DownloadedPlaylistSync {
             // either lands first and is seen here, or lands after and finds
             // what this step queued in the record. See [Downloads.deleteCollection]
             // and [setKeepLiked].
-            Downloads.withCollectionsHeld {
-                if (liked && Innertube.listenerStamp() != readFor) {
-                    Log.w(TAG, "Liked Music was read for another listener; not admitted")
-                } else {
+            // Liked Music is admitted while the session it was read for is still
+            // current, held there for the check and the enqueue together: an
+            // account switch can't land between them (see [admitForListener]).
+            val admitted = admitForListener(liked, readFor, Innertube::whileListener) {
+                Downloads.withCollectionsHeld {
                     admit(context, collection.id, collection.title, liked, target, remote, missing, unrecorded)
                 }
             }
+            if (!admitted) Log.w(TAG, "Liked Music was read for another listener; not admitted")
         }
     }
 
@@ -437,3 +439,23 @@ internal fun samePlaylist(a: String, b: String): Boolean = a.removePrefix("VL") 
 /** Whether this song is a file of the listener's own rather than a track to fetch. */
 internal fun Song.isDeviceFile(): Boolean =
     videoId.startsWith("file://") || videoId.startsWith("content://")
+
+
+/**
+ * Runs [admit] for a sync pass's read: directly for a public playlist, and for
+ * Liked Music only inside [whileListener] for the session it was read for, so
+ * the stamp check and the enqueue are one step no account switch can split.
+ * False when Liked Music was read for a session that is no longer current.
+ */
+internal fun <S> admitForListener(
+    liked: Boolean,
+    readFor: S,
+    whileListener: (S, () -> Unit) -> Unit?,
+    admit: () -> Unit,
+): Boolean {
+    if (!liked) {
+        admit()
+        return true
+    }
+    return whileListener(readFor, admit) != null
+}
