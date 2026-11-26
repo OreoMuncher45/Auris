@@ -4032,51 +4032,44 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             loadMoreSpotifyResults(session)
             return
         }
-        val token = session.continuation ?: return
-        _searchLoadingMore.value = true
-        viewModelScope.launch {
-            val next = YtMusicRepository.searchContinuation(token, session.filter)
-            val stillCurrent = searchSession == session && searchOwnership.owns(session.ticket)
-            var settled = false
-            if (stillCurrent) {
-                // Cleared only while this request still owns the search: the
-                // merge below suspends, and a newer search's load-more may be
-                // in flight by the time it resumes.
-                var owns = true
-                next.onSuccess { page ->
-                    val current = (_results.value as? UiState.Success)?.data.orEmpty()
-                    // Off the main thread: a long scroll is a few hundred rows.
-                    val merged = withContext(Dispatchers.Default) {
-                        (current + page.rows).distinctBy(::searchResultKey)
-                            .withoutRepeatedRecordings()
-                            .withoutBlockedArtists()
-                    }
-                    // The merge suspended; a search started meanwhile owns the list now.
-                    owns = searchSession == session && searchOwnership.owns(session.ticket)
-                    if (owns) {
-                        searchCache.put(session.key, SearchCacheEntry(merged, page.continuation, answeredFor = answeredFor(session.key)))
-                        searchSession = session.copy(continuation = page.continuation)
-                        _results.value = UiState.Success(merged)
-                    }
-                }
-                settled = owns
-            }
-            // See [loadMoreReleasesFlag]: lost ownership before or during the
-            // merge with this search still shown would otherwise leave every
-            // later load-more returning early.
-            val stillShown = searchSession == session
-            val ownsNow = searchOwnership.owns(session.ticket)
-            if (stillShown && shouldReissueSearch(ownsNow, searchOwnership.isNewest(session.ticket))) {
-                // Still the search shown and still the newest, but its ticket no
-                // longer owns (only the credentials moved): every later page
-                // would fail the same check. Asked again as the listener now
-                // signing requests, which gives it a ticket that can page.
-                onSearchListenerChanged()
-            } else if (loadMoreReleasesFlag(settled, stillShown, ownsNow)) {
-                _searchLoadingMore.value = false
-            }
-        }
+        val token = searchLoadMore.begin(session) ?: return
+        viewModelScope.launch { searchLoadMore.run(session, token) }
     }
+
+    /** The YouTube Music load-more; see [SearchLoadMore] for its ownership and recovery. */
+    private val searchLoadMore = SearchLoadMore(
+        searchOwnership,
+        object : SearchLoadMore.Host<SearchSession, SearchResult> {
+            override val shown: SearchSession? get() = searchSession
+            override fun ticketOf(session: SearchSession) = session.ticket
+            override fun continuationOf(session: SearchSession) = session.continuation
+            override var loadingMore: Boolean
+                get() = _searchLoadingMore.value
+                set(value) { _searchLoadingMore.value = value }
+
+            override suspend fun fetch(session: SearchSession, token: String) =
+                YtMusicRepository.searchContinuation(token, session.filter)
+                    .map { SearchLoadMore.Page(it.rows, it.continuation) }
+
+            override fun currentRows() = (_results.value as? UiState.Success)?.data.orEmpty()
+
+            // Off the main thread: a long scroll is a few hundred rows.
+            override suspend fun merge(current: List<SearchResult>, page: List<SearchResult>) =
+                withContext(Dispatchers.Default) {
+                    (current + page).distinctBy(::searchResultKey)
+                        .withoutRepeatedRecordings()
+                        .withoutBlockedArtists()
+                }
+
+            override fun publish(session: SearchSession, merged: List<SearchResult>, continuation: String?) {
+                searchCache.put(session.key, SearchCacheEntry(merged, continuation, answeredFor = answeredFor(session.key)))
+                searchSession = session.copy(continuation = continuation)
+                _results.value = UiState.Success(merged)
+            }
+
+            override fun reissue() = onSearchListenerChanged()
+        },
+    )
 
     /**
      * The next page of a Spotify search.
