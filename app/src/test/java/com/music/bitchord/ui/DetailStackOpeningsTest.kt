@@ -23,4 +23,16 @@ class DetailStackOpeningsTest {
         val after = stack.updateOpening("mix", opening = 3) { it.copy(title = "fresh") }
         assertEquals(listOf("mix", "other", "fresh"), after.map { it.title })
     }
+
+    @Test
+    fun `membership is read from the latest opening of a playlist`() {
+        val withA = page("pl", 1).copy(songs = UiState.Success(listOf(song("A"))))
+        val withoutA = page("pl", 3).copy(songs = UiState.Success(emptyList()))
+        // A was removed elsewhere; the playlist opened again without it.
+        val stack = listOf(withA, page("other", 2), withoutA)
+        val rows = (stack.latestOpening("pl")?.songs as UiState.Success).data
+        assertEquals(emptyList<String>(), rows.map { it.videoId })
+    }
+
+    private fun song(id: String) = com.music.bitchord.data.model.Song(videoId = id, title = id, artist = "", thumbnailUrl = null)
 }
