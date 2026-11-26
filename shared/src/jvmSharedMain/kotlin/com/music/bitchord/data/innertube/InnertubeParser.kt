@@ -595,13 +595,33 @@ object InnertubeParser {
         val songs: List<Song>,
         val suggested: List<Song>,
         val continuation: String?,
+        /** What the page turned out to be; see [Kind]. */
+        val kind: Kind = Kind.ROWS,
         /**
-         * Whether the page's own rows were recognised as the playlist's. False
-         * when only a "Suggestions" shelf was: the playlist part of the page
-         * was not read, so it is not evidence the playlist ended there.
+         * For an [Kind.UNREADABLE] appended page: its own items, the
+         * Suggestions shelves taken out, for a caller that can read them the
+         * general way (a page on screen) rather than give up (a reorder).
          */
-        val playlistRead: Boolean = true,
-    )
+        val unreadItems: JsonArray? = null,
+    ) {
+        enum class Kind {
+            /** The playlist's own rows were recognised (possibly none: an empty last page). */
+            ROWS,
+
+            /**
+             * A continuation holding nothing but "Suggestions" shelves — the
+             * shape an owned playlist's chain ends on. Ends the playlist.
+             */
+            SUGGESTIONS_ONLY,
+
+            /**
+             * A page whose own rows could not be read as the playlist's: an
+             * appended page with an episode among its rows, or with no rows
+             * at all beside its Suggestions. Not evidence the playlist ended.
+             */
+            UNREADABLE,
+        }
+    }
 
     /**
      * A playlist page's own track list, scoped rather than walked — plus
@@ -643,15 +663,19 @@ object InnertubeParser {
             ?: return null
         // An appended page's own rows are its direct items: a "Suggestions"
         // shelf nested among them is read below as suggestions, not as rows.
+        val appendedItems: JsonArray? = appended?.takeIf { scope === it }?.let { action ->
+            JsonArray(action.a("continuationItems").orEmpty().filterNot { it.o("musicShelfRenderer") != null })
+        }
         val playlistScope: JsonElement? = scope.o("musicPlaylistShelfContinuation")
-            ?: appended?.takeIf { scope === it }?.let { action ->
-                JsonArray(action.a("continuationItems").orEmpty().filterNot { it.o("musicShelfRenderer") != null })
-                    // Only track rows and the next-page token: anything else (a
-                    // podcast episode) is left to the general reading.
-                    .takeIf { items ->
+            ?: appendedItems
+                // Only track rows and the next-page token: anything else (a
+                // podcast episode) is left to the general reading. An appended
+                // page with no rows at all beside its shelves is not a shape the
+                // playlist is known to end on, so it isn't read as rows either.
+                ?.takeIf { items ->
+                    items.isNotEmpty() &&
                         items.all { it.o("musicResponsiveListItemRenderer") != null || it.o("continuationItemRenderer") != null }
-                    }
-            }
+                }
             ?: collectRenderers(scope, "musicPlaylistShelfRenderer").firstOrNull()
         val suggestionShelves = collectRenderers(scope, "musicShelfRenderer")
             .filter { it.o("title").runs() == "Suggestions" }
@@ -674,7 +698,20 @@ object InnertubeParser {
         // `reloadContinuationData` token). Only the playlist shelf's own
         // continuation means more real tracks.
         val token = playlistScope?.let { continuationToken(it) }
-        return PlaylistShelfPage(songs, suggested, token, playlistRead = playlistScope != null)
+        val kind = when {
+            playlistScope != null -> PlaylistShelfPage.Kind.ROWS
+            // The documented end of an owned playlist: a plain continuation
+            // whose only rows are inside its Suggestions shelves.
+            appendedItems == null && root.o("continuationContents") != null &&
+                collectRenderers(scope, "musicResponsiveListItemRenderer").size ==
+                suggestionShelves.sumOf { collectRenderers(it, "musicResponsiveListItemRenderer").size } ->
+                PlaylistShelfPage.Kind.SUGGESTIONS_ONLY
+            else -> PlaylistShelfPage.Kind.UNREADABLE
+        }
+        return PlaylistShelfPage(
+            songs, suggested, token, kind,
+            unreadItems = appendedItems?.takeIf { kind == PlaylistShelfPage.Kind.UNREADABLE && it.isNotEmpty() },
+        )
     }
 
     /**
