@@ -79,15 +79,19 @@ class BeatTracker(
     @Volatile private var sessionThreads = 0
     private val lock = Any()
 
+    /** Keeps a session open until every run on it has returned. */
+    private val retirement = SessionRetirement()
+
     /** Parsing the graph is far too expensive to repeat per track, so one session is kept. */
     private fun session(): OrtSession? {
         val threads = inferenceThreads()
         session?.takeIf { sessionThreads == threads }?.let { return it }
         synchronized(lock) {
             session?.takeIf { sessionThreads == threads }?.let { return it }
-            runCatching { session?.close() }
+            // Retired rather than closed: a run still in flight keeps it open
+            // until it returns. See [SessionRetirement].
+            retirement.retire(session, sessionOptions)
             session = null
-            runCatching { sessionOptions?.close() }
             sessionOptions = null
             return runCatching {
                 val path = File(modelPath()).absolutePath
@@ -146,7 +150,10 @@ class BeatTracker(
         val beatLogits = FloatArray(spectrogram.frames)
         val downbeatLogits = FloatArray(spectrogram.frames)
         val inferStarted = System.currentTimeMillis()
-        if (!infer(active, spectrogram, beatLogits, downbeatLogits)) return null
+        // A session closed or replaced since it was handed out gives no grid
+        // for this window rather than a run on a closed session.
+        val inferred = retirement.using { active === session && infer(active, spectrogram, beatLogits, downbeatLogits) }
+        if (!inferred) return null
         AnalysisLog.warn("mel ${melMs}ms (${spectrogram.frames} frames) " +
                 "infer ${System.currentTimeMillis() - inferStarted}ms",
         )
@@ -234,9 +241,10 @@ class BeatTracker(
 
     fun release() {
         synchronized(lock) {
-            runCatching { session?.close() }
+            // Retired rather than closed: a run still in flight keeps it open
+            // until it returns. See [SessionRetirement].
+            retirement.retire(session, sessionOptions)
             session = null
-            runCatching { sessionOptions?.close() }
             sessionOptions = null
             sessionThreads = 0
         }
