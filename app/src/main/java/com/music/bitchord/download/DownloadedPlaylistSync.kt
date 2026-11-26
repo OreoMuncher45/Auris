@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.music.bitchord.R
 import com.music.bitchord.data.YtMusicRepository
+import com.music.bitchord.data.innertube.Innertube
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import kotlinx.coroutines.CoroutineScope
@@ -239,6 +240,10 @@ object DownloadedPlaylistSync {
         // would be undoing a decision the listener made on purpose.
         val deleted = Downloads.deletedByHandIds()
         for (collection in collections) {
+            // Liked Music is the listener's own: admitted only for the listener
+            // (and generation) it was read for. A candidate under validation is
+            // never in the shared session, so this is the whole check.
+            val readFor = Innertube.listenerStamp()
             val result = YtMusicRepository.browseSongsPaged(collection.id)
             val remote = result.getOrNull()
             if (remote.isNullOrEmpty()) {
@@ -277,7 +282,11 @@ object DownloadedPlaylistSync {
             // what this step queued in the record. See [Downloads.deleteCollection]
             // and [setKeepLiked].
             Downloads.withCollectionsHeld {
-                admit(context, collection.id, collection.title, liked, target, remote, missing, unrecorded)
+                if (liked && Innertube.listenerStamp() != readFor) {
+                    Log.w(TAG, "Liked Music was read for another listener; not admitted")
+                } else {
+                    admit(context, collection.id, collection.title, liked, target, remote, missing, unrecorded)
+                }
             }
         }
     }
