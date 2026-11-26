@@ -73,4 +73,16 @@ class ShiftTimelineTest {
         assertEquals(500_000L, t.trackPositionUs(500_000L))
         assertEquals(1_030_000L, t.trackPositionUs(1_000_000L))
     }
+
+    @Test
+    fun at192kHzADropOneWrittenFrameLaterIsASeparateShift() {
+        val t = ShiftTimeline()
+        t.setSampleRate(192_000)
+        // A 1 ms drop at 0, one frame (5.2 µs) written, then another 1 ms drop.
+        t.drop(0L, 1_000L)
+        t.drop(5L, 1_000L)
+        // Separate shifts: the first is heard from 0, the second only from 5 µs.
+        assertEquals(1_000L, t.trackPositionUs(0L))
+        assertEquals(2_005L, t.trackPositionUs(5L))
+    }
 }
