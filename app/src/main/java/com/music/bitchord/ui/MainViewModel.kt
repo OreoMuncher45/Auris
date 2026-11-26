@@ -4058,7 +4058,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // See [loadMoreReleasesFlag]: lost ownership before or during the
             // merge with this search still shown would otherwise leave every
             // later load-more returning early.
-            if (loadMoreReleasesFlag(settled, searchSession == session, searchOwnership.owns(session.ticket))) {
+            val stillShown = searchSession == session
+            val ownsNow = searchOwnership.owns(session.ticket)
+            if (stillShown && shouldReissueSearch(ownsNow, searchOwnership.isNewest(session.ticket))) {
+                // Still the search shown and still the newest, but its ticket no
+                // longer owns (only the credentials moved): every later page
+                // would fail the same check. Asked again as the listener now
+                // signing requests, which gives it a ticket that can page.
+                onSearchListenerChanged()
+            } else if (loadMoreReleasesFlag(settled, stillShown, ownsNow)) {
                 _searchLoadingMore.value = false
             }
         }
