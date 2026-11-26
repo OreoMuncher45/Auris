@@ -44,9 +44,11 @@ class LoopMixSession private constructor(
     lateinit var inPort: LoopMixPort
         private set
 
+    /** What alignment has established about the incoming player; see [LoopAlignmentState]. */
+    val alignment = LoopAlignmentState()
+
     /** The residual offset after alignment, ms (player minus deck); NaN until measured. */
-    var alignedErrorMs: Double = Double.NaN
-        private set
+    val alignedErrorMs: Double get() = alignment.errorMs
 
     fun attach(out: LoopMixPort, inn: LoopMixPort) {
         outPort = out
@@ -97,19 +99,12 @@ class LoopMixSession private constructor(
      * True once a full, stall-free alignment round has measured [alignedErrorMs];
      * a reading taken after the rounds gave up is recorded but not confirmed.
      */
-    var alignmentConfirmed: Boolean = false
-        private set
+    val alignmentConfirmed: Boolean get() = alignment.confirmed
 
     /** The incoming player stalled: whatever was measured before no longer describes it. */
-    fun invalidateAlignment() {
-        alignmentConfirmed = false
-        alignedErrorMs = Double.NaN
-    }
+    fun invalidateAlignment() = alignment.invalidate()
 
-    fun recordAligned(errorSeconds: Double, confirmed: Boolean = true) {
-        alignmentConfirmed = confirmed
-        alignedErrorMs = errorSeconds * 1000
-    }
+    fun recordAligned(errorSeconds: Double, confirmed: Boolean = true) = alignment.record(errorSeconds, confirmed)
 
     fun close() {
         // A session dropped before it was attached has no ports to disarm,
