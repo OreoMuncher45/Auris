@@ -119,6 +119,42 @@ object SleepTimer {
         PAUSE_FAILED,
     }
 
+    /** What the sleep timer does once a Cast fade has ended. */
+    enum class AfterCastFade {
+        /** Done: the receiver paused, or never would. The timer is cleared. */
+        CANCEL,
+        /** Playback is on the phone now: the phone's own fade and pause, at the same deadline. */
+        CONTINUE_LOCAL,
+        /** The listener paused: wait for the deadline, then pause whatever is playing. */
+        WAIT_DEADLINE,
+    }
+
+    /**
+     * Where the watcher goes after [fadeOutCast]. [castActiveNow] is read after
+     * the fade returned, volume restore included: a handoff to the phone during
+     * the awaited pause or the restore is a move, whatever the fade reported.
+     */
+    fun afterCastFade(result: CastFade, castActiveNow: Boolean): AfterCastFade = when {
+        result == CastFade.MOVED || !castActiveNow -> AfterCastFade.CONTINUE_LOCAL
+        result == CastFade.LISTENER_PAUSED -> AfterCastFade.WAIT_DEADLINE
+        else -> AfterCastFade.CANCEL
+    }
+
+    /**
+     * The pause at the deadline, wherever playback is: the receiver's is
+     * confirmed and retried ([confirmCastPause] returns whether it took);
+     * the phone's is immediate.
+     */
+    suspend fun pauseAtDeadline(castActive: () -> Boolean, confirmCastPause: suspend () -> Boolean, pauseLocal: () -> Unit) {
+        repeat(CAST_PAUSE_ATTEMPTS) {
+            if (!castActive()) {
+                pauseLocal()
+                return
+            }
+            if (confirmCastPause()) return
+        }
+    }
+
     /** Pause attempts at the deadline before a Cast fade gives up on the receiver. */
     const val CAST_PAUSE_ATTEMPTS = 3
 
@@ -163,7 +199,11 @@ object SleepTimer {
             }
             repeat(CAST_PAUSE_ATTEMPTS) {
                 if (!castActive()) return CastFade.MOVED
-                if (pause()) return CastFade.PAUSED
+                val confirmed = pause()
+                // Checked again after the attempt: playback can move to the
+                // phone while the pause is in flight.
+                if (!castActive()) return CastFade.MOVED
+                if (confirmed) return CastFade.PAUSED
             }
             return CastFade.PAUSE_FAILED
         } finally {
