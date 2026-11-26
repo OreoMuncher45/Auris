@@ -111,7 +111,10 @@ object LrcLib {
             // Word stamps are absolute and written for the first line stamp, so
             // each repeat moves them by its distance from that one.
             val firstMs = msOf(stamps.first())
-            stamps.asSequence().map { match ->
+            // Each repeat copies every word of the line, so a malformed entry
+            // with thousands of stamps would build thousands of copies. Real
+            // repeats of a chorus number a handful; the rest are dropped.
+            stamps.asSequence().take(MAX_STAMPS_PER_LINE).map { match ->
                 val timeMs = msOf(match)
                 LyricLine(
                     timeMs = timeMs,
@@ -155,6 +158,9 @@ object LrcLib {
     }
 
     private const val ALIGNMENT_MARKER = "<R>"
+
+    /** The most times one LRC line is sung; see [parseLrc]. */
+    const val MAX_STAMPS_PER_LINE = 32
 
     /**
      * YouTube Music titles are noisy — "(From "Raees")", "| Official Video",
