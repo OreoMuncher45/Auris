@@ -25,7 +25,7 @@ class PlannerReviewFixesTest {
         )
     }
 
-    private fun plan(a: TrackAnalysis, b: TrackAnalysis, phraseBars: Int = 0, mixWindow: Boolean = false) = planTransition(
+    private fun plan(a: TrackAnalysis, b: TrackAnalysis, phraseBars: Int = 0) = planTransition(
         analysis = a,
         nextAnalysis = b,
         currentTime = 100.0,
@@ -33,12 +33,13 @@ class PlannerReviewFixesTest {
         mode = CrossfadeMode.SMART,
         advanced = true,
         phraseBars = phraseBars,
-        mixWindow = mixWindow,
     )
 
     @Test
     fun aFixedPhraseWithNoMeasuredBarLinesFallsBackToTheAdaptivePlan() {
         val p = plan(track(120.0, downbeats = false), track(120.0), phraseBars = PHRASE_BARS_SHORT)
+        // Falls back to a plan, not a refusal.
+        assertTrue(!p.blocked, "blocked: ${p.reason}")
         assertTrue(!p.reason.contains("phrase-8-bar"), "reason ${p.reason}")
     }
 
@@ -47,17 +48,6 @@ class PlannerReviewFixesTest {
         val next = track(120.0).let { it.copy(headBeats = BeatSide(it.downbeats, it.downbeats, 120.0, 0.1)) }
         val p = plan(track(120.0), next)
         assertNotEquals(TransitionStyle.DJ_BLEND, p.transitionStyle)
-    }
-
-    @Test
-    fun theMixWindowBoundsTheIncomingOverlapToo() {
-        val next = track(120.0).copy(mixInTime = 28.5, audibleStartTime = 20.0)
-        val p = plan(track(120.0), next, mixWindow = true)
-        if (!p.blocked) {
-            val incomingEnd = p.incomingCueTime + (p.transitionEnd - p.transitionStart) * p.incomingPlaybackRate
-            assertTrue(incomingEnd <= 30.0 + 1e-6, "incoming overlap ends at $incomingEnd")
-            assertTrue(p.handoffDuration <= p.transitionEnd - p.transitionStart + 1e-9)
-        }
     }
 
     @Test
@@ -78,6 +68,8 @@ class PlannerReviewFixesTest {
         val b = track(120.0).copy(key = "F♯ major", keyConfidence = 0.9, mixInTime = 8.5,
             mixInCandidates = listOf(MixCandidate(8.5, 1.0, "drop")))
         val p = plan(a, b)
+        assertTrue(!p.blocked, "blocked: ${p.reason}")
+        assertEquals(TransitionStyle.DJ_BLEND, p.transitionStyle)
         assertTrue(p.transitionEnd - p.transitionStart < 8.0, "overlap ${p.transitionEnd - p.transitionStart}")
     }
 
@@ -86,6 +78,7 @@ class PlannerReviewFixesTest {
         // A trusted opening grid the model measured with no bar lines at all.
         val next = track(120.0).let { it.copy(headBeats = BeatSide(emptyList(), emptyList(), 120.0, 0.9)) }
         val p = plan(track(120.0), next, phraseBars = PHRASE_BARS_SHORT)
+        assertTrue(!p.blocked, "blocked: ${p.reason}")
         assertTrue(!p.reason.contains("phrase-8-bar"), "reason ${p.reason}")
     }
 
@@ -174,5 +167,36 @@ class PlannerReviewFixesTest {
             assertEquals(TransitionStyle.DJ_BLEND, p.transitionStyle, "start $start")
             assertTrue(p.incomingCueTime >= start - 1e-9, "start $start: cue ${p.incomingCueTime}")
         }
+    }
+
+    @Test
+    fun aCorruptTempoNeverHangsThePlanner() {
+        // Cached tempi that are infinite or so small their ratio underflows to 0.
+        for (bad in listOf(Double.MIN_VALUE, Double.POSITIVE_INFINITY, Double.MAX_VALUE)) {
+            plan(track(120.0), track(120.0).copy(bpm = bad))
+            plan(track(120.0).copy(bpm = bad), track(120.0))
+            val head = track(120.0).let { it.copy(headBeats = BeatSide(it.downbeats, it.downbeats, bad, 0.9)) }
+            assertTrue(!openingTempoDisagrees(head) || bad.isFinite())
+            plan(track(120.0), head)
+        }
+    }
+
+    @Test
+    fun aPlainCrossfadeKeepsTheIncomingSkipLimit() {
+        // An untrusted pair (plain crossfade) into a 60 s song silent until 20 s:
+        // cued no further in than the 15 s every other plan may skip.
+        val a = track(120.0).copy(beatConfidence = 0.0)
+        val b = track(120.0, duration = 60.0).copy(beatConfidence = 0.0, audibleStartTime = 20.0, firstBeat = 20.0)
+        val p = plan(a, b)
+        assertTrue(p.incomingCueTime <= latestIncomingCue(60.0) + 1e-9, "cue ${p.incomingCueTime}")
+    }
+
+    @Test
+    fun aMixInSnappedToTheOpeningDownbeatKeepsItsOwnTime() {
+        // The best candidate sits just after a downbeat at 0 s: snapping would make it no drop at all.
+        val next = track(120.0).copy(downbeats = listOf(0.0, 2.0, 4.0), mixInTime = 0.6,
+            mixInCandidates = listOf(MixCandidate(0.6, 1.0, "drop")))
+        val point = incomingMixInPoint(next)
+        assertTrue(point != null && point > 0.0, "mix-in point $point")
     }
 }

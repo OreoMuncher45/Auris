@@ -99,6 +99,30 @@ class SleepTimerFadeTest {
     }
 
     @Test
+    fun aSlowReceiverDoesNotPushThePausePastTheDeadline() = runTest {
+        // Every volume step takes 400 ms to be answered.
+        val volume = object : StreamVolume {
+            override val level = 0.8
+            override suspend fun set(level: Double): Boolean {
+                kotlinx.coroutines.delay(400L)
+                return true
+            }
+        }
+        var pausedAt = -1L
+        SleepTimer.fadeOutCast(
+            volume = volume,
+            spanMs = 2_000L,
+            stepMs = 500L,
+            now = { testScheduler.currentTime },
+            castActive = { true },
+            playing = { true },
+            pause = { pausedAt = testScheduler.currentTime; true },
+        )
+        // At most one slow step past the deadline, not one per step.
+        assertTrue("paused at $pausedAt", pausedAt in 2_000L..2_400L)
+    }
+
+    @Test
     fun aRefusedVolumeRestoreIsRetriedSoTheNextPlayIsNotSilent() = runTest {
         val volume = RefusesRestore(level = 0.8, refusedRestores = 1)
         val result = SleepTimer.fadeOutCast(
