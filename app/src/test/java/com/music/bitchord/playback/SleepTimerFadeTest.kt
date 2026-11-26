@@ -85,6 +85,51 @@ class SleepTimerFadeTest {
         assertEquals(listOf("pause at 0.0"), events)
     }
 
+    /** Accepts every fade step, then refuses the first [refusedRestores] tries at the restore. */
+    private class RefusesRestore(override val level: Double, private var refusedRestores: Int) : StreamVolume {
+        val asked = mutableListOf<Double>()
+        override suspend fun set(level: Double): Boolean {
+            asked += level
+            if (level == this.level && asked.size > 1 && refusedRestores > 0) {
+                refusedRestores--
+                return false
+            }
+            return true
+        }
+    }
+
+    @Test
+    fun aRefusedVolumeRestoreIsRetriedSoTheNextPlayIsNotSilent() = runTest {
+        val volume = RefusesRestore(level = 0.8, refusedRestores = 1)
+        val result = SleepTimer.fadeOutCast(
+            volume = volume,
+            spanMs = 1_000L,
+            stepMs = 500L,
+            now = { testScheduler.currentTime },
+            castActive = { true },
+            playing = { true },
+            pause = { true },
+        )
+        assertEquals(SleepTimer.CastFade.PAUSED, result)
+        // Down to silence, the restore refused once, then accepted.
+        assertEquals(listOf(0.8, 0.4, 0.0, 0.8, 0.8), volume.asked.map { Math.round(it * 10) / 10.0 })
+    }
+
+    @Test
+    fun aRestoreRefusedEveryTimeStopsAfterItsAttempts() = runTest {
+        val volume = RefusesRestore(level = 0.8, refusedRestores = Int.MAX_VALUE)
+        SleepTimer.fadeOutCast(
+            volume = volume,
+            spanMs = 1_000L,
+            stepMs = 500L,
+            now = { testScheduler.currentTime },
+            castActive = { true },
+            playing = { true },
+            pause = { true },
+        )
+        assertEquals(SleepTimer.CAST_RESTORE_ATTEMPTS, volume.asked.drop(3).size)
+    }
+
     @Test
     fun aReceiverThatRefusesStreamVolumeStillPausesAtTheDeadline() = runTest {
         val volume = FakeStreamVolume(level = 0.8, accepts = false)
