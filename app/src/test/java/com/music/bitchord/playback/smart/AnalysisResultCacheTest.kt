@@ -73,4 +73,28 @@ class AnalysisResultCacheTest {
         assertEquals(4, cache.size)
         assertNotNull(cache["t10"])
     }
+
+    @Test
+    fun aNewEntryIsNeverEvictedToMakeRoomForItself() {
+        val cache = AnalysisResultCache(maxEntries = 1)
+        cache.put("pinned", analysis("pinned"), none)
+
+        val (cached, evicted) = cache.putIfAbsent("new", analysis("new")) { it == "pinned" }
+        assertTrue(evicted.isEmpty())
+        assertSame(cached, cache["new"])
+    }
+
+    @Test
+    fun evictionCleanupRunsInsideTheEvictingCall() {
+        val seen = mutableListOf<String>()
+        lateinit var cache: AnalysisResultCache
+        cache = AnalysisResultCache(maxEntries = 1) { evicted ->
+            // Still inside the cache's lock: the evicted id is already gone.
+            evicted.forEach { assertNull(cache[it]) }
+            seen += evicted
+        }
+        cache.put("a", analysis("a"), none)
+        cache.put("b", analysis("b"), none)
+        assertEquals(listOf("a"), seen)
+    }
 }
