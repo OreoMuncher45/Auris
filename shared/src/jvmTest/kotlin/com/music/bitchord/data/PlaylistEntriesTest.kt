@@ -138,4 +138,55 @@ class PlaylistEntriesTest {
             runBlocking { collectPlaylistEntries(first, maxPages = 10) { error("no next page") } }
         }
     }
+    // ---- Whole listings: queue all, download sync, "already in this playlist?" ----
+
+    private val episode = """{ "musicMultiRowListItemRenderer": { "title": { "runs": [ { "text": "Episode" } ] } } }"""
+
+    private fun suggestions(vararg rows: String) =
+        """{ "musicShelfRenderer": { "title": { "runs": [ { "text": "Suggestions" } ] }, "contents": [ ${rows.joinToString(",")} ] } }"""
+
+    @Test
+    fun `a whole listing reads a mixed page's own tracks, leaves its suggestions out, and carries on`() = runBlocking {
+        val pages = mapOf(
+            "P2" to appended(
+                row("bbbbbbbbbbb", "SET2"),
+                episode,
+                suggestions(row("sssssssssss", "SUGG")),
+                token("P3"),
+            ),
+            "P3" to appended(row("ccccccccccc", "SET3")),
+        )
+        val songs = collectSongListing(appended(row("aaaaaaaaaaa", "SET1"), token("P2")), maxPages = 10, whole = true) {
+            pages.getValue(it)
+        }
+        assertEquals(listOf("aaaaaaaaaaa", "bbbbbbbbbbb", "ccccccccccc"), songs.map { it.videoId })
+    }
+
+    @Test
+    fun `a whole listing fails when a later page fails to load, and a display listing keeps what it read`() = runBlocking {
+        val first = appended(row("aaaaaaaaaaa", "SET1"), token("P2"))
+        val failing: suspend (String) -> JsonElement = { throw java.io.IOException("offline") }
+        assertFailsWith<java.io.IOException> { collectSongListing(first, maxPages = 10, whole = true, next = failing) }
+        assertEquals(listOf("aaaaaaaaaaa"), collectSongListing(first, maxPages = 10, whole = false, next = failing).map { it.videoId })
+    }
+
+    @Test
+    fun `a whole listing longer than the page cap fails, and a display listing stops at the cap`() = runBlocking {
+        var n = 0
+        val endless: suspend (String) -> JsonElement = { n++; appended(row("v${n.toString().padStart(10, '0')}", "SET$n"), token("P$n")) }
+        val first = appended(row("aaaaaaaaaaa", "SET0"), token("P0"))
+        assertFailsWith<IllegalStateException> { collectSongListing(first, maxPages = 3, whole = true, next = endless) }
+        n = 0
+        assertEquals(3, collectSongListing(first, maxPages = 3, whole = false, next = endless).size)
+    }
+
+    @Test
+    fun `a whole listing fails on a later page whose own rows were not found`() {
+        val onlySuggestions = appended(suggestions(row("sssssssssss", "SUGG")))
+        assertFailsWith<IllegalStateException> {
+            runBlocking {
+                collectSongListing(appended(row("aaaaaaaaaaa", "SET1"), token("P2")), maxPages = 10, whole = true) { onlySuggestions }
+            }
+        }
+    }
 }
