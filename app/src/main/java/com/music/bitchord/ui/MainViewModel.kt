@@ -5079,7 +5079,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 ?.takeIf { listenerKey() == listener && Innertube.listenerStamp() == stamp }
             val stack = _detailStack.value
             val index = stack.indexOfFirst { it.browseId == browseId && it.opening == opened }
-            if (index < 0 || fetched == null) {
+            // Closed while its rows were out: nothing to grow or reopen. With
+            // an empty stack, index and lastIndex would both be -1 below.
+            if (index < 0) return@launch
+            if (fetched == null) {
                 // The same listener, but the session the page was opened under is
                 // gone (its scope was refreshed): every later scroll would be
                 // refused the same way, so the page is opened again under the
