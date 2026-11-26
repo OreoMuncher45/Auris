@@ -4277,6 +4277,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         val resolved = browseTypeOf(browseId, type)
         val opened = markDetailOpened(browseId)
+        // Who the page is opened for: its continuation walk belongs to that
+        // listener, even when the first response lands after a switch. Taken
+        // here, before anything below can suspend (the downloaded copy, the
+        // scope wait), so a switch during any of it leaves the page with the
+        // listener it was opened for, and [fillIn] stops rather than continue
+        // it as the new one.
+        val openedFor = listenerKey()
         _detailStack.value += DetailPage(
             browseId = browseId,
             title = title,
@@ -4331,8 +4338,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 emptyList()
             }
             if (onDevice.isNotEmpty()) {
-                _detailStack.value = _detailStack.value.map {
-                    if (it.browseId == browseId && it.songs is UiState.Loading) it.copy(songs = UiState.Success(onDevice)) else it
+                _detailStack.value = _detailStack.value.updateOpening(browseId, opened) {
+                    if (it.songs is UiState.Loading) it.copy(songs = UiState.Success(onDevice)) else it
                 }
             }
             // A playlist that was downloaded whole is a promise about a moving
@@ -4347,16 +4354,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     browseId,
                 )
             }
-            // Who the page was opened for: its continuation walk belongs to that
-            // listener, even when the first response lands after a switch.
-            // Captured before the scope wait below, so a switch during that
-            // wait leaves the page with the listener it was opened for, and
-            // [fillIn] stops rather than continue it as the new one. A
-            // candidate account under validation is waited out first: until it
-            // ends, the credentials are not the listener's.
+            // A candidate account under validation is waited out first: until
+            // it ends, the credentials are not the listener's.
             val remotePage = localPlaylist == null && remote == null && !browseId.startsWith("local:")
-            // Captured before any wait: it names whoever the page was opened for.
-            val openedFor = listenerKey()
             // The credentials, though, are read once the session scope is in:
             // installing it right after an account switch can change them for
             // the same listener, and the page's own browse waits for it anyway —
@@ -4402,8 +4402,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     // replaces it below — same pattern as [onDevice] above.
                     // A 1,600-track verify costs seconds; the snapshot is free.
                     Downloads.snapshotSongs().takeIf { it.isNotEmpty() }?.let { snap ->
-                        _detailStack.value = _detailStack.value.map {
-                            if (it.browseId == browseId && it.songs is UiState.Loading) {
+                        _detailStack.value = _detailStack.value.updateOpening(browseId, opened) {
+                            if (it.songs is UiState.Loading) {
                                 it.copy(songs = UiState.Success(snap))
                             } else it
                         }
@@ -4455,8 +4455,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     if (browseId == YtMusicRepository.LIKED_MUSIC && listenerKey() == openedFor) {
                         LikedCache.read(openedFor)?.takeIf { it.isNotEmpty() }?.let { cached ->
                             val painted = cached.withLocalFiles()
-                            _detailStack.value = _detailStack.value.map {
-                                if (it.browseId == browseId && it.songs is UiState.Loading) {
+                            _detailStack.value = _detailStack.value.updateOpening(browseId, opened) {
+                                if (it.songs is UiState.Loading) {
                                     it.copy(songs = UiState.Success(painted))
                                 } else it
                             }
