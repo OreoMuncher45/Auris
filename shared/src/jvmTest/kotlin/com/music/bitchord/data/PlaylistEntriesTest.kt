@@ -114,4 +114,28 @@ class PlaylistEntriesTest {
             }
         }
     }
+
+    private fun untitledRow(videoId: String, setVideoId: String) = """
+        { "musicResponsiveListItemRenderer": {
+          "playlistItemData": { "videoId": "$videoId", "playlistSetVideoId": "$setVideoId" },
+          "flexColumns": [ { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [ { "text": "" } ] } } } ]
+        } }"""
+
+    @Test
+    fun `a later page with a row that cannot be read fails the read`() {
+        val withUnreadableRow = appended(row("bbbbbbbbbbb", "SET2"), untitledRow("ccccccccccc", "SET3"))
+        assertFailsWith<IllegalStateException> {
+            runBlocking {
+                collectPlaylistEntries(appended(row("aaaaaaaaaaa", "SET1"), token("P2")), maxPages = 10) { withUnreadableRow }
+            }
+        }
+    }
+
+    @Test
+    fun `a first page with a row that cannot be read fails the read`() {
+        val first = appended(row("aaaaaaaaaaa", "SET1"), untitledRow("ccccccccccc", "SET3"))
+        assertFailsWith<IllegalStateException> {
+            runBlocking { collectPlaylistEntries(first, maxPages = 10) { error("no next page") } }
+        }
+    }
 }

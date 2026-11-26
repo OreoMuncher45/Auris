@@ -595,6 +595,13 @@ object InnertubeParser {
          * general way (a page on screen) rather than give up (a reorder).
          */
         val unreadItems: JsonArray? = null,
+        /**
+         * Whether every row in the page's own playlist scope was read. A row
+         * that can't be (no video id, a blank title) is left out of [songs],
+         * and a reorder built on what is left would move entries past one it
+         * never saw.
+         */
+        val complete: Boolean = true,
     ) {
         enum class Kind {
             /** The playlist's own rows were recognised (possibly none: an empty last page). */
@@ -674,11 +681,10 @@ object InnertubeParser {
         if (playlistScope == null && suggestionShelves.isEmpty()) return null
 
         val pageCredit = pageCredit(root)
-        val songs = playlistScope?.let { playlist ->
-            collectRenderers(playlist, "musicResponsiveListItemRenderer")
-                .mapNotNull { parseResponsiveListItem(it, pageCredit) }
-                .distinctBy { if (byEntry) it.setVideoId ?: it.videoId else it.videoId }
-        }.orEmpty()
+        val rowRenderers = playlistScope?.let { collectRenderers(it, "musicResponsiveListItemRenderer") }.orEmpty()
+        val parsedRows = rowRenderers.mapNotNull { parseResponsiveListItem(it, pageCredit) }
+        val complete = parsedRows.size == rowRenderers.size
+        val songs = parsedRows.distinctBy { if (byEntry) it.setVideoId ?: it.videoId else it.videoId }
         val knownSongs = songs.mapTo(HashSet()) { it.videoId }
         val suggested = suggestionShelves
             .flatMap { collectRenderers(it, "musicResponsiveListItemRenderer") }
@@ -691,7 +697,9 @@ object InnertubeParser {
         // continuation means more real tracks.
         val token = playlistScope?.let { continuationToken(it) }
         val kind = when {
-            playlistScope != null -> PlaylistShelfPage.Kind.ROWS
+            // Rows only when every one of them was read.
+            playlistScope != null && complete -> PlaylistShelfPage.Kind.ROWS
+            playlistScope != null -> PlaylistShelfPage.Kind.UNREADABLE
             // The documented end of an owned playlist: a plain continuation
             // whose only rows are inside its Suggestions shelves.
             // Nothing but Suggestions shelves, item for item: any other item (an
@@ -705,7 +713,13 @@ object InnertubeParser {
         }
         return PlaylistShelfPage(
             songs, suggested, token, kind,
-            unreadItems = appendedItems?.takeIf { kind == PlaylistShelfPage.Kind.UNREADABLE && it.isNotEmpty() },
+            // Only an appended page whose rows weren't recognised as tracks is
+            // read the general way; one with a row that failed to parse keeps
+            // its parsed rows for display and fails a reorder.
+            unreadItems = appendedItems?.takeIf {
+                kind == PlaylistShelfPage.Kind.UNREADABLE && playlistScope == null && it.isNotEmpty()
+            },
+            complete = complete,
         )
     }
 

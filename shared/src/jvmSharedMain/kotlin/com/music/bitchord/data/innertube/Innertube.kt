@@ -128,6 +128,7 @@ object Innertube {
     var cookie: String? = null
         set(value) = synchronized(identityLock) {
             if (field != value) {
+                accountTransitions++
                 // Both belong to the session that just left. A scope kept across
                 // a sign-in would credit the new account's plays to the old one,
                 // and a visitor id minted under the old session is not bound to
@@ -170,24 +171,44 @@ object Innertube {
     private var published = PublishedListener(null, 0L)
 
     private fun refreshListener() = synchronized(identityLock) {
+        // An install in progress publishes once, at its end.
+        if (deferPublish) return@synchronized
+        // Exactly what requests are signed with — the brand page, the account
+        // on whose behalf, and the account index in the jar, whichever of the
+        // chosen channel, an adopted page scope or the shell's own scope
+        // supplies them — plus the cookie. Two names for the same signing
+        // identity (an adopted personal scope and the shell's default for it)
+        // are one listener; any difference in what is sent is another.
         val session = cookie
         val fresh = session?.let {
-            val channel = channelOverride
-            when {
-                // The account index requests actually send: the scope's when
-                // the channel doesn't name one.
-                channel != null -> "${channel.pageId}/${channel.dataSyncId}/${authUserFor(scope)}|$it"
-                // A scope taken from a signed-in page can name another account
-                // under the same cookie; requests then go out as that one.
-                adoptedIdentity != null -> "$adoptedIdentity|$it"
-                // The account index requests send (the scope's, "0" until one is
-                // installed): a scope that selects another account in the jar is
-                // another listener, not the same one with new answers.
-                else -> "${authUserFor(scope)}|$it"
-            }
+            val scoped = scope
+            "${pageIdFor(scoped)}/${dataSyncIdFor(scoped)}/${authUserFor(scoped)}|$it"
         }
         val current = published
         if (fresh != current.listener) published = PublishedListener(fresh, current.generation + 1)
+    }
+
+    /** Set while [installSession] writes, so the listener is published once, whole. Under [identityLock]. */
+    private var deferPublish = false
+
+    /**
+     * Counts account transitions — sign-in, sign-out, a profile or channel
+     * picked, a page's scope adopted, an install — as opposed to the
+     * [refreshSessionScope]'s own clearing and re-reading of the scope. A
+     * refresh that saw one land meanwhile hands back no retry stamp, even if
+     * the listener came back the same (A, B, then A again). Under [identityLock].
+     */
+    private var accountTransitions = 0L
+
+    /** The current [accountTransitions]; for tests at this seam. */
+    internal fun accountTransitionsForTest(): Long = synchronized(identityLock) { accountTransitions }
+
+    /**
+     * The session to retry under after a refresh that began at [startTransitions]:
+     * the current one, or null when an account transition landed meanwhile.
+     */
+    internal fun retryStampAfter(startTransitions: Long): ListenerStamp? = synchronized(identityLock) {
+        if (accountTransitions != startTransitions) null else ListenerStamp(published.listener, published.generation)
     }
 
     /**
@@ -354,6 +375,7 @@ object Innertube {
      */
     fun selectChannel(pageId: String?, dataSyncId: String?, authUser: String? = null) {
         synchronized(identityLock) {
+            accountTransitions++
             channelOverride = if (pageId == null && dataSyncId == null) {
                 null
             } else {
@@ -394,7 +416,10 @@ object Innertube {
         clientVersion: String?,
         loggedIn: Boolean,
     ) {
-        synchronized(identityLock) { adoptSessionScopeLocked(pageId, dataSyncId, authUser, visitorData, clientVersion, loggedIn) }
+        synchronized(identityLock) {
+            accountTransitions++
+            adoptSessionScopeLocked(pageId, dataSyncId, authUser, visitorData, clientVersion, loggedIn)
+        }
     }
 
     private fun adoptSessionScopeLocked(
@@ -570,20 +595,31 @@ object Innertube {
      */
     fun installSession(candidate: CandidateSession, unless: () -> Boolean = { false }): Boolean = synchronized(identityLock) {
         if (unless()) return@synchronized false
-        cookie = candidate.cookie
-        adoptSessionScopeLocked(
-            pageId = candidate.pageId,
-            dataSyncId = candidate.dataSyncId,
-            authUser = candidate.authUser,
-            visitorData = candidate.visitorData,
-            clientVersion = candidate.clientVersion,
-            loggedIn = true,
-        )
-        channelOverride = if (candidate.pageId == null && candidate.dataSyncId == null) {
-            null
-        } else {
-            ChannelSelection(candidate.pageId, candidate.dataSyncId, candidate.authUser)
+        // Every field first, then one publish: no one reads a stamp for half of it.
+        deferPublish = true
+        try {
+            cookie = candidate.cookie
+            adoptSessionScopeLocked(
+                pageId = candidate.pageId,
+                dataSyncId = candidate.dataSyncId,
+                authUser = candidate.authUser,
+                visitorData = candidate.visitorData,
+                clientVersion = candidate.clientVersion,
+                loggedIn = true,
+            )
+            channelOverride = if (candidate.pageId == null && candidate.dataSyncId == null) {
+                null
+            } else {
+                ChannelSelection(candidate.pageId, candidate.dataSyncId, candidate.authUser)
+            }
+            // The candidate's own visitor id, or none: a profile sharing the
+            // cookie must not inherit the previous one's session-bound id.
+            visitorData = candidate.visitorData?.takeIf { it.isNotBlank() }
+            visitorDataIsSessionBound = visitorData != null
+        } finally {
+            deferPublish = false
         }
+        accountTransitions++
         refreshListener()
         true
     }
@@ -610,7 +646,7 @@ object Innertube {
 
     /** The credentials a request here would go out with, described; for tests at this seam. */
     internal suspend fun requestIdentityForTest(): String =
-        requestCredentials().let { "${it.cookie}|${it.authUser}|${it.pageId}|${it.dataSyncId}|${it.generation}" }
+        requestCredentials().let { "${it.cookie}|${it.authUser}|${it.pageId}|${it.dataSyncId}|${it.generation}|${it.visitorData}" }
 
     private const val CANDIDATE_GENERATION = -1L
 
@@ -694,26 +730,32 @@ object Innertube {
      * the one the rejected request was signed as. A rejection that arrives
      * after another listener took over refreshes nothing: clearing now would
      * drop *that* listener's adopted scope for a failure it never had.
-     * Returns whether the refresh ran.
+     * Returns the session to retry under, or null when the refresh did not
+     * run, or an account transition landed while it read the shell.
      */
     /** Whether [owner] is the session requests are signed with now: same listener, same generation. */
     internal fun isCurrentSession(owner: ListenerStamp): Boolean = synchronized(identityLock) {
         published.listener == owner.listener && published.generation == owner.generation
     }
 
-    suspend fun refreshSessionScope(owner: ListenerStamp): Boolean {
-        if (cookie == null) return false
+    suspend fun refreshSessionScope(owner: ListenerStamp): ListenerStamp? {
+        if (cookie == null) return null
+        var start = 0L
         val cleared = scopeLock.withLock {
             synchronized(identityLock) {
                 if (!isCurrentSession(owner)) return@synchronized false
+                start = accountTransitions
                 scope = null
                 adoptedIdentity = null
                 refreshListener()
                 true
             }
         }
-        if (cleared) ensureSessionScope()
-        return cleared
+        if (!cleared) return null
+        ensureSessionScope()
+        // The session to retry under, unless an account transition landed
+        // while the shell was read — even one that came back to the same listener.
+        return retryStampAfter(start)
     }
 
     /**
