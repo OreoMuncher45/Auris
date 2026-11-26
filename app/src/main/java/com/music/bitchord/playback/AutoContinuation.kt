@@ -94,7 +94,14 @@ internal fun <T> withoutRevoked(resolved: List<T>, revoked: Collection<Int>, sta
  * main thread some time after the build, through the session player's
  * setMediaItems.
  */
-internal class PendingAutoInstall(val startEntryId: String?, val startIndex: Int, val size: Int, val owner: ListenerStamp) {
+internal class PendingAutoInstall(
+    val startEntryId: String?,
+    val startIndex: Int,
+    val size: Int,
+    val owner: ListenerStamp,
+    /** Tells the controller that asked for it that it was refused. */
+    val onRefused: () -> Unit = {},
+) {
     /** Completed with its entry ids once a session player has installed it. */
     val installed = kotlinx.coroutines.CompletableDeferred<HashSet<String>?>()
 }
