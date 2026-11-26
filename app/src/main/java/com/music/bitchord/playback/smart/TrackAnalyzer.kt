@@ -1914,29 +1914,14 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         if (LocalAudioSource.isLocal(uri)) return copyToRead(trackId, uri, durationSeconds)
         // Read off the published result itself, so the key is the one that
         // came with the grid rather than one written beside it.
-        val measured = results[trackId]?.measuredOn
-        if (measured == null) {
-            Log.d(TAG, "No loop region for $trackId: its grid does not say which copy it was measured on")
-            return null
-        }
-        // Spliced into what is playing, so the copy playing now has to share
-        // the measured copy's timeline: the same entry, or both YouTube's own
-        // recording. An upgrade or a substitute the player moved to after the
-        // measurement can sit elsewhere, and the loop would start off the beat
-        // and jump at takeover.
-        val playing = cache.cacheKeyOf(uri)
-        val videoId = uri.getQueryParameter("v")
-        if (playing != measured &&
-            !(AutomixAnalysisSource.isCanonicalYouTubeRendition(videoId, playing) &&
-                AutomixAnalysisSource.isCanonicalYouTubeRendition(videoId, measured))
-        ) {
-            Log.d(TAG, "No loop region for $trackId: measured on $measured, playing $playing")
-            return null
-        }
-        // A plan made from an earlier result is cut from that result's copy or
-        // not at all: a later result can name a different one.
-        if (plannedOn != null && plannedOn != measured) {
-            Log.d(TAG, "No loop region for $trackId: planned on $plannedOn, now measured on $measured")
+        val decision = loopDeckCopy(
+            measured = results[trackId]?.measuredOn,
+            playing = cache.cacheKeyOf(uri),
+            plannedOn = plannedOn,
+            videoId = uri.getQueryParameter("v"),
+        )
+        val measured = decision.key ?: run {
+            Log.d(TAG, "No loop region for $trackId: ${decision.refusal}")
             return null
         }
         return measuredCopy(trackId, uri, measured)
@@ -2203,4 +2188,31 @@ internal fun vocalSpan(
     val count = (maxSeconds * sampleRate).toInt().coerceAtMost(size - preroll)
     if (count <= 0) return null
     return preroll to count
+}
+
+/** Which copy a loop deck is cut from, or why none: see [loopDeckCopy]. */
+internal class LoopDeckCopy(val key: String?, val refusal: String?)
+
+/**
+ * The copy a loop deck may be cut from.
+ *
+ * - [measured], the copy the current result's grid came from, must be known.
+ * - [playing], the copy the player reads now, must share its timeline: the
+ *   same entry, or both YouTube's own recording. An upgrade or a substitute
+ *   the player moved to after the measurement can sit elsewhere, and the loop
+ *   would start off the beat and jump at takeover.
+ * - [plannedOn], the measured copy of the analysis the loop was planned from,
+ *   must still be [measured]: a result published after the plan, measured on
+ *   another copy, must not supply the plan's decks.
+ */
+internal fun loopDeckCopy(measured: String?, playing: String, plannedOn: String?, videoId: String?): LoopDeckCopy {
+    if (measured == null) return LoopDeckCopy(null, "its grid does not say which copy it was measured on")
+    val sameTimeline = playing == measured ||
+        (AutomixAnalysisSource.isCanonicalYouTubeRendition(videoId, playing) &&
+            AutomixAnalysisSource.isCanonicalYouTubeRendition(videoId, measured))
+    if (!sameTimeline) return LoopDeckCopy(null, "measured on $measured, playing $playing")
+    if (plannedOn != null && plannedOn != measured) {
+        return LoopDeckCopy(null, "planned on $plannedOn, now measured on $measured")
+    }
+    return LoopDeckCopy(measured, null)
 }

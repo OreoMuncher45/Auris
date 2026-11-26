@@ -2176,9 +2176,9 @@ class PlaybackService : MediaLibraryService() {
                     else -> null
                 }
             },
-            loopRegion = { item, durationMs, from, to, rate ->
+            loopRegion = { item, durationMs, from, to, rate, plannedOn ->
                 item.localConfiguration?.uri?.let { uri ->
-                    trackAnalyzer.loopRegion(item.mediaId, uri, durationMs / 1000.0, from, to, rate)
+                    trackAnalyzer.loopRegion(item.mediaId, uri, durationMs / 1000.0, from, to, rate, plannedOn)
                 }
             },
             syncedLines = ::loopMixLyrics,

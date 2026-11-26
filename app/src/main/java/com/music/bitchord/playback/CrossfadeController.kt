@@ -227,8 +227,14 @@ class CrossfadeController(
     private val mixWaveform: (MediaItem, Long, Double, Double, Int) -> MixWaveform.Bands? = { _, _, _, _, _ -> null },
     /** A player's [LoopMixPort], read through its sink's role; null where there is none. */
     private val loopPortOf: (ExoPlayer) -> LoopMixPort? = { null },
-    /** Stereo audio of a track for a loop mix deck: (item, duration ms, from s, to s, rate). Blocking. */
-    private val loopRegion: (MediaItem, Long, Double, Double, Int) -> LoopRegion? = { _, _, _, _, _ -> null },
+    /**
+     * Stereo audio of a track for a loop mix deck: (item, duration ms, from s,
+     * to s, rate, planned on). The last is the [TrackAnalysis.measuredOn] of
+     * the analysis the loop was planned from, so the deck is cut from that copy
+     * or not at all. Blocking.
+     */
+    private val loopRegion: (MediaItem, Long, Double, Double, Int, String?) -> LoopRegion? =
+        { _, _, _, _, _, _ -> null },
     /** A track's synced lyrics, for vouching a loop instrumental; null when it has none. */
     private val syncedLines: suspend (MediaItem, Long) -> List<LyricLine>? = { _, _ -> null },
     /** The loudness-normalisation gain a track plays at, so the incoming deck is levelled like its player. */
@@ -1341,7 +1347,13 @@ class CrossfadeController(
             plannedTransition = currentItem.mediaId to loopStartMs
             holdAhead(player, duration)
             if (loopStartMs - player.currentPosition > LOOP_ARM_LEAD_MS) return
-            beginLoop(player, loop, currentItem, nextItem, duration, nextDuration)
+            beginLoop(
+                player, loop, currentItem, nextItem, duration, nextDuration,
+                // The copies the plan was made on travel with it: a newer
+                // result measured on another copy must not supply the decks.
+                outPlannedOn = currentAnalysis.measuredOn,
+                inPlannedOn = nextAnalysis.measuredOn,
+            )
             return
         }
 
@@ -2933,6 +2945,8 @@ class CrossfadeController(
         inItem: MediaItem,
         durationMs: Long,
         nextDurationMs: Long,
+        outPlannedOn: String?,
+        inPlannedOn: String?,
     ) {
         val into = standby()
         if (out === into) return
@@ -2968,9 +2982,9 @@ class CrossfadeController(
                     runCatching {
                         LoopMixSession.build(plan, outItem.mediaId, inItem.mediaId, sampleRate, inLevel) { side, from, to ->
                             if (side == LoopMix.Side.OUT) {
-                                loopRegion(outItem, durationMs, from, to, sampleRate)
+                                loopRegion(outItem, durationMs, from, to, sampleRate, outPlannedOn)
                             } else {
-                                loopRegion(inItem, nextDurationMs, from, to, sampleRate)
+                                loopRegion(inItem, nextDurationMs, from, to, sampleRate, inPlannedOn)
                             }
                         }
                     }.onFailure { TrackLog.w(TAG, "loop build failed", it) }.getOrNull()?.also(built::set)
