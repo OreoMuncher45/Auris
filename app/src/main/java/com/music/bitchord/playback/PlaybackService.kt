@@ -7959,6 +7959,23 @@ class PlaybackService : MediaLibraryService() {
     @Volatile
     private var sleepFadeGain: Float? = null
 
+    /**
+     * The sleep timer's pause at its deadline: the receiver's confirmed and
+     * retried while casting; locally the player and, for a quality-upgrade
+     * overlap still running, the standby too.
+     */
+    private suspend fun pauseSleepTimerOutput() {
+        SleepTimer.pauseAtDeadline(
+            castActive = { castPlayback.active },
+            confirmCastPause = castPlayback::pauseAndConfirm,
+            pauseLocal = {
+                val active = player
+                active?.pause()
+                spare?.takeIf { it !== active }?.pause()
+            },
+        )
+    }
+
     private fun watchSleepTimer() {
         scope.launch {
             SleepTimer.deadline.collectLatest { deadline ->
@@ -7985,37 +8002,27 @@ class PlaybackService : MediaLibraryService() {
                             playing = { castPlayback.playWhenReady },
                             pause = castPlayback::pauseAndConfirm,
                         )
-                        when (fade) {
-                            SleepTimer.CastFade.PAUSED -> {
-                                SleepTimer.cancel()
-                                return@collectLatest
-                            }
-                            SleepTimer.CastFade.PAUSE_FAILED -> {
-                                TrackLog.d("BitChordSleepTimer", "the Cast receiver never confirmed the sleep timer's pause")
+                        if (fade == SleepTimer.CastFade.PAUSE_FAILED) {
+                            TrackLog.d("BitChordSleepTimer", "the Cast receiver never confirmed the sleep timer's pause")
+                        }
+                        when (SleepTimer.afterCastFade(fade, castActiveNow = castPlayback.active)) {
+                            SleepTimer.AfterCastFade.CANCEL -> {
                                 SleepTimer.cancel()
                                 return@collectLatest
                             }
                             // The listener paused: the timer still stands. Whatever
-                            // is playing at the deadline (resumed, or moved to the
-                            // phone) is paused then.
-                            SleepTimer.CastFade.LISTENER_PAUSED -> {
+                            // is playing at the deadline (resumed, or moved) is paused then.
+                            SleepTimer.AfterCastFade.WAIT_DEADLINE -> {
                                 val left = deadline - SystemClock.elapsedRealtime()
                                 if (left > 0) delay(left)
-                                SleepTimer.pauseFor(
-                                    castActive = castPlayback.active,
-                                    pauseCast = castPlayback::pause,
-                                    pauseLocal = {
-                                        val active = player
-                                        active?.pause()
-                                        spare?.takeIf { it !== active }?.pause()
-                                    },
-                                )
+                                pauseSleepTimerOutput()
                                 SleepTimer.cancel()
                                 return@collectLatest
                             }
-                            // Moved to the phone: the local path below fades and
-                            // pauses it at the same deadline.
-                            SleepTimer.CastFade.MOVED -> Unit
+                            // On the phone now (moved during the fade, the pause or the
+                            // restore): the local path below fades and pauses it at the
+                            // same deadline.
+                            SleepTimer.AfterCastFade.CONTINUE_LOCAL -> Unit
                         }
                     }
                     if (fadeMs > 0) {
@@ -8050,15 +8057,9 @@ class PlaybackService : MediaLibraryService() {
                     // Locally, the standby too: a quality-upgrade overlap still
                     // running at the deadline would otherwise play on at its
                     // blend volume until the upgrade loop copies the pause over.
-                    SleepTimer.pauseFor(
-                        castActive = castPlayback.active,
-                        pauseCast = castPlayback::pause,
-                        pauseLocal = {
-                            val active = player
-                            active?.pause()
-                            spare?.takeIf { it !== active }?.pause()
-                        },
-                    )
+                    // Wherever playback is now: a local fade that ended with the
+                    // session moved to a receiver gets the confirmed Cast pause.
+                    pauseSleepTimerOutput()
                     SleepTimer.cancel()
                 } finally {
                     SleepTimer.fadingOut = false
