@@ -25,6 +25,22 @@ internal class ShiftTimeline(private val capacity: Int = 32) {
     private var head = 0
     private var count = 0
 
+    /**
+     * How close two boundaries are to be "the same point": under half a frame
+     * at the stream's rate, so a frame written between two drops keeps them
+     * apart even at 192 kHz (5.2 µs a frame), and never under the µs rounding
+     * a boundary picks up. Set with [setSampleRate].
+     */
+    private var mergeToleranceUs = MERGE_TOLERANCE_US
+
+    fun setSampleRate(sampleRate: Int) {
+        mergeToleranceUs = if (sampleRate > 0) {
+            minOf(MERGE_TOLERANCE_US, maxOf(1L, 500_000L / sampleRate))
+        } else {
+            MERGE_TOLERANCE_US
+        }
+    }
+
     /** The offset for frames being written now: the delegate's timeline minus the track's. */
     var writtenUs = 0L
         private set
@@ -48,9 +64,9 @@ internal class ShiftTimeline(private val capacity: Int = 32) {
             // buffer's boundary is rounded to whole µs on its own, so "the same
             // point" is anything closer than a frame: nothing was written between.
             val merges = if (deltaUs < 0) {
-                lastDelta < 0 && abs(starts[last] - boundaryUs) <= MERGE_TOLERANCE_US
+                lastDelta < 0 && abs(starts[last] - boundaryUs) <= mergeToleranceUs
             } else {
-                lastDelta > 0 && abs(starts[last] + lastDelta - boundaryUs) <= MERGE_TOLERANCE_US
+                lastDelta > 0 && abs(starts[last] + lastDelta - boundaryUs) <= mergeToleranceUs
             }
             if (merges) {
                 deltas[last] = lastDelta + deltaUs
@@ -85,7 +101,7 @@ internal class ShiftTimeline(private val capacity: Int = 32) {
     }
 
     private companion object {
-        /** Under one frame at 48 kHz (20.8 µs), well over the µs rounding of a boundary. */
+        /** The most it ever is: under one frame at 48 kHz (20.8 µs), well over the µs rounding of a boundary. */
         const val MERGE_TOLERANCE_US = 10L
     }
 
