@@ -1969,7 +1969,7 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                 DesktopMusicSources.search(query, filter).fold(
                     onSuccess = { rows ->
                         if (!searchState.owns(ticket)) return@fold
-                        searchState.rows = rows
+                        searchState.show(ticket, rows)
                         if (typedHit == null) {
                             rows.firstNotNullOfOrNull { row ->
                                 when (row) {
@@ -1988,8 +1988,9 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                 if (searchState.owns(ticket)) searchState.error = failure.message ?: "Search failed"
             } finally {
                 // OBS and other desktop capture tools can briefly interrupt focus/coroutines.
-                // A superseded search leaves the flag to the one that replaced it.
-                if (searchState.owns(ticket)) searchState.loading = false
+                // A superseded search leaves the flag to the one that replaced it; one that only
+                // lost its credentials is still the newest and clears it, or nothing would.
+                searchState.finish(ticket)
             }
         }
     }
