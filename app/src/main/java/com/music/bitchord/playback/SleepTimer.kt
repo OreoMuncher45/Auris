@@ -201,8 +201,12 @@ object SleepTimer {
                     // Refused: no more fading, but the pause keeps its deadline.
                     if (volume.set(original * fadeVolume(left, spanMs))) touched = true else fading = false
                 }
-                if (left <= 0L) break
-                delay(minOf(stepMs, left))
+                // Read again: a receiver can take seconds to answer a volume
+                // step, and waiting out the time measured before it would put
+                // the pause that much past the deadline.
+                val leftNow = (end - now()).coerceAtLeast(0L)
+                if (leftNow <= 0L) break
+                delay(minOf(stepMs, leftNow))
             }
             repeat(CAST_PAUSE_ATTEMPTS) {
                 if (!castActive()) return CastFade.MOVED
