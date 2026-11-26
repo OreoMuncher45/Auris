@@ -1803,7 +1803,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * Files a release into one playlist, and says how many tracks went in.
      */
     private suspend fun addReleaseTo(playlist: UserPlaylist, songs: List<Song>): Pair<AddOutcome, Int> {
-        val openSongs = (_detailStack.value.firstOrNull { it.browseId == playlist.browseId }
+        val openSongs = (_detailStack.value.latestOpening(playlist.browseId)
             ?.songs as? UiState.Success)?.data
         val known = openSongs
             ?: YtMusicRepository.allSongs(playlist.browseId).getOrNull()
@@ -1840,7 +1840,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun addOne(playlist: UserPlaylist, song: Song): AddOutcome {
-        val openSongs = (_detailStack.value.firstOrNull { it.browseId == playlist.browseId }
+        val openSongs = (_detailStack.value.latestOpening(playlist.browseId)
             ?.songs as? UiState.Success)?.data
         val known = openSongs
             ?: YtMusicRepository.allSongs(playlist.browseId).getOrNull()
