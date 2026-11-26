@@ -626,24 +626,26 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * Spotify catalogue entry and resolved when it plays — see
      * [com.music.bitchord.data.model.asSpotifyQueueRow].
      */
-    private val spotifyPageJobs = java.util.concurrent.ConcurrentHashMap<String, Job>()
+    /** Each Spotify page's load, by the page's opening; see [trackSpotifyLoad]. */
+    private val spotifyPageJobs = java.util.concurrent.ConcurrentHashMap<Long, Job>()
 
     /**
-     * Keeps [job] as [browseId]'s Spotify load, cancelling any earlier one:
-     * its rows and matches are written by browse id, so a load left running
-     * after its page closed would fill a later opening of the same page.
-     * Main thread; the loads write only between suspensions, so a cancelled
-     * one writes nothing more.
+     * Keeps [job] as the Spotify load of the page opened as [opening]. Keyed
+     * by opening, not browse id: the same page opened twice is two pages,
+     * each with its own load, and opening the second must not strand the
+     * first on its spinner. A load ends when its page leaves the stack
+     * ([cancelClosedSpotifyLoads]). Main thread; the loads write only between
+     * suspensions, so a cancelled one writes nothing more.
      */
-    private fun trackSpotifyLoad(browseId: String, job: Job) {
-        spotifyPageJobs.put(browseId, job)?.cancel()
-        job.invokeOnCompletion { spotifyPageJobs.remove(browseId, job) }
+    private fun trackSpotifyLoad(opening: Long, job: Job) {
+        spotifyPageJobs[opening] = job
+        job.invokeOnCompletion { spotifyPageJobs.remove(opening, job) }
     }
 
     /** Cancels the Spotify loads of pages no longer on the stack. */
     private fun cancelClosedSpotifyLoads() {
-        val open = _detailStack.value.mapTo(HashSet()) { it.browseId }
-        spotifyPageJobs.forEach { (browseId, job) -> if (browseId !in open) job.cancel() }
+        val open = _detailStack.value.mapTo(HashSet()) { it.opening }
+        spotifyPageJobs.forEach { (opening, job) -> if (opening !in open) job.cancel() }
     }
 
     private data class SearchCacheEntry(
@@ -988,17 +990,22 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     private val _detailStack = MutableStateFlow<List<DetailPage>>(emptyList())
 
-    /** Which opening of each browse id is the current one; see [markDetailOpened]. Main thread only. */
-    private val detailOpenings = HashMap<String, Long>()
+    /** Numbers each page pushed onto the stack; see [markDetailOpened]. Main thread only. */
     private var detailOpeningCount = 0L
 
-    /** Records that [browseId] was just pushed, returning that opening's number. */
-    private fun markDetailOpened(browseId: String): Long =
-        (++detailOpeningCount).also { detailOpenings[browseId] = it }
+    /**
+     * A new opening number for a page about to be pushed for [browseId]. The
+     * same page opened twice gets two numbers: loads and continuations are
+     * bound to the opening, not the browse id.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    private fun markDetailOpened(browseId: String): Long = ++detailOpeningCount
 
-    /** Whether the page opened as [opening] is still on the stack, not closed or reopened since. */
+    /** Whether the page opened as [opening] is still on the stack. */
     private fun isDetailOpen(browseId: String, opening: Long): Boolean =
-        detailOpenings[browseId] == opening && _detailStack.value.any { it.opening == opening }
+        // Its own opening still on the stack, whatever else is: the same page
+        // opened again on top is another page, and this one keeps loading.
+        _detailStack.value.any { it.browseId == browseId && it.opening == opening }
     val detailStack: StateFlow<List<DetailPage>> = _detailStack.asStateFlow()
 
     private val _releaseLibrary = MutableStateFlow<Map<String, LibraryState>>(emptyMap())
@@ -4571,7 +4578,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
             matchSpotifyTracks(browseId, opened, tracks, ::setSongs)
         }
-        trackSpotifyLoad(browseId, job)
+        trackSpotifyLoad(opened, job)
     }
 
     /**
@@ -4682,7 +4689,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
             matchSpotifyTracks(browseId, opened, page.tracks, ::setSongs)
         }
-        trackSpotifyLoad(browseId, job)
+        trackSpotifyLoad(opened, job)
     }
 
     /**
