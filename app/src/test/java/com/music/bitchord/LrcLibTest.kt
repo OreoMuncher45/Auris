@@ -124,4 +124,11 @@ class LrcLibTest {
         val sung = lines.filterNot { it.isGap }
         assertTrue(sung[0].timeMs < sung[1].timeMs)
     }
+
+    @Test
+    fun `a line with a runaway number of stamps is sung at most the cap's number of times`() {
+        val stamps = (0 until 5_000).joinToString("") { i -> "[%02d:%02d.00]".format(i / 60 % 100, i % 60) }
+        val lines = LrcLib.parseLrc("${stamps}<00:00.00>Over <00:00.50>and <00:01.00>over")
+        assertEquals(LrcLib.MAX_STAMPS_PER_LINE, lines.count { it.text == "Over and over" })
+    }
 }

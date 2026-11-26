@@ -801,7 +801,7 @@ class PrecisionAudioSink(
         // One that never processed anything is not marked interrupted, so the
         // start-up flush still leaves it armed.
         val outArm = armed.out?.takeIf { !port.interrupted }
-        if (outArm != null && loopGenerating) return generateLoop(outArm, outEncoding)
+        if (outArm != null && loopGenerating) return generateLoop(outArm, outEncoding, skipDsp, userGain)
         // Likewise the incoming side: no more muting or shifting once a flush
         // has ended the mix it was lining up for.
         val inArm = armed.inn?.takeIf { !port.interrupted }
@@ -943,11 +943,9 @@ class PrecisionAudioSink(
             }
 
             // Process normalized Float32 samples through custom DSP chain
-            if (!skipDsp) {
+            BlockFinish.apply(audioBlock, skipDsp, userGain) { block ->
                 dspChain.mixing = outArm != null && loopRendering
-                dspChain.process(audioBlock)
-            } else if (userGain < 0.999f) {
-                scaleBlock(audioBlock, userGain)
+                dspChain.process(block)
             }
 
             // Encode processed samples to target PCM output buffer (Float32 or PCM16)
@@ -1139,7 +1137,12 @@ class PrecisionAudioSink(
      * block, for as long as the delegate takes it. The song's own input is
      * never consumed again (false, always), so the renderer keeps coming back.
      */
-    private fun generateLoop(arm: LoopMixPort.OutArm, outEncoding: PcmEncoding): Boolean {
+    private fun generateLoop(
+        arm: LoopMixPort.OutArm,
+        outEncoding: PcmEncoding,
+        skipDsp: Boolean,
+        userGain: Float,
+    ): Boolean {
         if (outputByteBuffer.hasRemaining()) {
             // Retried with the count its first write carried (the takeover block's).
             val consumed = delegate.handleBuffer(outputByteBuffer, pendingPresentationTimeUs, pendingAccessUnitCount)
@@ -1160,8 +1163,13 @@ class PrecisionAudioSink(
                 loop.interrupted = true
             }
             loopNextFrame += frames
-            dspChain.mixing = true
-            dspChain.process(audioBlock)
+            // Bit-perfect switched on mid-mix: until the controller's next tick
+            // settles the loop, its blocks get what a decoded block would: no
+            // chain, and the listener's volume where the mixer can't apply it.
+            BlockFinish.apply(audioBlock, skipDsp, userGain) { block ->
+                dspChain.mixing = true
+                dspChain.process(block)
+            }
             outputByteBuffer.clear()
             PcmBoundary.encode(sourceBlock = audioBlock, encoding = outEncoding, outputBuffer = outputByteBuffer)
             outputByteBuffer.flip()
@@ -1589,19 +1597,6 @@ class PrecisionAudioSink(
      * eight bits go regardless of route, and no setting in this app can change
      * that while [DefaultAudioSink] is doing the writing.
      */
-    /**
-     * The listener's volume, applied to the samples in place.
-     *
-     * A multiply on the decoded floats, before they are encoded for the
-     * route: the same place the app's own levelling sits, so the bar and the
-     * pipeline agree on what was done to the sound.
-     */
-    private fun scaleBlock(block: AudioBlock, gain: Float) {
-        val samples = block.samples
-        val count = block.sampleCount
-        for (index in 0 until count) samples[index] *= gain
-    }
-
     /**
      * Whether the system mixer is genuinely out of the path.
      *
