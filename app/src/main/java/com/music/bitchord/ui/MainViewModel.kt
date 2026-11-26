@@ -5190,7 +5190,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // gone (its scope was refreshed): every later scroll would be
                 // refused the same way, so the page is opened again under the
                 // current session rather than left unable to grow.
-                if (index >= 0 && listenerKey() == listener && Innertube.listenerStamp() != stamp) {
+                // Only while it is the page on screen: one under another page is
+                // left as it is (its next scroll, once it is on top again, comes
+                // back here), so the stack's order never changes under the user.
+                if (index == stack.lastIndex && listenerKey() == listener && Innertube.listenerStamp() != stamp) {
                     val stale = stack[index]
                     openingStamps.remove(opened)
                     _detailStack.value = stack.filterNot { it.opening == opened }
