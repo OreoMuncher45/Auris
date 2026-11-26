@@ -20,6 +20,7 @@ import com.music.bitchord.data.settings.TrackAnalysisState
 import com.music.bitchord.data.settings.TransitionWindow
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.model.QueueEntryIdentity
+import com.music.bitchord.playback.loopmix.LoopAlignmentState
 import com.music.bitchord.playback.loopmix.LoopArmGate
 import com.music.bitchord.playback.loopmix.LoopMixPort
 import com.music.bitchord.playback.loopmix.LoopMixRenderer
@@ -3242,7 +3243,7 @@ class CrossfadeController(
             if (into.playbackState != Player.STATE_READY) return loopBail("the incoming player wasn't ready", settle = true)
             // Nor onto one whose alignment never came within [LOOP_HANDOFF_MAX_ERROR_MS]
             // of the deck (NaN: never measured): its handover would be heard as a flam.
-            if (!session.alignmentConfirmed || !(abs(session.alignedErrorMs) <= LOOP_HANDOFF_MAX_ERROR_MS)) {
+            if (!session.alignment.handoffAllowed(LOOP_HANDOFF_MAX_ERROR_MS)) {
                 return loopBail("the incoming player never aligned (${session.alignedErrorMs} ms)", settle = true)
             }
             if (!handOff(out, into, m, visualEnd)) return
@@ -3379,8 +3380,8 @@ class CrossfadeController(
      */
     private val loopStallListener = object : Player.Listener {
         override fun onPlaybackStateChanged(playbackState: Int) {
-            if (playbackState != Player.STATE_BUFFERING || handedOff) return
-            if (phase != Phase.LOOP_RUNNING && phase != Phase.LOOP_ARMING) return
+            val loopActive = phase == Phase.LOOP_RUNNING || phase == Phase.LOOP_ARMING
+            if (!LoopAlignmentState.stallInvalidates(playbackState, loopActive, handedOff)) return
             val session = loopSession ?: return
             loopAlignJob?.cancel()
             loopAlignJob = null
