@@ -146,4 +146,17 @@ class ListenerIdentityTest {
         assertFalse(Innertube.refreshSessionScope(earlier))
         assertEquals(adopted, Innertube.listenerStamp())
     }
+
+    @Test
+    fun `a page's later rows are refused after its session's scope changed before scrolling`() {
+        Innertube.cookie = "SID=one"
+        // The page opens: its session is recorded.
+        val opened = Innertube.listenerStamp()
+        // While it stays up, the scope changes (a refresh, an adopted profile).
+        Innertube.adoptSessionScope("brand", "brand||owner", "1", null, null, loggedIn = true)
+        // Scrolling now: the continuation is bound to the opening's session and is not sent.
+        assertFailsWith<Innertube.ListenerChangedException> {
+            runBlocking { Innertube.asListener(opened) { Innertube.requestIdentityForTest() } }
+        }
+    }
 }
