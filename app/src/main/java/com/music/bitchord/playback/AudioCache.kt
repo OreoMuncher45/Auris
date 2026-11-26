@@ -278,6 +278,20 @@ object AudioCache {
             state.edit().putInt(KEY_MATCHING_SCHEMA, MATCHING_SCHEMA).apply()
             TrackLog.d(TAG, "invalidated ${stale.size} source cache entries after matcher upgrade")
         }
+        // Before renditions had keys of their own, Premium and ordinary
+        // YouTube audio shared one entry per id, and a partial entry could be
+        // filled from both. Entries from then go once, here, rather than on
+        // every switch: a partial one always (it may already be spliced), and
+        // every one when Premium is on (it may hold Premium bytes under the
+        // ordinary key). A key a reader holds is skipped; it is ordinary cache
+        // and the next play refills it under its own key.
+        if (state.getInt(KEY_RENDITION_KEYS, 0) < RENDITION_KEYS) {
+            val premium = AppSettings.youtubePremiumAudio.value
+            val stale = cache.keys.filter { isPreRenditionYouTubeKey(it) && (premium || !isComplete(it)) }
+            val removed = stale.count { runCatching { cache.removeResource(it) }.isSuccess }
+            state.edit().putInt(KEY_RENDITION_KEYS, RENDITION_KEYS).apply()
+            TrackLog.d(TAG, "dropped $removed of ${stale.size} YouTube entries from before rendition keys")
+        }
         // Nothing is playing yet, so nothing an addon served is worth keeping —
         // see [dropForeignEntries].
         dropForeignEntries(keep = emptySet())
@@ -1425,6 +1439,21 @@ object AudioCache {
 
     private const val KEY_MATCHING_SCHEMA = "matching_schema"
     private const val MATCHING_SCHEMA = 3
+
+    /** Bumped when YouTube's entries were first keyed by rendition; see [init]. */
+    private const val KEY_RENDITION_KEYS = "rendition_keys"
+    private const val RENDITION_KEYS = 1
+
+    private val YOUTUBE_ID = Regex("[A-Za-z0-9_-]{11}")
+
+    /**
+     * A YouTube entry as it was keyed before renditions had keys of their own:
+     * the plain id, or its analysis copy and that copy's substitute.
+     */
+    internal fun isPreRenditionYouTubeKey(key: String): Boolean {
+        val id = key.removeSuffix("#analysis$ALT_SUFFIX").removeSuffix("#analysis")
+        return YOUTUBE_ID.matches(id)
+    }
 
     /**
      * Versioned substitute bucket.
