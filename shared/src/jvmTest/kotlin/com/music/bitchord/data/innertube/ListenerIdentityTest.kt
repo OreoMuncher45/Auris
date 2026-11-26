@@ -229,4 +229,17 @@ class ListenerIdentityTest {
         assertTrue(Innertube.installSession(sameCookieB))
         assertTrue(Innertube.requestIdentityForTest().endsWith("|null"))
     }
+
+    @Test
+    fun `work admitted for a session runs only while that session is current`() {
+        Innertube.cookie = "SID=A"
+        val stampA = Innertube.listenerStamp()
+        assertEquals("admitted", Innertube.whileListener(stampA) { "admitted" })
+        // A switch away and back: same listener, another session; nothing is admitted.
+        Innertube.cookie = "SID=B"
+        Innertube.cookie = "SID=A"
+        var ran = false
+        assertNull(Innertube.whileListener(stampA) { ran = true })
+        assertFalse(ran)
+    }
 }

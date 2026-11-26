@@ -726,6 +726,19 @@ object Innertube {
      * Returns the session to retry under, or null when the refresh did not
      * run, or an account transition landed while it read the shell.
      */
+    /**
+     * Runs [block] only while [stamp] is the current session, holding
+     * [identityLock] for it, so no account transition can land between the
+     * check and what [block] does (admitting a listener's results, say).
+     * Null, without running [block], when the session is another one.
+     *
+     * [block] must not suspend and must not itself take [identityLock] or
+     * anything that waits on it: every session writer is held off while it runs.
+     */
+    fun <T> whileListener(stamp: ListenerStamp, block: () -> T): T? = synchronized(identityLock) {
+        if (published.listener == stamp.listener && published.generation == stamp.generation) block() else null
+    }
+
     /** Whether [owner] is the session requests are signed with now: same listener, same generation. */
     internal fun isCurrentSession(owner: ListenerStamp): Boolean = synchronized(identityLock) {
         published.listener == owner.listener && published.generation == owner.generation
