@@ -823,9 +823,24 @@ object Innertube {
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    private val client = HttpClient(OkHttp) {
+    @Volatile
+    private var client = musicClient(com.music.bitchord.data.Http.client)
+
+    /**
+     * Sends this client's requests through [answer] instead of the network, or
+     * back to the network when null: what a test of the request → rejection →
+     * refresh → retry path needs to see which credentials signed each request.
+     */
+    internal fun answerRequestsForTest(answer: okhttp3.Interceptor?) {
+        client = musicClient(
+            answer?.let { com.music.bitchord.data.Http.client.newBuilder().addInterceptor(it).build() }
+                ?: com.music.bitchord.data.Http.client,
+        )
+    }
+
+    private fun musicClient(okHttp: okhttp3.OkHttpClient) = HttpClient(OkHttp) {
         // Same OkHttp instance ExoPlayer streams through — see Http.
-        engine { preconfigured = com.music.bitchord.data.Http.client }
+        engine { preconfigured = okHttp }
         install(ContentNegotiation) { json(json) }
         // Without this the only bound is OkHttp's own read timeout, and the
         // failure it raises reads as "Socket timeout has expired […]
