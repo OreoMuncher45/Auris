@@ -19,7 +19,16 @@ import java.util.concurrent.ConcurrentHashMap
  * ones measured or restored most recently, which are the current and queued
  * ones.
  */
-internal class AnalysisResultCache(private val maxEntries: Int) {
+internal class AnalysisResultCache(
+    private val maxEntries: Int,
+    /**
+     * Called with the ids just evicted, inside the same lock as the eviction,
+     * so bookkeeping kept beside a result is cleared before any later write of
+     * the same id can be published. Run outside it, a delayed cleanup cleared
+     * the marks of a result republished in between.
+     */
+    private val onEvicted: (List<String>) -> Unit = {},
+) {
 
     private val results = ConcurrentHashMap<String, TrackAnalysis>()
 
@@ -40,7 +49,7 @@ internal class AnalysisResultCache(private val maxEntries: Int) {
         synchronized(order) {
             results[trackId] = analysis
             touch(trackId)
-            trimLocked(maxEntries, pinned)
+            trimLocked(maxEntries, pinned, keep = trackId)
         }
 
     /**
@@ -55,7 +64,7 @@ internal class AnalysisResultCache(private val maxEntries: Int) {
         val existing = results.putIfAbsent(trackId, analysis)
         if (existing != null) return existing to emptyList()
         touch(trackId)
-        analysis to trimLocked(maxEntries, pinned)
+        analysis to trimLocked(maxEntries, pinned, keep = trackId)
     }
 
     /** Drops the oldest unpinned results until at most [max] remain. Returns their ids. */
@@ -87,7 +96,12 @@ internal class AnalysisResultCache(private val maxEntries: Int) {
         order.add(trackId)
     }
 
-    private fun trimLocked(max: Int, pinned: (String) -> Boolean): List<String> {
+    /**
+     * [keep] is the entry just written: never the one evicted to make room for
+     * itself. With everything else pinned it stays over the bound until a
+     * later trim, rather than being reported cached and gone on the next read.
+     */
+    private fun trimLocked(max: Int, pinned: (String) -> Boolean, keep: String? = null): List<String> {
         if (results.size <= max) return emptyList()
         val evicted = ArrayList<String>(results.size - max)
         val iterator = order.iterator()
@@ -95,11 +109,12 @@ internal class AnalysisResultCache(private val maxEntries: Int) {
             val trackId = iterator.next()
             // A pass in flight owns its result: taking it away now would have
             // the pass publish over an empty slot and start again.
-            if (pinned(trackId)) continue
+            if (trackId == keep || pinned(trackId)) continue
             iterator.remove()
             results.remove(trackId)
             evicted += trackId
         }
+        if (evicted.isNotEmpty()) onEvicted(evicted)
         return evicted
     }
 }

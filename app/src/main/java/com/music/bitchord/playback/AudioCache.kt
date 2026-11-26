@@ -560,7 +560,13 @@ object AudioCache {
                     lent != null -> lent
                     SourceResolver.canSubstituteForYouTube() ->
                         "$videoId$ALT_SUFFIX${atmosKeySuffix()}".let { if (reopen) it else completeSibling(videoId, it) ?: it }
-                    else -> if (reopen) videoId else completeSibling(videoId, videoId) ?: videoId
+                    // YouTube's own copy, under the rendition the resolver
+                    // serves now: Premium's higher rung is another encoding,
+                    // and filling one entry from both splices two files.
+                    // See [AutomixAnalysisSource.rendition].
+                    else -> AutomixAnalysisSource.playbackKey(videoId).let { own ->
+                        if (reopen) own else completeSibling(videoId, own) ?: own
+                    }
                 }.also { key -> if (request != null && !reopen) request.pin(videoId, key) }
             }
             // A source-backed track keys on the source and its track id alone.
@@ -757,11 +763,13 @@ object AudioCache {
 
     /**
      * Every key [keyFactory] can file a YouTube [videoId]'s ordinary playback
-     * under, in the order a fallback should try them: the plain entry first,
-     * then the current `#alt2` buckets.
+     * under, in the order a fallback should try them: YouTube's own entry for
+     * the current rendition first, then the current `#alt2` buckets. Another
+     * rendition's YouTube entry is never offered: each rendition reads only
+     * its own audio.
      */
     internal fun siblingKeysOf(videoId: String): List<String> =
-        listOf(videoId, "$videoId$ALT_SUFFIX", "$videoId$ALT_SUFFIX-noatmos")
+        listOf(AutomixAnalysisSource.playbackKey(videoId), "$videoId$ALT_SUFFIX", "$videoId$ALT_SUFFIX-noatmos")
 
     /** Whether every byte of the entry [key] is on disk, contiguously from 0. */
     private fun isComplete(key: String): Boolean = runCatching {
