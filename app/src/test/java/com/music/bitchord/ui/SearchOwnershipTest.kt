@@ -93,4 +93,27 @@ class SearchOwnershipTest {
         assertFalse(isAccountPrivateSearchKey(searchCacheKey("coldplay", SearchFilter.SONGS, SearchSource.YOUTUBE)))
         assertFalse(isAccountPrivateSearchKey(searchCacheKey("LIBRARY", SearchFilter.ALL, SearchSource.SPOTIFY)))
     }
+
+    @Test
+    fun `a cached library answer is shown only to the listener it was answered for`() {
+        val key = searchCacheKey("love", SearchFilter.LIBRARY, SearchSource.YOUTUBE)
+        assertTrue(cachedSearchUsable(key, answeredFor = "A#0", now = "A#0"))
+        // The same cache key after a scope or account change (a new stamp).
+        assertFalse(cachedSearchUsable(key, answeredFor = "A#0", now = "A#1"))
+        assertFalse(cachedSearchUsable(key, answeredFor = null, now = "A#0"))
+        // A catalogue answer is anyone's.
+        val catalogue = searchCacheKey("love", SearchFilter.SONGS, SearchSource.YOUTUBE)
+        assertTrue(cachedSearchUsable(catalogue, answeredFor = null, now = "B#3"))
+    }
+
+    @Test
+    fun `a newest search that lost ownership to a credentials change is asked again`() {
+        val ticket = ownership.issue(SearchFilter.LIBRARY)
+        generation++ // credentials moved, no newer search
+        assertTrue(shouldReissueSearch(ownership.owns(ticket), ownership.isNewest(ticket)))
+        // Superseded by a newer search: that one answers, not this.
+        val newer = ownership.issue(SearchFilter.LIBRARY)
+        assertFalse(shouldReissueSearch(ownership.owns(ticket), ownership.isNewest(ticket)))
+        assertFalse(shouldReissueSearch(ownership.owns(newer), ownership.isNewest(newer)))
+    }
 }

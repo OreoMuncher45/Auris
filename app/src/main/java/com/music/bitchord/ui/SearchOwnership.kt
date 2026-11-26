@@ -54,6 +54,22 @@ internal fun searchCacheKey(query: String, filter: SearchFilter, source: SearchS
  * Whether a [searchCacheKey] holds an answer from the signed-in account — one
  * that must not outlive the listener it was asked as.
  */
+/**
+ * Whether a cached answer under [key] may be shown now. A catalogue answer is
+ * anyone's; an account-private one only for the listener it was answered for
+ * ([answeredFor], null when that was never recorded), and never across a
+ * session-scope or account change that left the cache key itself unchanged.
+ */
+internal fun <S> cachedSearchUsable(key: String, answeredFor: S?, now: S): Boolean =
+    !isAccountPrivateSearchKey(key) || (answeredFor != null && answeredFor == now)
+
+/**
+ * A search that lost ownership while still the newest one asked: only the
+ * credentials moved under it, and nothing else will ask again, so it is
+ * asked again as the listener now signing requests.
+ */
+internal fun shouldReissueSearch(owns: Boolean, isNewest: Boolean): Boolean = !owns && isNewest
+
 internal fun isAccountPrivateSearchKey(key: String): Boolean {
     val filter = key.substringAfter(':', "").substringBefore(':')
     return SearchFilter.entries.any { it.requiresAuth && it.name == filter }
