@@ -252,7 +252,13 @@ object DownloadedPlaylistSync {
                 )
                 continue
             }
-            val missing = missingFromPlaylist(remote, onDisk, deleted, collection.videoIds.toSet())
+            val recorded = collection.videoIds.toSet()
+            val missing = missingFromPlaylist(remote, onDisk, deleted, recorded)
+            // Tracks of the playlist that are on the device but not in its
+            // record — one the queue refused on an earlier pass and that
+            // arrived by another path since. Not fetched, but filed, so the
+            // record says what the release really holds.
+            val unrecorded = onDiskNotRecorded(remote, onDisk, deleted, recorded)
             // Liked Music kept by the setting, with no record yet: the first
             // fill. Filed whole, like a tap on the page's download button, so
             // the liked songs already on the device are in it too.
@@ -271,14 +277,16 @@ object DownloadedPlaylistSync {
             // what this step queued in the record. See [Downloads.deleteCollection]
             // and [setKeepLiked].
             Downloads.withCollectionsHeld {
-                admit(context, collection.id, collection.title, liked, target, remote, missing)
+                admit(context, collection.id, collection.title, liked, target, remote, missing, unrecorded)
             }
         }
     }
 
     /**
-     * Queue [missing] for one release and grow its record, if the release is
-     * still wanted. Called under [Downloads.withCollectionsHeld].
+     * Queue [missing] for one release and grow its record — with what it
+     * queued and with [unrecorded], the playlist's tracks already on the
+     * device — if the release is still wanted. Called under
+     * [Downloads.withCollectionsHeld].
      */
     private fun admit(
         context: Context,
@@ -288,13 +296,14 @@ object DownloadedPlaylistSync {
         target: DownloadTarget,
         remote: List<Song>,
         missing: List<Song>,
+        unrecorded: List<Song>,
     ) {
         val firstFill = liked && id !in Downloads.collections.value
         val keepLiked = { liked && AppSettings.downloadLikedSongs.value }
         // Switched off, or the download deleted, while this pass was reading.
         val stillWanted = keepLiked() || Downloads.collections.value[id]?.autoDownload == true
         if (!stillWanted) return
-        if (missing.isEmpty() && !firstFill) return
+        if (missing.isEmpty() && unrecorded.isEmpty() && !firstFill) return
         var refused = emptySet<String>()
         if (missing.isNotEmpty()) {
             Log.i(TAG, "$title: ${missing.size} new track(s) to download")
@@ -310,7 +319,7 @@ object DownloadedPlaylistSync {
         // still sees it as missing.
         Downloads.rememberCollection(
             target,
-            (if (firstFill) remote else missing).filter { it.videoId !in refused },
+            (if (firstFill) remote else missing + unrecorded).filter { it.videoId !in refused },
             // Grow the record only if it is still there; the first fill is
             // what creates it, with the switch the setting has right now.
             keepSwitch = !firstFill,
@@ -360,6 +369,24 @@ object DownloadedPlaylistSync {
  * Split out as plain arguments so the rules can be tested without a device, a
  * network or a playlist: they are the whole of what makes this correct.
  */
+/**
+ * The tracks of [remote] that are on the device but missing from the release's
+ * record ([alreadyRecorded]): filed without being fetched. The same exclusions
+ * as [missingFromPlaylist] hold — a track the listener deleted by hand, or a
+ * file of their own, is never claimed for the release.
+ */
+internal fun onDiskNotRecorded(
+    remote: List<Song>,
+    onDisk: Set<String>,
+    deletedByHand: Set<String>,
+    alreadyRecorded: Set<String>,
+): List<Song> = remote.filter { song ->
+    song.videoId in onDisk &&
+        song.videoId !in deletedByHand &&
+        song.videoId !in alreadyRecorded &&
+        !song.isDeviceFile()
+}
+
 internal fun missingFromPlaylist(
     remote: List<Song>,
     onDisk: Set<String>,
