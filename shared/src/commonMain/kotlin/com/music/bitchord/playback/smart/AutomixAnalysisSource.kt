@@ -12,15 +12,41 @@ package com.music.bitchord.playback.smart
 object AutomixAnalysisSource {
     const val OPUS_QUERY_PARAMETER = "automix_opus"
 
-    fun isCanonicalYouTubeRendition(videoId: String?, cacheKey: String): Boolean =
-        videoId == null || cacheKey == videoId || cacheKey == analysisCacheKey(videoId)
+    /**
+     * Which of YouTube's renditions the resolver serves right now, as a short
+     * tag, or null for the ordinary one. A rendition is a different encoding of
+     * the recording (Premium's higher Opus rung, for one), so its bytes and its
+     * analysis are kept under keys of their own: one entry never holds two
+     * renditions, a switch never re-analyses a rendition already measured, and
+     * a rendition never reads another's analysis. Set by the app.
+     */
+    var rendition: () -> String? = { null }
+
+    /** The player's own entry for [videoId] under [rendition]. */
+    fun playbackKey(videoId: String, rendition: String? = this.rendition()): String =
+        if (rendition == null) videoId else "$videoId#$rendition"
+
+    /**
+     * [trackId] scoped to [rendition]: what the analyser files a result under,
+     * so each rendition keeps its own.
+     */
+    fun scopedTrackId(trackId: String, rendition: String? = this.rendition()): String =
+        if (rendition == null) trackId else "$trackId#$rendition"
+
+    fun isCanonicalYouTubeRendition(
+        videoId: String?,
+        cacheKey: String,
+        rendition: String? = this.rendition(),
+    ): Boolean =
+        videoId == null || cacheKey == playbackKey(videoId, rendition) || cacheKey == analysisCacheKey(videoId, rendition)
 
     /**
      * The key Auris's cache files the analyser's own Opus copy under: a sibling
      * of the player's entry rather than the plain id itself, so the analysis
      * fetch and playback never write one file between them.
      */
-    fun analysisCacheKey(videoId: String): String = "$videoId$ANALYSIS_KEY_SUFFIX"
+    fun analysisCacheKey(videoId: String, rendition: String? = this.rendition()): String =
+        "$videoId$ANALYSIS_KEY_SUFFIX" + (rendition?.let { "-$it" } ?: "")
 
     private const val ANALYSIS_KEY_SUFFIX = "#analysis"
 
@@ -36,7 +62,8 @@ object AutomixAnalysisSource {
      * substitute suffix, so everything that tells substitutes apart by key
      * (the version aligner among them) reads it as one.
      */
-    fun analysisSubstituteKey(videoId: String): String = "${analysisCacheKey(videoId)}$SUBSTITUTE_KEY_SUFFIX"
+    fun analysisSubstituteKey(videoId: String, rendition: String? = this.rendition()): String =
+        "${analysisCacheKey(videoId, rendition)}$SUBSTITUTE_KEY_SUFFIX"
 
     /**
      * Whether the analyser may read [cacheKey] at all: a canonical rendition,
@@ -47,8 +74,8 @@ object AutomixAnalysisSource {
     fun isAnalysisRendition(videoId: String?, cacheKey: String): Boolean =
         isCanonicalYouTubeRendition(videoId, cacheKey) || isAnalysisSubstitute(videoId, cacheKey)
 
-    fun isAnalysisSubstitute(videoId: String?, cacheKey: String): Boolean =
-        videoId != null && cacheKey == analysisSubstituteKey(videoId)
+    fun isAnalysisSubstitute(videoId: String?, cacheKey: String, rendition: String? = this.rendition()): Boolean =
+        videoId != null && cacheKey == analysisSubstituteKey(videoId, rendition)
 
     /**
      * The video id behind an analysis copy's key ([analysisCacheKey] or
@@ -58,8 +85,12 @@ object AutomixAnalysisSource {
      */
     fun videoIdOfAnalysisKey(cacheKey: String): String? {
         val base = cacheKey.removeSuffix(SUBSTITUTE_KEY_SUFFIX)
-        if (!base.endsWith(ANALYSIS_KEY_SUFFIX)) return null
-        return base.removeSuffix(ANALYSIS_KEY_SUFFIX).takeIf { it.isNotEmpty() }
+        val at = base.lastIndexOf(ANALYSIS_KEY_SUFFIX)
+        if (at <= 0) return null
+        // Nothing after the suffix but an optional "-<rendition>".
+        val rest = base.substring(at + ANALYSIS_KEY_SUFFIX.length)
+        if (rest.isNotEmpty() && (!rest.startsWith("-") || rest.length == 1 || '#' in rest)) return null
+        return base.substring(0, at)
     }
 
     private const val SUBSTITUTE_KEY_SUFFIX = "#alt2"
