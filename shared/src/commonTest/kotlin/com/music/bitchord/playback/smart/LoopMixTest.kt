@@ -501,4 +501,33 @@ class LoopMixTest {
         val stats = assertNotNull(LoopMix.maskStats(listOf(a, b), 0.0, 0.28125))
         assertEquals(0.125, stats.longestRunSec, 1e-9)
     }
+
+    @Test
+    fun overlappingLevelWindowsCountEachInstantOnce() {
+        // Two windows at 10 frames a second: 0-2 s at one level, 1-3 s at another.
+        val loud = 0.9f
+        val quiet = 0.5f
+        val a = CurveWindow(0.0, 10.0, FloatArray(20) { loud })
+        val b = CurveWindow(1.0, 10.0, FloatArray(20) { quiet })
+        val l = rmsFromLevel(loud.toDouble())
+        val q = rmsFromLevel(quiet.toDouble())
+        // 0-2 s from the first window, 2-3 s from the second: 2:1, not 1:1.
+        val expected = kotlin.math.sqrt((20 * l * l + 10 * q * q) / 30)
+        assertEquals(expected, LoopMix.meanRms(listOf(a, b), 0.0, 3.0), 1e-12)
+        assertEquals(expected, LoopMix.meanRms(listOf(b, a), 0.0, 3.0), 1e-12)
+    }
+
+    @Test
+    fun theIncomingSearchEndsAFullLoopOnTheMeasuredOpeningsOwnBars() {
+        // The opening measured at 96 BPM (2.5 s bars) against 120 song-wide (2 s):
+        // the only clean bar line in the search is 45 s, and its 4 bars end at 55 s.
+        val downs = (0..40).map { it * 2.5 }
+        val beats = (0..160).map { it * 0.625 }
+        val inn = analysis(120.0, 180.0).copy(headBeats = BeatSide(beats, downs, 96.0, 0.9))
+        val why = StringBuilder()
+        val p = LoopMix.plan(analysis(120.0, 200.0), 200.0, inn, 180.0, 0.0, clear, listOf(LoopMix.Span(0.0, 43.0)), why = why)
+        assertNotNull(p, "no plan: $why")
+        assertEquals(45.0, p.inn.loopStart, 1e-9)
+        assertEquals(LoopMix.LOOP_BARS, p.inn.bars)
+    }
 }

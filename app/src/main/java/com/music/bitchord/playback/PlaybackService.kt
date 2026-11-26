@@ -2447,6 +2447,12 @@ class PlaybackService : MediaLibraryService() {
     }
 
     private var versionSwapJob: Job? = null
+
+    /** While a version swap's own volume morph runs: the part the sleep fade waits out. */
+
+    @Volatile
+
+    private var versionSwapFading = false
     private var versionSwapGeneration = 0
 
     /**
@@ -2678,6 +2684,16 @@ class PlaybackService : MediaLibraryService() {
                 }
             }
 
+            // The sleep timer's fade started while the standby got ready: it
+            // owns the volume now, so the swap goes in at the faded level
+            // instead of morphing a full-volume copy in under it.
+            if (SleepTimer.fadingOut) {
+                standbyPlayer.volume = activePlayer.volume
+                adoptPlayerForVersionSwap(outgoing = activePlayer, incoming = standbyPlayer)
+                onSwapCommitted?.invoke()
+                return@launch
+            }
+
             // Smooth equal-power crossfade transition (~550ms audio morph)
             val swapCrossfadeMs = 550L
             val fadeStart = SystemClock.elapsedRealtime()
@@ -2685,6 +2701,7 @@ class PlaybackService : MediaLibraryService() {
                 AppSettings.smartMixInProgress.value = true
             }
 
+            versionSwapFading = true
             try {
                 while (isActive) {
                     val elapsed = SystemClock.elapsedRealtime() - fadeStart
@@ -2722,6 +2739,7 @@ class PlaybackService : MediaLibraryService() {
                 adoptPlayerForVersionSwap(outgoing = activePlayer, incoming = standbyPlayer)
                 onSwapCommitted?.invoke()
             } finally {
+                versionSwapFading = false
                 loudnessA.setBlendTrim(1f)
                 loudnessB.setBlendTrim(1f)
                 if (!smartAlignEnabled) {
@@ -7847,6 +7865,9 @@ class PlaybackService : MediaLibraryService() {
             playbackSourceType = videoSong.playbackSourceType,
             playbackSourceId = videoSong.playbackSourceId,
             setVideoId = videoSong.setVideoId,
+            // Still a music-video row underneath, as the manual swap keeps it:
+            // what keeps video-origin rows out of a loop mix (see VideoRowAutomix).
+            isVideoOrigin = true,
         ).toMediaItem()
         player.replaceMediaItem(index, replacement)
         TrackLog.d(
@@ -8058,11 +8079,15 @@ class PlaybackService : MediaLibraryService() {
                         // One already running owns the volumes until it lands,
                         // so the fade starts after it, over what time is left,
                         // rather than jumping the new track down mid-rise. A
-                        // version swap or quality upgrade fade is waited out the
-                        // same way: both write the two players' volumes too.
+                        // version swap's or quality upgrade's fade is waited out
+                        // the same way: both write the two players' volumes too.
+                        // Only the fade itself, not a swap still fetching and
+                        // measuring: that goes in at the faded level once
+                        // [SleepTimer.fadingOut] is set, and waiting it out
+                        // could leave no time to fade at all.
                         SleepTimer.fadingOut = true
                         while ((crossfade?.isTransitioning() == true ||
-                                versionSwapJob?.isActive == true || upgradeFadeActive) &&
+                                versionSwapFading || upgradeFadeActive) &&
                             SystemClock.elapsedRealtime() < deadline
                         ) {
                             delay(FADE_STEP_MS)
@@ -8910,7 +8935,7 @@ class PlaybackService : MediaLibraryService() {
     private fun observeSettings() {
         scope.launch {
             AppSettings.smartFadeEnabled.collect { enabled ->
-                if (!enabled) crossfade?.cancelAutoMixVisual()
+                if (!enabled) crossfade?.onAutomixDisabled()
             }
         }
         scope.launch {
