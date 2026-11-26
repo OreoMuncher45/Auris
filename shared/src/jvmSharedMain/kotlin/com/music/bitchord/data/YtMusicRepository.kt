@@ -899,7 +899,7 @@ object YtMusicRepository {
      * Takes as long as the list is long — see [songsPaged].
      */
     suspend fun allSongs(browseId: String): Result<List<Song>> = call("all:$browseId") {
-        songsPaged(browseId).ifEmpty { error("No tracks here") }
+        songsPaged(browseId, whole = true).ifEmpty { error("No tracks here") }
     }
 
     /**
@@ -907,34 +907,25 @@ object YtMusicRepository {
      *
      * A playlist page returns its first ~100 rows and a token for the rest, so
      * a long list otherwise arrives silently truncated. Capped at
-     * [MAX_PAGES] so a runaway feed can't hold the UI open forever, and a
-     * failed page keeps whatever was already collected.
+     * [MAX_PAGES] so a runaway feed can't hold the UI open forever. A [whole]
+     * read fails rather than stop short (see [collectSongListing]); any other
+     * keeps whatever was already collected.
      *
      * Holds its caller until the last page lands, so it belongs behind things
      * nobody is watching — the library sync, an artist's back catalogue. For
      * anything a screen is waiting on, use [browseSongs] and [moreSongs].
      */
-    private suspend fun songsPaged(browseId: String): List<Song> {
-        val out = LinkedHashMap<String, Song>()
+    private suspend fun songsPaged(browseId: String, whole: Boolean = false): List<Song> {
         var response = Innertube.browse(browseId)
         if (browseId.startsWith("MPREb")) {
             InnertubeParser.parseAlbumPlaylistId(response)?.let { playlistId ->
                 response = Innertube.browse("VL${playlistId.removePrefix("VL")}")
             }
         }
-        var page = 1
-        while (true) {
-            // Same shelf-scoping as pageOf: a playlist (Liked Music and the
-            // Library Songs auto-playlist included) is read from its own
-            // shelf so a trailing "Suggested tracks" shelf never joins in.
-            val shelf = InnertubeParser.parsePlaylistContinuation(response)
-                ?: InnertubeParser.parsePlaylistShelf(response)
-            (shelf?.songs ?: InnertubeParser.collectSongsDeep(response)).forEach { out[it.videoId] = it }
-            val token = shelf?.continuation ?: InnertubeParser.continuationToken(response)
-            if (token == null || page++ >= MAX_PAGES) break
-            response = runCatching { Innertube.browseContinuation(token) }.getOrNull() ?: break
-        }
-        return out.values.toList()
+        // Same shelf-scoping as pageOf: a playlist (Liked Music and the
+        // Library Songs auto-playlist included) is read from its own shelf so
+        // a trailing "Suggested tracks" shelf never joins in.
+        return collectSongListing(response, MAX_PAGES, whole) { token -> Innertube.browseContinuation(token) }
     }
 
     /**
@@ -945,10 +936,11 @@ object YtMusicRepository {
      * is *appended* to it, so the first page — which is all [browseSongs]
      * reads — is exactly where a new song is not. Reading the whole page is
      * the only way to notice one, and noticing one is the whole of what a
-     * downloaded playlist needs.
+     * downloaded playlist needs. All or nothing, like [allSongs]: a list cut
+     * short by a failed page is a failure, not the playlist.
      */
     suspend fun browseSongsPaged(browseId: String): Result<List<Song>> =
-        call("browsePaged:$browseId") { songsPaged(browseId) }
+        call("browsePaged:$browseId") { songsPaged(browseId, whole = true) }
 
     /**
      * Every saved library card behind a feed browse id, following continuations.
