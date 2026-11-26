@@ -205,4 +205,23 @@ class SleepTimerFadeTest {
         SleepTimer.pauseAtDeadline(castActive = { onReceiver }, confirmCastPause = { onReceiver = false; false }, pauseLocal = { local++ })
         assertEquals(1, local)
     }
+
+    @Test
+    fun aRouteChangeDuringTheFinalPauseAttemptIsAMove() = runTest {
+        var onReceiver = true
+        var attempts = 0
+        val result = SleepTimer.fadeOutCast(null, 0L, 500L, { testScheduler.currentTime }, { onReceiver }, { true }) {
+            attempts++
+            // The earlier attempts are refused; playback moves to the phone while the last one is awaited.
+            if (attempts == SleepTimer.CAST_PAUSE_ATTEMPTS) {
+                kotlinx.coroutines.yield()
+                onReceiver = false
+            }
+            false
+        }
+        assertEquals(SleepTimer.CAST_PAUSE_ATTEMPTS, attempts)
+        assertEquals(SleepTimer.CastFade.MOVED, result)
+        // And the watcher then follows playback to the phone instead of clearing the timer.
+        assertEquals(SleepTimer.AfterCastFade.CONTINUE_LOCAL, SleepTimer.afterCastFade(result, castActiveNow = false))
+    }
 }
