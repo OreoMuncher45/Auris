@@ -131,7 +131,9 @@ class RenditionKeyMigrationTest {
 
     @Test
     fun thePremiumSettingNamesTheRendition() {
-        com.music.bitchord.data.innertube.AndroidStreamHooks.installEarly()
+        // The hook alone: installEarly() also loads the stream resolver, whose
+        // extraction library is built for a newer JVM than CI runs tests on.
+        com.music.bitchord.data.innertube.AndroidStreamHooks.installRenditionHook()
         AppSettings.setYoutubePremiumAudio(true)
         assertEquals(YOUTUBE_PREMIUM_RENDITION, AutomixAnalysisSource.rendition())
         AppSettings.setYoutubePremiumAudio(false)
