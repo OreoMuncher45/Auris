@@ -68,25 +68,6 @@ internal fun queueOnlyGrewByContinuation(
 }
 
 /**
- * Whether a playlist change is the installation of an Auto folder's queue,
- * not some other edit — AutoPlay topping up the queue it replaces, say.
- *
- * [expectedEntryId] is the queue entry the folder's queue was built to start
- * on, at [startIndex]; entry ids are minted per build, so only that queue
- * holds it there. [entryIdAt] reads the player's entry at an index. With no
- * entry id to match, any playlist change counts, as it did before.
- */
-internal fun isAutoQueueInstalled(
-    expectedEntryId: String?,
-    startIndex: Int,
-    itemCount: Int,
-    entryIdAt: (Int) -> String?,
-): Boolean {
-    if (expectedEntryId == null) return true
-    return startIndex in 0 until itemCount && entryIdAt(startIndex) == expectedEntryId
-}
-
-/**
  * [resolved] without the rows at [revoked] indices, and where [start] — an
  * index into [resolved] — lands once they are gone: a revoked start falls to
  * the row that took its place, or to the last kept row when none did. Empty
@@ -113,11 +94,15 @@ internal fun <T> withoutRevoked(resolved: List<T>, revoked: Collection<Int>, sta
  * main thread some time after the build, through the session player's
  * setMediaItems.
  */
-internal class PendingAutoInstall(val startEntryId: String?, val startIndex: Int, val size: Int, val owner: ListenerStamp)
+internal class PendingAutoInstall(val startEntryId: String?, val startIndex: Int, val size: Int, val owner: ListenerStamp) {
+    /** Completed with its entry ids once a session player has installed it. */
+    val installed = kotlinx.coroutines.CompletableDeferred<HashSet<String>?>()
+}
 
 /**
  * For a queue of [size] (its entry ids by index from [entryAt]) arriving to be
- * installed while [pending] waits: null when it is not the pending queue,
+ * installed while [pending] waits: null when it is not the pending queue (an
+ * edit to the queue it replaces, say: AutoPlay topping that one up),
  * true when it is and the session it was built for is no longer [now] (an
  * account switch, even away and back, landed in between), so it must not be
  * installed, and false when it is and may be.

@@ -341,7 +341,12 @@ class PlaybackService : MediaLibraryService() {
     private var mediaSession: MediaLibrarySession? = null
     private val searchResults = ConcurrentHashMap<String, List<Song>>()
     private val searchBrowseResults = ConcurrentHashMap<String, List<BrowseItem>>()
-    private val songCache = ConcurrentHashMap<String, Song>()
+    /**
+     * Songs listed to Android Auto, by video id, for resolving a row it hands
+     * back. Scoped to the listener they were listed for: an account switch
+     * drops the previous account's rows.
+     */
+    private val songCache = ListenerScopedCache<Song> { currentListener() }
 
     /**
      * [YtMusicRepository.home] cached briefly for Android Auto's browse tree.
@@ -646,11 +651,24 @@ class PlaybackService : MediaLibraryService() {
     private fun refusesStaleAutoInstall(items: List<MediaItem>): Boolean {
         val refuse = staleAutoInstall(pendingAutoInstall, items.size, { items.getOrNull(it)?.queueEntryId }, listenerStamp())
             ?: return false
-        pendingAutoInstall = null
         if (!refuse) return false
+        pendingAutoInstall = null
         Log.w("BitChord", "Auto queue not installed: the account changed after it was built")
         clearAutoContinuation()
         return true
+    }
+
+    /**
+     * After a session player installed [items]: when they are the pending
+     * Auto queue, its continuation learns the entries the folder was installed
+     * as (a later queue carrying the same source id mints its own). Main
+     * thread only.
+     */
+    private fun onSessionQueueSet(items: List<MediaItem>) {
+        val pending = pendingAutoInstall ?: return
+        staleAutoInstall(pending, items.size, { items.getOrNull(it)?.queueEntryId }, pending.owner) ?: return
+        pendingAutoInstall = null
+        pending.installed.complete(items.mapNotNullTo(HashSet()) { it.queueEntryId }.takeIf { it.isNotEmpty() })
     }
 
     /**
@@ -693,39 +711,15 @@ class PlaybackService : MediaLibraryService() {
      * [startIndex] — and never as the one it replaces, whatever else edits
      * that one first.
      */
-    private fun followAutoBrowseContinuation(context: AutoBrowseContext, startEntryId: String?, startIndex: Int) {
+    private fun followAutoBrowseContinuation(context: AutoBrowseContext, installed: CompletableDeferred<HashSet<String>?>) {
         clearAutoContinuation()
         val first = context.continuation ?: return
         val sourceId = context.source.id ?: return
-        val installedOn = player ?: return
-        val installed = CompletableDeferred<HashSet<String>?>()
-        val installListener = object : Player.Listener {
-            override fun onTimelineChanged(timeline: Timeline, reason: Int) {
-                if (reason != Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) return
-                val installedHere = isAutoQueueInstalled(startEntryId, startIndex, installedOn.mediaItemCount) {
-                    installedOn.getMediaItemAt(it).queueEntryId
-                }
-                if (!installedHere || installed.isCompleted) return
-                // The entries the folder was installed as: a later queue that
-                // carries the same source id mints its own.
-                val entries = HashSet<String>()
-                for (i in 0 until installedOn.mediaItemCount) {
-                    installedOn.getMediaItemAt(i).queueEntryId?.let(entries::add)
-                }
-                installed.complete(entries.takeIf { it.isNotEmpty() })
-            }
-        }
-        // Started undispatched, so the listener is registered now, before
-        // Media3 can install the queue, and inside the job: cancelled at any
-        // point, its finally removes it.
-        autoContinuationJob = scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
-            // [scope] is the main thread's, which the listener is added and removed on.
-            installedOn.addListener(installListener)
-            try {
-                followAutoBrowsePages(context, first, sourceId, installed)
-            } finally {
-                installedOn.removeListener(installListener)
-            }
+        // Installation is reported by whichever session player Media3 hands
+        // the queue to (see [onSessionQueueSet]), not by a listener on the
+        // player active now: a crossfade can hand off before Media3 applies it.
+        autoContinuationJob = scope.launch {
+            followAutoBrowsePages(context, first, sourceId, installed)
         }
     }
 
@@ -2098,6 +2092,7 @@ class PlaybackService : MediaLibraryService() {
         onShuffleRequest = ::toggleShuffleFromSession,
         onRemotePlaying = ::onRemotePlaying,
         refusesQueue = ::refusesStaleAutoInstall,
+        onQueueSet = ::onSessionQueueSet,
     ) { lastPublishedSubtitle }
 
     /**
@@ -9804,6 +9799,8 @@ class PlaybackService : MediaLibraryService() {
         private val onRemotePlaying: (Boolean) -> Unit,
         /** Whether a queue arriving here was built for an account that is no longer the listener; see [PlaybackService.refusesStaleAutoInstall]. */
         private val refusesQueue: (List<MediaItem>) -> Boolean,
+        /** A queue was installed through here; see [PlaybackService.onSessionQueueSet]. */
+        private val onQueueSet: (List<MediaItem>) -> Unit,
         private val getSubtitle: () -> String?,
     ) : ForwardingPlayer(player), CastSink {
 
@@ -10139,6 +10136,7 @@ class PlaybackService : MediaLibraryService() {
             if (locked() || refusesQueue(mediaItems)) return
             onUserIntent()
             super.setMediaItems(mediaItems, resetPosition)
+            onQueueSet(mediaItems)
         }
 
         override fun setMediaItems(
@@ -10149,6 +10147,7 @@ class PlaybackService : MediaLibraryService() {
             if (locked() || refusesQueue(mediaItems)) return
             onUserIntent()
             super.setMediaItems(mediaItems, startIndex, startPositionMs)
+            onQueueSet(mediaItems)
         }
 
         // Every other way the running order can change from outside: Play next,
@@ -10959,8 +10958,9 @@ class PlaybackService : MediaLibraryService() {
                     .also { built ->
                         val startEntryId = built.timeline.getOrNull(built.startIndex)?.queueEntryId
                         // Rechecked when Media3 installs it: see [refusesStaleAutoInstall].
-                        pendingAutoInstall = PendingAutoInstall(startEntryId, built.startIndex, built.timeline.size, selectedAt)
-                        followAutoBrowseContinuation(context, startEntryId, built.startIndex)
+                        val pending = PendingAutoInstall(startEntryId, built.startIndex, built.timeline.size, selectedAt)
+                        pendingAutoInstall = pending
+                        followAutoBrowseContinuation(context, pending.installed)
                     }
             } ?: throw IllegalArgumentException("Auto browse row unusable: ${AutoBrowseContexts.Selection.AccountChanged}")
             return MediaSession.MediaItemsWithStartPosition(
