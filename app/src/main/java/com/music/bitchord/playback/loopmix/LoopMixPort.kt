@@ -64,16 +64,35 @@ class LoopMixPort {
     /** Bumped for every arm and disarm, so the sink drops state that belonged to an older one. */
     val generation: Int get() = armed.generation
 
-    fun armOutgoing(arm: OutArm) {
+    /** Arming, disarming and the sink's takeover commit are one decision each, in one order. */
+    private val lock = Any()
+
+    fun armOutgoing(arm: OutArm) = synchronized(lock) {
         armed = Armed(armed.generation + 1, arm, null)
     }
 
-    fun armIncoming(arm: InArm) {
+    fun armIncoming(arm: InArm) = synchronized(lock) {
         armed = Armed(armed.generation + 1, null, arm)
     }
 
-    fun disarm() {
+    /**
+     * Ends whatever is armed. Returns whether the outgoing sink had committed
+     * its takeover first ([commitTakeover]): after this, none can, so the
+     * answer is final, not a reading a sink mid-buffer can overtake.
+     */
+    fun disarm(): Boolean = synchronized(lock) {
         armed = Armed(armed.generation + 1, null, null)
+        tookOver
+    }
+
+    /**
+     * The sink switching to the renderer for the arm it read as [generation]:
+     * refused, false, when that arm was disarmed or replaced since.
+     */
+    fun commitTakeover(generation: Int): Boolean = synchronized(lock) {
+        if (armed.generation != generation) return@synchronized false
+        tookOver = true
+        true
     }
 
     // ---- What the sink publishes ---------------------------------------------------------

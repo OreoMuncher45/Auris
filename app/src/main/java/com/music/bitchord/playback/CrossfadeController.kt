@@ -3466,13 +3466,11 @@ class CrossfadeController(
         val into = incoming
         val wasHandedOff = handedOff
         val m = session?.mixSeconds(System.nanoTime(), playing = false)
-        val tookOverBefore = session?.outPort?.tookOver == true
-        session?.outPort?.disarm()
+        // One decision with the sink's takeover commit: whether the outgoing
+        // song needs the recovery seek is settled by the disarm itself, and no
+        // sink mid-buffer can take over after it.
+        val tookOver = session?.outPort?.disarm() == true
         session?.inPort?.disarm()
-        // Read again after the disarm: a sink mid-buffer can commit the takeover
-        // between the two, and then its song needs the recovery seek too. (Its
-        // next buffer adopts the disarm and clears the flag.)
-        val tookOver = tookOverBefore || session?.outPort?.tookOver == true
         // The settle point, worked out before [finish] forgets the plan.
         val target: Long? = when {
             session == null -> null
