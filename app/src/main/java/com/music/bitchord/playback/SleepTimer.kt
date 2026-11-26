@@ -214,7 +214,24 @@ object SleepTimer {
             }
             return CastFade.PAUSE_FAILED
         } finally {
-            if (touched && volume != null && original != null) withContext(NonCancellable) { volume.set(original) }
+            if (touched && volume != null && original != null) withContext(NonCancellable) { restoreVolume(volume, original) }
         }
+    }
+
+    /** Tries at putting a Cast receiver's stream volume back before the fade gives up on it. */
+    const val CAST_RESTORE_ATTEMPTS = 3
+    private const val CAST_RESTORE_RETRY_MS = 500L
+
+    /**
+     * Puts the receiver's stream volume back to [original], retrying a
+     * refusal: a receiver that took the fade to silence but refused the
+     * restore would play the next resume silently. True once accepted.
+     */
+    private suspend fun restoreVolume(volume: StreamVolume, original: Double): Boolean {
+        repeat(CAST_RESTORE_ATTEMPTS) { attempt ->
+            if (volume.set(original)) return true
+            if (attempt < CAST_RESTORE_ATTEMPTS - 1) delay(CAST_RESTORE_RETRY_MS)
+        }
+        return false
     }
 }
