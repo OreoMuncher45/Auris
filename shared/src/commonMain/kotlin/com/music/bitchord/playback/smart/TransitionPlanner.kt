@@ -1826,8 +1826,12 @@ private fun mixPlan(
     val openingFloor = if (traits != null) MIN_BEATMATCH_CONFIDENCE else MIN_DJ_CONFIDENCE
     val openingUntrusted = nextAnalysis.headBeats != null &&
         (incomingOpening < openingFloor || openingTempoDisagrees(nextAnalysis))
+    // Auto blends a close-tempo pair on either trusted grid, as it always has.
+    // Advanced blends beat on beat, so it needs both grids trusted: one it
+    // can't trust is what the policy's DJ_ASSISTED tier (and its filter
+    // sweep) is for.
     val sameBeatBlend =
-        currentBpm > 0 && nextBpm > 0 && !openingUntrusted &&
+        traits == null && currentBpm > 0 && nextBpm > 0 && !openingUntrusted &&
             abs(1 - normalizedTempoRatio(currentBpm, nextBpm)) <= 0.05 &&
             (analysis.beatConfidence.orZero() >= MIN_DJ_CONFIDENCE || incomingOpening >= MIN_DJ_CONFIDENCE) ||
             traits?.phaseLockable == true
@@ -1905,15 +1909,28 @@ private fun mixPlan(
         val totalOverlap = if (traits != null) wholeBars(clamped, beatSeconds, maximumOverlap) else clamped
         val targetStart = max(0.0, mixEnd - totalOverlap)
         val earliestTransitionStart = max(0.0, mixEnd - maximumOverlap)
-        transitionStart = alignedTransitionStart(
+        val alignedStart = alignedTransitionStart(
             analysis,
             targetStart,
             mixEnd - 0.05,
             preferEarlier = true,
             minimum = earliestTransitionStart,
         )
-        finalIncomingCueTime =
-            max(0.0, incomingHandoffTime - (mixEnd - transitionStart) * incomingPlaybackRate)
+        // The overlap's minimum or an earlier aligned start can reach back
+        // past where the incoming song makes sound, leaving it silent under
+        // the outgoing fade. Start later instead, keeping the handoff where it
+        // lands, so the cue is at or after the audible start.
+        val latestStart = mixEnd - (incomingHandoffTime - rawIncomingCueTime) / max(0.8, incomingPlaybackRate)
+        transitionStart = when {
+            incomingHandoffTime - (mixEnd - alignedStart) * incomingPlaybackRate >= rawIncomingCueTime -> alignedStart
+            latestStart < mixEnd - 0.05 ->
+                alignedTransitionStart(analysis, latestStart, mixEnd - 0.05, preferEarlier = false, minimum = latestStart)
+            else -> alignedStart
+        }
+        finalIncomingCueTime = max(
+            rawIncomingCueTime,
+            incomingHandoffTime - (mixEnd - transitionStart) * incomingPlaybackRate,
+        )
     } else {
         val clamped = clamp(overlap, min(handoffSeconds, maximumOverlap), maximumOverlap)
         val actualOverlap = if (traits != null) wholeBars(clamped, beatSeconds, maximumOverlap) else clamped
