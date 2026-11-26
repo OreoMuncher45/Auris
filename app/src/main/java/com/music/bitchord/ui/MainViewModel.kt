@@ -646,7 +646,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun cancelClosedSpotifyLoads() {
         val open = _detailStack.value.mapTo(HashSet()) { it.opening }
         spotifyPageJobs.forEach { (opening, job) -> if (opening !in open) job.cancel() }
+        openingStamps.keys.retainAll(open)
     }
+
+    /** The session each open page was opened under, by opening; see [loadMoreDetail]. Main thread. */
+    private val openingStamps = HashMap<Long, Innertube.ListenerStamp>()
 
     private data class SearchCacheEntry(
         val rows: List<SearchResult>,
@@ -4341,7 +4345,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // start during the scope wait, so both repeat until none is active.
             // Already-resolved scopes return at once; on-device pages skip it.
             if (remotePage) settleCredentials()
-            val credentials = Innertube.listenerGeneration
+            // The session the page is opened under, kept for its later pages:
+            // a continuation goes out under this one or not at all.
+            val openingStamp = Innertube.listenerStamp()
+            val credentials = openingStamp.generation
+            openingStamps[opened] = openingStamp
             val state = when {
                 localPlaylist != null -> {
                     name = localPlaylist.title
@@ -5029,11 +5037,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // an answer for anyone else, or for an earlier opening, is not appended.
         val opened = page.opening
         val listener = listenerKey()
-        val credentials = Innertube.listenerGeneration
+        // The session the page was opened under, not the one at scroll time: a
+        // scope refreshed or switched while the page stayed up is another
+        // session, and the page's next rows are not asked for under it.
+        val stamp = openingStamps[opened] ?: Innertube.listenerStamp()
         _detailStack.value = _detailStack.value.updateOpening(browseId, opened) { it.copy(loadingMore = true) }
         viewModelScope.launch {
-            val fetched = YtMusicRepository.moreSongs(token).getOrNull()
-                ?.takeIf { listenerKey() == listener && Innertube.listenerGeneration == credentials }
+            // Refused where the request's credentials are taken if the session
+            // is no longer that one (Innertube.asListener).
+            val fetched = Innertube.asListener(stamp) { YtMusicRepository.moreSongs(token) }.getOrNull()
+                ?.takeIf { listenerKey() == listener && Innertube.listenerStamp() == stamp }
             val stack = _detailStack.value
             val index = stack.indexOfFirst { it.browseId == browseId && it.opening == opened }
             if (index < 0 || fetched == null) {
