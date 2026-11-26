@@ -5268,6 +5268,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val stack = _detailStack.value
             val index = stack.indexOfFirst { it.browseId == browseId && it.opening == opened }
             if (index < 0 || fetched == null) {
+                // The same listener, but the session the page was opened under is
+                // gone (its scope was refreshed): every later scroll would be
+                // refused the same way, so the page is opened again under the
+                // current session rather than left unable to grow.
+                if (index >= 0 && listenerKey() == listener && Innertube.listenerStamp() != stamp) {
+                    val stale = stack[index]
+                    openingStamps.remove(opened)
+                    _detailStack.value = stack.filterNot { it.opening == opened }
+                    openDetail(stale.browseId, stale.title, stale.subtitle, stale.thumbnailUrl, stale.type)
+                    return@launch
+                }
                 _detailStack.value = stack.updateOpening(browseId, opened) { it.copy(loadingMore = false) }
                 return@launch
             }

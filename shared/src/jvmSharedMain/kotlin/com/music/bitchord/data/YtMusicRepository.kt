@@ -1259,6 +1259,13 @@ object YtMusicRepository {
                 // default, and a switch can land while it waits: a retry under
                 // another identity could send a rating or playlist edit to an
                 // account the listener did not pick, so it is not made.
+                // A request its caller bound to a session (a page's continuation,
+                // say) keeps that binding: the retry would go out under the
+                // refreshed session instead, so it is the caller's to make.
+                if (Innertube.boundToSession()) {
+                    Log.w(TAG, "$label not retried: bound to the session it was asked under")
+                    throw failure
+                }
                 val refreshed = Innertube.listenerStamp()
                 if (refreshed.listener != owner.listener) {
                     Log.w(TAG, "$label not retried: the account changed during the refresh")
