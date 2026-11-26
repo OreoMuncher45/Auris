@@ -99,7 +99,12 @@ const val VOCAL_ACTIVE_THRESHOLD = 0.25
 /**
  * The DSP heuristic's vocal value, moved onto the model's scale: its own
  * decision boundary (0.6, where it was tuned) lands on [VOCAL_ACTIVE_THRESHOLD],
- * linearly on either side, so it decides exactly what it used to.
+ * linearly on either side, so each frame is called sung or not exactly as
+ * before. Averages over a window are not: the two sides are scaled by
+ * different factors, so a window half at 0.2 and half at 0.9 averages under
+ * 0.6 on the old scale but over [VOCAL_ACTIVE_THRESHOLD] on this one. That is
+ * the model's reading, which the planner's window checks are tuned for; on
+ * DSP-fallback tracks it leans towards calling a mixed window sung.
  */
 fun heuristicVocalOnModelScale(value: Double): Double {
     if (!value.isFinite()) return value
@@ -483,6 +488,9 @@ fun openingTempoDisagrees(analysis: TrackAnalysis): Boolean {
     val bpm = analysis.bpm.orZero()
     if (!(head.bpm > 0) || !(bpm > 0) || !head.bpm.isFinite() || !bpm.isFinite()) return false
     var ratio = head.bpm / bpm
+    // A near-zero tempo from a corrupt cache entry underflows the ratio to 0,
+    // which doubles to itself forever: no grid to compare.
+    if (!ratio.isFinite() || ratio <= 0) return false
     while (ratio >= 1.5) ratio /= 2
     while (ratio < 0.75) ratio *= 2
     return abs(ratio - 1) > OPENING_TEMPO_TOLERANCE

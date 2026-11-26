@@ -196,7 +196,10 @@ object LoopMix {
         ) ?: return null.also { why?.append("outgoing: ")?.append(outCount) }
 
         // incoming: the earliest instrumental loop in its opening
-        val inEnd = min(IN_SEARCH_SEC + LOOP_BARS * inGrid.barSec, inDuration - 20)
+        // The loop is cut on the measured opening's bar lines where there are
+        // some, so its length is that grid's bars, not the whole-track grid's.
+        val inBarSec = inn.headBeats?.takeIf(::cutsOnSide)?.let { 240.0 / it.bpm } ?: inGrid.barSec
+        val inEnd = min(IN_SEARCH_SEC + LOOP_BARS * inBarSec, inDuration - 20)
         val inPick = firstClean(
             // Starting inside the opening search, ending where it must.
             candidates = { bars -> loopsBetween(inn.headBeats, inGrid, 0.0, inEnd, bars).filter { it.start <= IN_SEARCH_SEC } },
@@ -423,17 +426,31 @@ object LoopMix {
         return if (unmeasured && quietest > SILENT_RMS) Double.NaN else quietest
     }
 
-    private fun meanRms(windows: List<CurveWindow>, from: Double, to: Double): Double {
+    /**
+     * RMS over [from]..[to]. Windows overlap at their seams: each instant is
+     * counted once, from the first window (by start) that measured it, so a
+     * seam isn't weighted twice.
+     */
+    internal fun meanRms(windows: List<CurveWindow>, from: Double, to: Double): Double {
         var sumSquares = 0.0
         var count = 0
-        for (window in windows) {
-            val a = max(0, ceil((from - window.startTime) * window.frameRate).toInt())
+        var coveredUntil = Double.NEGATIVE_INFINITY
+        // Already in order as the analyzer stores them: no copy then (this runs per bar per candidate).
+        val ordered = if ((1 until windows.size).all { windows[it - 1].startTime <= windows[it].startTime }) {
+            windows
+        } else {
+            windows.sortedBy { it.startTime }
+        }
+        for (window in ordered) {
+            val start = max(from, coveredUntil)
+            val a = max(0, ceil((start - window.startTime) * window.frameRate - 1e-9).toInt())
             val b = min(window.values.size, floor((to - window.startTime) * window.frameRate).toInt())
             for (i in a until b) {
                 val rms = rmsFromLevel(window.values[i].toDouble())
                 sumSquares += rms * rms
                 count++
             }
+            if (b > a) coveredUntil = max(coveredUntil, window.startTime + b / window.frameRate)
         }
         return if (count == 0) Double.NaN else sqrt(sumSquares / count)
     }
