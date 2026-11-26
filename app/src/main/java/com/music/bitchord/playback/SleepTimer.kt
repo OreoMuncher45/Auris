@@ -151,7 +151,14 @@ object SleepTimer {
                 pauseLocal()
                 return
             }
-            if (confirmCastPause()) return
+            val confirmed = confirmCastPause()
+            // Checked again after every attempt, confirmed or not: Cast can end
+            // while the pause is awaited, and playback resume on the phone.
+            if (!castActive()) {
+                pauseLocal()
+                return
+            }
+            if (confirmed) return
         }
     }
 

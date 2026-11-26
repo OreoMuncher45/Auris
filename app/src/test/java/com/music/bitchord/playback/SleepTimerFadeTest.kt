@@ -224,4 +224,37 @@ class SleepTimerFadeTest {
         // And the watcher then follows playback to the phone instead of clearing the timer.
         assertEquals(SleepTimer.AfterCastFade.CONTINUE_LOCAL, SleepTimer.afterCastFade(result, castActiveNow = false))
     }
+
+    @Test
+    fun castEndingDuringAConfirmedDeadlinePausePausesThePhone() = runTest {
+        var onReceiver = true
+        var local = 0
+        SleepTimer.pauseAtDeadline(
+            castActive = { onReceiver },
+            confirmCastPause = { onReceiver = false; true }, // confirmed, then playback resumed on the phone
+            pauseLocal = { local++ },
+        )
+        assertEquals(1, local)
+    }
+
+    @Test
+    fun castEndingDuringTheFinalFailedDeadlinePausePausesThePhone() = runTest {
+        var onReceiver = true
+        var asks = 0
+        var local = 0
+        SleepTimer.pauseAtDeadline(
+            castActive = { onReceiver },
+            confirmCastPause = { if (++asks == SleepTimer.CAST_PAUSE_ATTEMPTS) onReceiver = false; false },
+            pauseLocal = { local++ },
+        )
+        assertEquals(SleepTimer.CAST_PAUSE_ATTEMPTS, asks)
+        assertEquals(1, local)
+    }
+
+    @Test
+    fun aConfirmedDeadlinePauseOnTheReceiverLeavesThePhoneAlone() = runTest {
+        var local = 0
+        SleepTimer.pauseAtDeadline(castActive = { true }, confirmCastPause = { true }, pauseLocal = { local++ })
+        assertEquals(0, local)
+    }
 }
