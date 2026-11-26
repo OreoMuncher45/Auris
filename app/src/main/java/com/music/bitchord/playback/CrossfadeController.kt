@@ -3078,6 +3078,10 @@ class CrossfadeController(
         inPort.armIncoming(LoopMixPort.InArm((session.handoverTrack * 1_000_000).roundToLong()))
         into.prepare()
         session.attach(outPort, inPort)
+        // A stall is seen the moment the incoming player reports it, not on
+        // the next tick: what alignment measured before it no longer holds.
+        into.removeListener(loopStallListener)
+        into.addListener(loopStallListener)
         loopSession = session
         loopIncomingStarted = false
         lastLoopPositionMs = -1L
@@ -3292,8 +3296,11 @@ class CrossfadeController(
                     "loop align $round: incoming ${"%+.2f".format(Locale.ROOT, error * 1000)}ms against the deck " +
                         "(spread ${"%.2f".format(Locale.ROOT, spread * 1000)}ms)",
                 )
-                session.recordAligned(error)
-                if (LoopMixSession.aligned(error) || round == LOOP_ALIGN_ROUNDS) return@launch
+                val done = LoopMixSession.aligned(error) || round == LOOP_ALIGN_ROUNDS
+                // Confirmed only when no correction follows: an offset about to
+                // be corrected no longer describes the player once the shift lands.
+                session.recordAligned(error, confirmed = done)
+                if (done) return@launch
                 // A shift lands where the sink is processing, its lead ahead of
                 // what is heard, and runs for as long as it is: both have to
                 // have played out before the next reading means anything.
@@ -3365,7 +3372,25 @@ class CrossfadeController(
     }
 
     /** The mix played out: the incoming player is the song, the outgoing one is retired. */
+    /**
+     * Drops the incoming player's alignment as soon as it buffers before the
+     * handoff, and fences the round in flight (cancelled, so its results are
+     * never recorded); [driveLoopMix] starts a fresh one once it plays again.
+     */
+    private val loopStallListener = object : Player.Listener {
+        override fun onPlaybackStateChanged(playbackState: Int) {
+            if (playbackState != Player.STATE_BUFFERING || handedOff) return
+            if (phase != Phase.LOOP_RUNNING && phase != Phase.LOOP_ARMING) return
+            val session = loopSession ?: return
+            loopAlignJob?.cancel()
+            loopAlignJob = null
+            session.invalidateAlignment()
+        }
+    }
+
     private fun finishLoop() {
+        incoming?.removeListener(loopStallListener)
+        outgoing?.removeListener(loopStallListener)
         val session = loopSession
         TrackLog.d(
             TAG,
@@ -3407,6 +3432,8 @@ class CrossfadeController(
      * replaced the queue, and the player is already where they asked.
      */
     private fun loopBail(reason: String, settle: Boolean = true, recover: Boolean = true) {
+        incoming?.removeListener(loopStallListener)
+        outgoing?.removeListener(loopStallListener)
         cancelAutoMixVisual()
         val session = loopSession
         TrackLog.d(TAG, "loop mix stops ($phase): $reason")

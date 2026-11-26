@@ -167,4 +167,42 @@ class SleepTimerFadeTest {
         assertTrue("it had faded part of the way", volume.asked.dropLast(1).last() < 0.5)
         assertEquals("restored despite the cancellation", 0.5, volume.asked.last(), 0.0)
     }
+
+    @Test
+    fun aRouteChangeWhileTheFinalPauseIsInFlightIsAMove() = runTest {
+        var onReceiver = true
+        val result = SleepTimer.fadeOutCast(null, 0L, 500L, { testScheduler.currentTime }, { onReceiver }, { true }) {
+            onReceiver = false // playback resumed on the phone while the pause was awaited
+            false
+        }
+        assertEquals(SleepTimer.CastFade.MOVED, result)
+    }
+
+    @Test
+    fun theWatcherFollowsPlaybackAfterTheFade() {
+        // A handoff during the awaited pause or the restore wins over what the fade reported.
+        assertEquals(SleepTimer.AfterCastFade.CONTINUE_LOCAL, SleepTimer.afterCastFade(SleepTimer.CastFade.PAUSED, castActiveNow = false))
+        assertEquals(SleepTimer.AfterCastFade.CONTINUE_LOCAL, SleepTimer.afterCastFade(SleepTimer.CastFade.PAUSE_FAILED, castActiveNow = false))
+        assertEquals(SleepTimer.AfterCastFade.CONTINUE_LOCAL, SleepTimer.afterCastFade(SleepTimer.CastFade.MOVED, castActiveNow = true))
+        assertEquals(SleepTimer.AfterCastFade.WAIT_DEADLINE, SleepTimer.afterCastFade(SleepTimer.CastFade.LISTENER_PAUSED, castActiveNow = true))
+        assertEquals(SleepTimer.AfterCastFade.CANCEL, SleepTimer.afterCastFade(SleepTimer.CastFade.PAUSED, castActiveNow = true))
+        assertEquals(SleepTimer.AfterCastFade.CANCEL, SleepTimer.afterCastFade(SleepTimer.CastFade.PAUSE_FAILED, castActiveNow = true))
+    }
+
+    @Test
+    fun theDeadlinePauseIsConfirmedOnTheReceiverAndRetried() = runTest {
+        var asks = 0
+        var local = 0
+        SleepTimer.pauseAtDeadline(castActive = { true }, confirmCastPause = { ++asks == 2 }, pauseLocal = { local++ })
+        assertEquals(2, asks)
+        assertEquals(0, local)
+    }
+
+    @Test
+    fun theDeadlinePauseFollowsPlaybackToThePhone() = runTest {
+        var onReceiver = true
+        var local = 0
+        SleepTimer.pauseAtDeadline(castActive = { onReceiver }, confirmCastPause = { onReceiver = false; false }, pauseLocal = { local++ })
+        assertEquals(1, local)
+    }
 }
