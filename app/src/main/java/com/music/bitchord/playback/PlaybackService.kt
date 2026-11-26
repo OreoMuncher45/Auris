@@ -1166,7 +1166,7 @@ class PlaybackService : MediaLibraryService() {
     private val sessionSongHistory = mutableListOf<Song>()
 
     private var serviceLyricsJob: Job? = null
-    private var serviceLyrics: List<LyricLine>? = null
+    private val serviceLyrics = TrackLyrics()
     private var lastPublishedSubtitle: String? = null
     private var lyricsTickerJob: Job? = null
 
@@ -9516,7 +9516,7 @@ class PlaybackService : MediaLibraryService() {
         lyricsTickerJob = null
         serviceLyricsJob?.cancel()
         serviceLyricsJob = null
-        serviceLyrics = null
+        serviceLyrics.clear()
         cancelPrefetch()
         trackAnalyzer.release()
         loudnessRetryJob?.cancel()
@@ -9591,16 +9591,21 @@ class PlaybackService : MediaLibraryService() {
 
     private fun loadLyricsForCurrentTrack() {
         val currentSong = player?.currentMediaItem?.toSong() ?: run {
-            serviceLyrics = null
+            serviceLyrics.clear()
             stopLyricsTicker()
             return
         }
 
         if (!AppSettings.syncedLyrics.value) {
-            serviceLyrics = null
+            serviceLyrics.clear()
             stopLyricsTicker()
             return
         }
+
+        // Another track's lines go now, not when this lookup answers: until
+        // then the ticker would read them at this track's position.
+        val trackId = currentSong.videoId
+        if (serviceLyrics.lookUp(trackId)) updateLyricSubtitle()
 
         val trackDurationMs = (player?.duration ?: 0L).takeIf { it > 0 } ?: 0L
 
@@ -9625,8 +9630,7 @@ class PlaybackService : MediaLibraryService() {
                 lines = found?.lines?.takeIf(EmbeddedLyrics::isSynced) ?: embedded ?: found?.lines
             }
             withContext(Dispatchers.Main) {
-                serviceLyrics = lines
-                if (player?.isPlaying == true) {
+                if (serviceLyrics.publish(trackId, lines) && player?.isPlaying == true) {
                     updateLyricSubtitle()
                 }
             }
@@ -9691,7 +9695,7 @@ class PlaybackService : MediaLibraryService() {
     private fun updateLyricSubtitle() {
         val exoPlayer = player ?: return
         val currentSong = exoPlayer.currentMediaItem?.toSong() ?: return
-        val lines = serviceLyrics
+        val lines = serviceLyrics.lines
         val pos = crossfade?.loopPositionMs() ?: exoPlayer.currentPosition
         val subtitleText = if (lines != null && lines.isNotEmpty() && AppSettings.syncedLyrics.value) {
             val idx = lines.indexOfLast { it.timeMs <= pos }
