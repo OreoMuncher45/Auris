@@ -180,7 +180,10 @@ object Innertube {
                 // A scope taken from a signed-in page can name another account
                 // under the same cookie; requests then go out as that one.
                 adoptedIdentity != null -> "$adoptedIdentity|$it"
-                else -> it
+                // The account index requests send (the scope's, "0" until one is
+                // installed): a scope that selects another account in the jar is
+                // another listener, not the same one with new answers.
+                else -> "${authUserFor(scope)}|$it"
             }
         }
         val current = published
@@ -469,65 +472,116 @@ object Innertube {
         val generation: Long,
     )
 
+    /** [listener] and [listenerGeneration] as one value, read in one go. */
+    data class ListenerStamp(val listener: String?, val generation: Long)
+
+    /** The current [ListenerStamp]; never one account's listener with another's generation. */
+    fun listenerStamp(): ListenerStamp = published.let { ListenerStamp(it.listener, it.generation) }
+
     /**
      * The listener a request must go out as, set by [asListener]. Carried in
      * the coroutine context so [requestCredentials] can check it in the same
      * locked read that takes the credentials.
      */
-    private class ExpectedListener(val listener: String?) :
+    private class ExpectedListener(val stamp: ListenerStamp) :
         kotlin.coroutines.AbstractCoroutineContextElement(Key) {
         companion object Key : kotlin.coroutines.CoroutineContext.Key<ExpectedListener>
-    }
-
-    /**
-     * Everything requests are signed with, as it was at [captureSession]:
-     * cookie, scope, adopted identity, chosen channel and visitor id.
-     * [restore] puts all of it back in one locked write — a candidate account
-     * that was never accepted leaves nothing of itself behind, its scope
-     * included, even under the same cookie.
-     */
-    class SessionState internal constructor(private val apply: () -> Unit) {
-        fun restore() = apply()
-    }
-
-    fun captureSession(): SessionState = synchronized(identityLock) {
-        val savedCookie = cookie
-        val savedScope = scope
-        val savedAdopted = adoptedIdentity
-        val savedChannel = channelOverride
-        val savedVisitor = visitorData
-        val savedVisitorBound = visitorDataIsSessionBound
-        SessionState {
-            synchronized(identityLock) {
-                cookie = savedCookie
-                scope = savedScope
-                adoptedIdentity = savedAdopted
-                channelOverride = savedChannel
-                visitorData = savedVisitor
-                visitorDataIsSessionBound = savedVisitorBound
-                refreshListener()
-            }
-        }
     }
 
     /** Thrown when a request bound by [asListener] would go out as another listener. */
     class ListenerChangedException : IllegalStateException("the account changed before the request was sent")
 
     /**
-     * Runs [block] with its requests bound to [listener]: a request whose
-     * credentials, read under [identityLock], belong to anyone else fails
-     * with [ListenerChangedException] instead of being sent.
+     * Runs [block] with its requests bound to [stamp]: a request whose
+     * credentials, read under [identityLock], were published at any other
+     * generation — another account, or the same one after a switch away and
+     * back — fails with [ListenerChangedException] instead of being sent.
      */
-    suspend fun <T> asListener(listener: String?, block: suspend () -> T): T =
-        kotlinx.coroutines.withContext(ExpectedListener(listener)) { block() }
+    suspend fun <T> asListener(stamp: ListenerStamp, block: suspend () -> T): T =
+        kotlinx.coroutines.withContext(ExpectedListener(stamp)) { block() }
+
+    /**
+     * A signed-in session under validation, kept apart from the shared one.
+     *
+     * Validation asks the account about itself with these credentials, and
+     * nothing of them reaches the shared state ([cookie], the scope, the chosen
+     * channel, the visitor id, [listener]) until [installSession] accepts them.
+     * So no other request, cache or write can ever be signed as, or keyed to,
+     * an account that might yet be rejected, and a rejected or abandoned one
+     * leaves nothing behind to roll back.
+     */
+    class CandidateSession(
+        val cookie: String,
+        val pageId: String?,
+        val dataSyncId: String?,
+        val authUser: String?,
+        val visitorData: String?,
+        val clientVersion: String?,
+    )
+
+    private class CandidateContext(val session: CandidateSession) :
+        kotlin.coroutines.AbstractCoroutineContextElement(Key) {
+        companion object Key : kotlin.coroutines.CoroutineContext.Key<CandidateContext>
+    }
+
+    /** Runs [block] with every request in it signed as [candidate], and only them. */
+    suspend fun <T> asCandidate(candidate: CandidateSession, block: suspend () -> T): T =
+        kotlinx.coroutines.withContext(CandidateContext(candidate)) { block() }
+
+    /** Whether the caller is inside [asCandidate]: its failures say nothing about the shared session. */
+    suspend fun inCandidate(): Boolean = kotlinx.coroutines.currentCoroutineContext()[CandidateContext] != null
+
+    /**
+     * Makes an accepted [candidate] the session, in one write under
+     * [identityLock]: cookie, adopted scope, chosen channel and visitor id
+     * together, so no request is ever signed with part of it. Returns false,
+     * installing nothing, when [unless] — read under the same lock — says the
+     * acceptance was superseded (a sign-out or profile switch meanwhile).
+     */
+    fun installSession(candidate: CandidateSession, unless: () -> Boolean = { false }): Boolean = synchronized(identityLock) {
+        if (unless()) return@synchronized false
+        cookie = candidate.cookie
+        adoptSessionScopeLocked(
+            pageId = candidate.pageId,
+            dataSyncId = candidate.dataSyncId,
+            authUser = candidate.authUser,
+            visitorData = candidate.visitorData,
+            clientVersion = candidate.clientVersion,
+            loggedIn = true,
+        )
+        channelOverride = if (candidate.pageId == null && candidate.dataSyncId == null) {
+            null
+        } else {
+            ChannelSelection(candidate.pageId, candidate.dataSyncId, candidate.authUser)
+        }
+        refreshListener()
+        true
+    }
 
     private suspend fun requestCredentials(): RequestCredentials {
-        val expected = kotlinx.coroutines.currentCoroutineContext()[ExpectedListener]
+        val context = kotlinx.coroutines.currentCoroutineContext()
+        context[CandidateContext]?.session?.let { c ->
+            // A candidate's request is built from the candidate alone, and its
+            // generation matches no published one: nothing it answers (a
+            // visitor id) is ever kept for the shared session.
+            return RequestCredentials(
+                c.cookie, c.authUser ?: "0", c.pageId, c.dataSyncId, c.visitorData, CANDIDATE_GENERATION,
+            )
+        }
+        val expected = context[ExpectedListener]
         return synchronized(identityLock) {
-            if (expected != null && published.listener != expected.listener) throw ListenerChangedException()
+            if (expected != null && published.let { it.listener != expected.stamp.listener || it.generation != expected.stamp.generation }) {
+                throw ListenerChangedException()
+            }
             snapshotCredentials()
         }
     }
+
+    /** The credentials a request here would go out with, described; for tests at this seam. */
+    internal suspend fun requestIdentityForTest(): String =
+        requestCredentials().let { "${it.cookie}|${it.authUser}|${it.pageId}|${it.dataSyncId}|${it.generation}" }
+
+    private const val CANDIDATE_GENERATION = -1L
 
     /** Callers hold [identityLock]. */
     private fun snapshotCredentials(): RequestCredentials {
@@ -604,16 +658,28 @@ object Innertube {
     }
 
     /** Re-read request context once after an authenticated rejection. */
-    suspend fun refreshSessionScope() {
-        if (cookie == null) return
-        scopeLock.withLock {
+    /**
+     * Re-reads the scope after a rejection, for the session [owner] names —
+     * the one the rejected request was signed as. A rejection that arrives
+     * after another listener took over refreshes nothing: clearing now would
+     * drop *that* listener's adopted scope for a failure it never had.
+     * Returns whether the refresh ran.
+     */
+    suspend fun refreshSessionScope(owner: ListenerStamp): Boolean {
+        if (cookie == null) return false
+        val cleared = scopeLock.withLock {
             synchronized(identityLock) {
+                if (published.listener != owner.listener || published.generation != owner.generation) {
+                    return@synchronized false
+                }
                 scope = null
                 adoptedIdentity = null
                 refreshListener()
+                true
             }
         }
-        ensureSessionScope()
+        if (cleared) ensureSessionScope()
+        return cleared
     }
 
     /**
@@ -1393,9 +1459,11 @@ object Innertube {
         // likes, playlists, account menus and all their continuations pass
         // through it. Waiting here makes restoration process-wide rather than
         // a special case implemented by whichever screen happened to open.
-        if (cookie != null) ensureSessionScope()
+        val candidate = kotlinx.coroutines.currentCoroutineContext()[CandidateContext]?.session
+        // A candidate brings its own scope; the shared one is not its business.
+        if (candidate == null && cookie != null) ensureSessionScope()
         val credentials = requestCredentials()
-        val clientVersion = webRemixVersion
+        val clientVersion = candidate?.clientVersion ?: webRemixVersion
         val response = withRetry {
             client.post("$MUSIC_BASE/$endpoint") {
                 contentType(ContentType.Application.Json)
