@@ -483,6 +483,9 @@ fun openingTempoDisagrees(analysis: TrackAnalysis): Boolean {
     val bpm = analysis.bpm.orZero()
     if (!(head.bpm > 0) || !(bpm > 0) || !head.bpm.isFinite() || !bpm.isFinite()) return false
     var ratio = head.bpm / bpm
+    // A near-zero tempo from a corrupt cache entry underflows the ratio to 0,
+    // which doubles to itself forever: no grid to compare.
+    if (!ratio.isFinite() || ratio <= 0) return false
     while (ratio >= 1.5) ratio /= 2
     while (ratio < 0.75) ratio *= 2
     return abs(ratio - 1) > OPENING_TEMPO_TOLERANCE

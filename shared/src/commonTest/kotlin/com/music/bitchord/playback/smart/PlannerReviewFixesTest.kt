@@ -39,6 +39,8 @@ class PlannerReviewFixesTest {
     @Test
     fun aFixedPhraseWithNoMeasuredBarLinesFallsBackToTheAdaptivePlan() {
         val p = plan(track(120.0, downbeats = false), track(120.0), phraseBars = PHRASE_BARS_SHORT)
+        // Falls back to a plan, not a refusal.
+        assertTrue(!p.blocked, "blocked: ${p.reason}")
         assertTrue(!p.reason.contains("phrase-8-bar"), "reason ${p.reason}")
     }
 
@@ -53,11 +55,15 @@ class PlannerReviewFixesTest {
     fun theMixWindowBoundsTheIncomingOverlapToo() {
         val next = track(120.0).copy(mixInTime = 28.5, audibleStartTime = 20.0)
         val p = plan(track(120.0), next, mixWindow = true)
-        if (!p.blocked) {
-            val incomingEnd = p.incomingCueTime + (p.transitionEnd - p.transitionStart) * p.incomingPlaybackRate
-            assertTrue(incomingEnd <= 30.0 + 1e-6, "incoming overlap ends at $incomingEnd")
-            assertTrue(p.handoffDuration <= p.transitionEnd - p.transitionStart + 1e-9)
-        }
+        assertTrue(!p.blocked, "blocked: ${p.reason}")
+        val incomingEnd = p.incomingCueTime + (p.transitionEnd - p.transitionStart) * p.incomingPlaybackRate
+        assertTrue(incomingEnd <= 30.0 + 1e-6, "incoming overlap ends at $incomingEnd")
+        assertTrue(p.handoffDuration <= p.transitionEnd - p.transitionStart + 1e-9)
+        // The clamp ran: unclamped, this pair's overlap reaches past 30 s into the incoming song.
+        val unclamped = plan(track(120.0), next)
+        val unclampedEnd = unclamped.incomingCueTime +
+            (unclamped.transitionEnd - unclamped.transitionStart) * unclamped.incomingPlaybackRate
+        assertTrue(unclampedEnd > 30.0, "the unclamped plan ends at $unclampedEnd, so nothing was clamped")
     }
 
     @Test
@@ -78,6 +84,8 @@ class PlannerReviewFixesTest {
         val b = track(120.0).copy(key = "F♯ major", keyConfidence = 0.9, mixInTime = 8.5,
             mixInCandidates = listOf(MixCandidate(8.5, 1.0, "drop")))
         val p = plan(a, b)
+        assertTrue(!p.blocked, "blocked: ${p.reason}")
+        assertEquals(TransitionStyle.DJ_BLEND, p.transitionStyle)
         assertTrue(p.transitionEnd - p.transitionStart < 8.0, "overlap ${p.transitionEnd - p.transitionStart}")
     }
 
@@ -86,6 +94,7 @@ class PlannerReviewFixesTest {
         // A trusted opening grid the model measured with no bar lines at all.
         val next = track(120.0).let { it.copy(headBeats = BeatSide(emptyList(), emptyList(), 120.0, 0.9)) }
         val p = plan(track(120.0), next, phraseBars = PHRASE_BARS_SHORT)
+        assertTrue(!p.blocked, "blocked: ${p.reason}")
         assertTrue(!p.reason.contains("phrase-8-bar"), "reason ${p.reason}")
     }
 
@@ -173,6 +182,18 @@ class PlannerReviewFixesTest {
             val p = plan(track(120.0), next)
             assertEquals(TransitionStyle.DJ_BLEND, p.transitionStyle, "start $start")
             assertTrue(p.incomingCueTime >= start - 1e-9, "start $start: cue ${p.incomingCueTime}")
+        }
+    }
+
+    @Test
+    fun aCorruptTempoNeverHangsThePlanner() {
+        // Cached tempi that are infinite or so small their ratio underflows to 0.
+        for (bad in listOf(Double.MIN_VALUE, Double.POSITIVE_INFINITY, Double.MAX_VALUE)) {
+            plan(track(120.0), track(120.0).copy(bpm = bad))
+            plan(track(120.0).copy(bpm = bad), track(120.0))
+            val head = track(120.0).let { it.copy(headBeats = BeatSide(it.downbeats, it.downbeats, bad, 0.9)) }
+            assertTrue(!openingTempoDisagrees(head) || bad.isFinite())
+            plan(track(120.0), head)
         }
     }
 }

@@ -110,10 +110,10 @@ private val SPOKEN_TEXT = Regex(
  */
 private val LIVE_TEXT = Regex(
     // A bracketed tag: "(Live)", "(Acoustic Live)", "(Live Acoustic)", "[Live at Wembley]", "(Live Version)",
-    // "(Live 2016)", "(Live, 2016)".
-    """[(\[]\s*(?:(?:acoustic|unplugged|stripped|solo|piano|radio|remastered|remaster|full\s+band)\s+)?live(?:\s*,?\s+(?:(?:at|from|in|on|version|session|recording|performance|edit|acoustic)|\d{4})\b[^)\]]*)?\s*[)\]]""" +
-        // A dash suffix: "Song - Live", "Song – Live from the Garden", "Song - Live 2016".
-        """|[-–—]\s*live(?:\s*,?\s+(?:(?:at|from|in|on|version|session|recording|performance|edit|acoustic)|\d{4})\b.*)?\s*$""",
+    // "(Live 2016)", "(Live, 2016)", "(Live and Acoustic)", "(Live Remaster)".
+    """[(\[]\s*(?:(?:acoustic|unplugged|stripped|solo|piano|radio|remastered|remaster|full\s+band)\s+)?live(?:\s*,?\s+(?:(?:at|from|in|on|and|version|session|recording|performance|edit|acoustic|remaster|remastered)|\d{4})\b[^)\]]*)?\s*[)\]]""" +
+        // A dash suffix: "Song - Live", "Song – Live from the Garden", "Song - Live 2016", "Song - Live Remaster".
+        """|[-–—]\s*live(?:\s*,?\s+(?:(?:at|from|in|on|and|version|session|recording|performance|edit|acoustic|remaster|remastered)|\d{4})\b.*)?\s*$""",
     RegexOption.IGNORE_CASE,
 )
 
@@ -341,6 +341,10 @@ private fun sameAlbum(left: TransitionTrackInfo?, right: TransitionTrackInfo?): 
 private fun normalizedTempoRatio(currentBpm: Double, nextBpm: Double): Double {
     if (currentBpm <= 0 || nextBpm <= 0) return 1.0
     var ratio = nextBpm / currentBpm
+    // A tempo from a corrupt cache entry (infinite, or so small the ratio
+    // underflows to 0) would halve or double to itself forever. Such a pair
+    // has no tempo relation at all: as far apart as tempi get.
+    if (!ratio.isFinite() || ratio <= 0) return 0.0
     while (ratio > 1.5) ratio /= 2
     while (ratio < 0.67) ratio *= 2
     return ratio
