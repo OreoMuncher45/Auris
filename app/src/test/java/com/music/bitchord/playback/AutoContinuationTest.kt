@@ -147,4 +147,31 @@ class AutoContinuationTest {
         assertTrue(kept.isEmpty())
         assertEquals(0, start)
     }
+
+    // ---- An Auto queue rechecked when Media3 installs it ----
+
+    private val entries = listOf("e0", "e1", "e2")
+    private val builtFor = ListenerStamp("A", generation = 4)
+    private val pending = PendingAutoInstall(startEntryId = "e1", startIndex = 1, size = 3, owner = builtFor)
+
+    @Test
+    fun `an Auto queue installed under the session it was built for is installed`() {
+        assertEquals(false, staleAutoInstall(pending, entries.size, entries::getOrNull, builtFor))
+    }
+
+    @Test
+    fun `an Auto queue whose account changed before install is refused`() {
+        assertEquals(true, staleAutoInstall(pending, entries.size, entries::getOrNull, ListenerStamp("B", 5)))
+    }
+
+    @Test
+    fun `an Auto queue is refused after a switch away and back before install`() {
+        assertEquals(true, staleAutoInstall(pending, entries.size, entries::getOrNull, ListenerStamp("A", 6)))
+    }
+
+    @Test
+    fun `another queue arriving meanwhile is not the pending one`() {
+        assertNull(staleAutoInstall(pending, 2, listOf("x", "y")::getOrNull, ListenerStamp("B", 5)))
+        assertNull(staleAutoInstall(null, entries.size, entries::getOrNull, ListenerStamp("B", 5)))
+    }
 }

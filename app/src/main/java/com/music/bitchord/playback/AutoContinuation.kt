@@ -106,3 +106,23 @@ internal fun <T> withoutRevoked(resolved: List<T>, revoked: Collection<Int>, sta
     }
     return kept to if (kept.isEmpty()) 0 else keptStart.coerceAtMost(kept.lastIndex)
 }
+
+/**
+ * An Auto queue handed to Media3 and not yet installed: the entry it starts
+ * on, its length, and the session it was built for. Media3 installs it on the
+ * main thread some time after the build, through the session player's
+ * setMediaItems.
+ */
+internal class PendingAutoInstall(val startEntryId: String?, val startIndex: Int, val size: Int, val owner: ListenerStamp)
+
+/**
+ * For a queue of [size] (its entry ids by index from [entryAt]) arriving to be
+ * installed while [pending] waits: null when it is not the pending queue,
+ * true when it is and the session it was built for is no longer [now] (an
+ * account switch, even away and back, landed in between), so it must not be
+ * installed, and false when it is and may be.
+ */
+internal fun staleAutoInstall(pending: PendingAutoInstall?, size: Int, entryAt: (Int) -> String?, now: ListenerStamp): Boolean? {
+    if (pending == null || size != pending.size || entryAt(pending.startIndex) != pending.startEntryId) return null
+    return now != pending.owner
+}
