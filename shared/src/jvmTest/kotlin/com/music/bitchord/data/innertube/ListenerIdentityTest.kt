@@ -184,4 +184,11 @@ class ListenerIdentityTest {
         Innertube.cookie = "SID=A"
         assertFalse(Innertube.isCurrentSession(assertNotNull(signed)))
     }
+
+    @Test
+    fun `a request bound to a session is known as bound, so it is never retried under another`() = runBlocking {
+        Innertube.cookie = "SID=one"
+        assertFalse(Innertube.boundToSession())
+        assertTrue(Innertube.asListener(Innertube.listenerStamp()) { Innertube.boundToSession() })
+    }
 }
