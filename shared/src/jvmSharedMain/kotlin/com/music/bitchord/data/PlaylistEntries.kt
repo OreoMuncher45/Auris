@@ -31,6 +31,9 @@ internal suspend fun collectPlaylistEntries(
             // nothing but Suggestions is how an owned playlist's chain ends.
             ?.takeIf { page == 1 || it.kind != InnertubeParser.PlaylistShelfPage.Kind.UNREADABLE }
             ?: if (page == 1) break else error("playlist page $page could not be read")
+        // A row on any page, the first included, that could not be read: the
+        // list would be short by it, and a reorder can't be built on that.
+        if (!shelf.complete) error("playlist page $page has a row that could not be read")
         shelf.songs.forEach { song ->
             val setVideoId = song.setVideoId ?: error("playlist entry without an id")
             out.putIfAbsent(setVideoId, song)
