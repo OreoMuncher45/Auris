@@ -1979,7 +1979,10 @@ class CrossfadeController(
         // both of which the outgoing player owned — and those tracks would
         // otherwise be lost at the swap.
         if (!reconcileQueue(out, into, late)) {
-            bail(recover = false)
+            // A loop's song is wherever the mix had it, not where its decoder
+            // stopped: settle there rather than bail without the seek.
+            if (phase == Phase.LOOP_RUNNING) loopBail("the queue changed under the handoff", settle = true)
+            else bail(recover = false)
             return false
         }
 
@@ -3177,7 +3180,17 @@ class CrossfadeController(
             into.playWhenReady = true
             loopIncomingStarted = true
         }
-        if (loopIncomingStarted && loopAlignJob == null && into.isPlaying &&
+        // The incoming player buffering before the handoff: what alignment
+        // measured no longer holds. Drop it, stop any round in flight, and
+        // measure again once it plays.
+        if (!handedOff && loopIncomingStarted && into.playWhenReady && into.playbackState == Player.STATE_BUFFERING &&
+            (loopAlignJob != null || session.alignmentConfirmed)
+        ) {
+            loopAlignJob?.cancel()
+            loopAlignJob = null
+            session.invalidateAlignment()
+        }
+        if (!handedOff && loopIncomingStarted && loopAlignJob == null && into.isPlaying &&
             session.inPort.positionUs != C.TIME_UNSET && m >= session.inStartAt + LOOP_ALIGN_SETTLE_SECONDS
         ) {
             startLoopAlignment(session)
@@ -3213,7 +3226,10 @@ class CrossfadeController(
      */
     private fun startLoopAlignment(session: LoopMixSession) {
         loopAlignJob = scope.launch {
-            repeat(LOOP_ALIGN_ROUNDS) { round ->
+            // One more round than corrections: the last only measures, so the
+            // result of the final correction is itself confirmed by a full,
+            // stall-free reading.
+            repeat(LOOP_ALIGN_ROUNDS + 1) { round ->
                 val samples = ArrayList<Double>(LOOP_ALIGN_SAMPLES)
                 var stalled = false
                 repeat(LOOP_ALIGN_SAMPLES) {
@@ -3244,7 +3260,7 @@ class CrossfadeController(
                         "(spread ${"%.2f".format(Locale.ROOT, spread * 1000)}ms)",
                 )
                 session.recordAligned(error)
-                if (LoopMixSession.aligned(error)) return@launch
+                if (LoopMixSession.aligned(error) || round == LOOP_ALIGN_ROUNDS) return@launch
                 // A shift lands where the sink is processing, its lead ahead of
                 // what is heard, and runs for as long as it is: both have to
                 // have played out before the next reading means anything.
