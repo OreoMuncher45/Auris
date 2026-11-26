@@ -88,29 +88,6 @@ class AutoContinuationTest {
     }
 
     @Test
-    fun `an edit to the queue being replaced is not the installation`() {
-        // AutoPlay tops up the old queue before Media3 installs the folder's.
-        val old = listOf("old-1", "old-2", "old-autoplay")
-        assertFalse(isAutoQueueInstalled("folder-start", 1, old.size) { old[it] })
-    }
-
-    @Test
-    fun `the folder's queue is installed once its start entry is in place`() {
-        val installed = listOf("folder-0", "folder-start", "folder-2")
-        assertTrue(isAutoQueueInstalled("folder-start", 1, installed.size) { installed[it] })
-    }
-
-    @Test
-    fun `a queue too short to hold the start index is not the installation`() {
-        assertFalse(isAutoQueueInstalled("folder-start", 3, 1) { "folder-start" })
-    }
-
-    @Test
-    fun `without an entry id any playlist change counts`() {
-        assertTrue(isAutoQueueInstalled(null, 0, 0) { null })
-    }
-
-    @Test
     fun `rows revoked after an account switch go and the start follows its row`() {
         // An Auto row accepted for the old account at 1, then device tracks.
         val (kept, start) = withoutRevoked(listOf("dl-0", "account-row", "dl-2", "dl-3"), setOf(1), start = 3)
@@ -146,5 +123,39 @@ class AutoContinuationTest {
         val (kept, start) = withoutRevoked(listOf("account"), setOf(0), start = 0)
         assertTrue(kept.isEmpty())
         assertEquals(0, start)
+    }
+
+    // ---- An Auto queue rechecked when Media3 installs it ----
+
+    private val entries = listOf("e0", "e1", "e2")
+    private val builtFor = ListenerStamp("A", generation = 4)
+    private val pending = PendingAutoInstall(startEntryId = "e1", startIndex = 1, size = 3, owner = builtFor)
+
+    @Test
+    fun `an Auto queue installed under the session it was built for is installed`() {
+        assertEquals(false, staleAutoInstall(pending, entries.size, entries::getOrNull, builtFor))
+    }
+
+    @Test
+    fun `an Auto queue whose account changed before install is refused`() {
+        assertEquals(true, staleAutoInstall(pending, entries.size, entries::getOrNull, ListenerStamp("B", 5)))
+    }
+
+    @Test
+    fun `an Auto queue is refused after a switch away and back before install`() {
+        assertEquals(true, staleAutoInstall(pending, entries.size, entries::getOrNull, ListenerStamp("A", 6)))
+    }
+
+    @Test
+    fun `an edit to the queue being replaced is not the installation`() {
+        // AutoPlay tops up the old queue before Media3 installs the folder's.
+        val old = listOf("old-1", "old-2", "old-autoplay")
+        assertNull(staleAutoInstall(pending, old.size, old::getOrNull, builtFor))
+    }
+
+    @Test
+    fun `another queue arriving meanwhile is not the pending one`() {
+        assertNull(staleAutoInstall(pending, 2, listOf("x", "y")::getOrNull, ListenerStamp("B", 5)))
+        assertNull(staleAutoInstall(null, entries.size, entries::getOrNull, ListenerStamp("B", 5)))
     }
 }

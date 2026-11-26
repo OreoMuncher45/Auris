@@ -172,13 +172,12 @@ object LoopMix {
         why: StringBuilder? = null,
     ): Plan? {
         if (outVideo || inVideo) return null.also { why?.append("a music video") }
-        // A loop mix beat-matches, so it needs the same trusted grid the blend does.
-        // The outgoing loop is cut from the tail, so the tail grid's own trust where there is one.
-        if ((out.tailBeats?.confidence ?: out.beatConfidence) < MIN_BEATMATCH_CONFIDENCE) {
+        // A loop mix beat-matches, so it needs the same trusted grid the blend does:
+        // the trust of the grid each loop is actually cut on (see [cutGridConfidence]).
+        if (cutGridConfidence(out.tailBeats, out.beatConfidence) < MIN_BEATMATCH_CONFIDENCE) {
             return null.also { why?.append("outgoing grid not trusted") }
         }
-        // The incoming loop is cut from the opening, so the head grid's own trust where there is one.
-        if ((inn.headBeats?.confidence ?: inn.beatConfidence) < MIN_BEATMATCH_CONFIDENCE) {
+        if (cutGridConfidence(inn.headBeats, inn.beatConfidence) < MIN_BEATMATCH_CONFIDENCE) {
             return null.also { why?.append("incoming grid not trusted") }
         }
         val outGrid = constantGrid(out) ?: return null.also { why?.append("no grid on the outgoing song") }
@@ -273,9 +272,19 @@ object LoopMix {
      * opening, and a song that drifted or resumed off it would loop off its
      * own bar lines. [firstClean] tries the shorter measured loops instead.
      */
+    /**
+     * A measured side with bar lines cuts its loops on those ([loopsBetween]),
+     * so its own trust is what counts; one without (beats but no downbeats)
+     * leaves the loop to the whole-track constant grid, whose trust is the song's.
+     */
+    internal fun cutGridConfidence(side: BeatSide?, wholeTrack: Double): Double =
+        if (cutsOnSide(side)) side!!.confidence else wholeTrack
+
+    private fun cutsOnSide(side: BeatSide?) = side != null && side.bpm > 0 && side.downbeats.isNotEmpty()
+
     private fun loopsBetween(side: BeatSide?, grid: Grid, from: Double, to: Double, bars: Int): List<Loop> {
         val loops = ArrayList<Loop>()
-        if (side != null && side.bpm > 0 && side.downbeats.isNotEmpty()) {
+        if (side != null && cutsOnSide(side)) {
             val beat = 60 / side.bpm
             val downs = side.downbeats
             for ((index, start) in downs.withIndex()) {

@@ -391,6 +391,18 @@ class LoopMixTest {
     }
 
     @Test
+    fun aMeasuredSideWithNoBarLinesIsTrustedOnlyAsFarAsTheWholeTrackGridItFallsBackTo() {
+        // Beats but no downbeats: the loop would be cut on the whole-track grid, so its trust decides.
+        val beats = (0 until 60).map { 140.5 + it * 0.5 }
+        val out = analysis(120.0, 200.0).copy(beatConfidence = 0.1, tailBeats = BeatSide(beats, emptyList(), 120.0, 0.9))
+        assertNull(plan(out, analysis(120.0, 180.0)))
+        val inn = analysis(120.0, 180.0).copy(beatConfidence = 0.1, headBeats = BeatSide(beats.map { it - 140.0 }, emptyList(), 120.0, 0.9))
+        assertNull(plan(analysis(120.0, 200.0), inn))
+        // The whole-track grid trusted: the same sides plan a loop.
+        assertNotNull(plan(out.copy(beatConfidence = 0.9), analysis(120.0, 180.0)))
+    }
+
+    @Test
     fun aMeasuredTailWithNoBarLineInTheSearchStillGetsNoLoopFromTheOpeningGrid() {
         // The model's bar lines all lie before the playhead: the opening grid is not trusted past them.
         val downbeats = (0 until 8).map { 140.5 + it * 2.0 }
