@@ -161,7 +161,13 @@ internal fun BestPartPill(
                 .clip(CircleShape)
                 .background(PILL_FILL)
                 .border(1.dp, PILL_RIM, CircleShape)
-                .clickable(enabled = tappable, role = Role.Button) {
+                .clickable(
+                    // The lock as well as the chrome: the row stays composed
+                    // through its fade-out, and a tap there would mark the part
+                    // heard for a seek the player then refuses.
+                    enabled = bestPartTappable(interactive = tappable, locked = isLocked),
+                    role = Role.Button,
+                ) {
                     val target = at ?: return@clickable
                     haptics.play(Haptic.Tap)
                     markBestPartHeard(song.videoId)
@@ -202,6 +208,12 @@ internal fun bestPartOffered(
     mixing: Boolean,
     locked: Boolean,
 ): Boolean = found && ahead && !heard && !mixing && !locked
+
+/**
+ * Whether the pill takes a tap. Checked apart from [bestPartOffered] because the
+ * pill is still on screen while it fades out, so a lock must stop taps at once.
+ */
+internal fun bestPartTappable(interactive: Boolean, locked: Boolean): Boolean = interactive && !locked
 
 /**
  * The track whose best part has been heard; see [BestPartPill]. Cleared when the

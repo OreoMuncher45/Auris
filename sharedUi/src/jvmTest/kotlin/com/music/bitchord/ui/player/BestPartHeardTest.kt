@@ -41,4 +41,13 @@ class BestPartHeardTest {
         markBestPartHeard("best-e")
         assertFalse(bestPartOffered(found = true, ahead = true, heard = isBestPartHeard("best-e"), mixing = false, locked = false))
     }
+
+    @Test
+    fun aTapDuringTheLockFadeOutIsRefused() {
+        // Locked: no longer offered, but still composed while it fades out.
+        assertFalse(bestPartOffered(found = true, ahead = true, heard = false, mixing = false, locked = true))
+        assertFalse(bestPartTappable(interactive = true, locked = true))
+        assertTrue(bestPartTappable(interactive = true, locked = false))
+        assertFalse(bestPartTappable(interactive = false, locked = false))
+    }
 }
