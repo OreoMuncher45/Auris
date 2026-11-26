@@ -77,12 +77,6 @@ private const val AUTO_FAST_TRACK_MIN_SECONDS = 6.0
 private const val AUTO_TRANSITION_MAX_SECONDS = 12.0
 private const val AUTO_FALLBACK_SECONDS = 8.0
 
-/**
- * The Automix window: a mix lives entirely within the last 30 s of the outgoing track and the first
- * 30 s of the incoming one. See [clampToMixWindow].
- */
-private const val MIX_WINDOW_SECONDS = 30.0
-
 /** Below this a track would spend too much of itself transitioning to be worth planning. */
 private const val MIN_SMART_DURATION_SECONDS = 45.0
 
@@ -310,9 +304,12 @@ private fun fallbackVariantFor(
     nextAnalysis: TrackAnalysis,
     exitAt: Double,
     beatSeconds: Double,
+    nextLength: Double,
 ): FilterTransitionVariant {
     val window = ENERGY_WINDOW_BEATS * (beatSeconds.takeIf { it > 0 } ?: 0.5)
-    val entry = incomingStartPoint(nextAnalysis)
+    // Where the incoming song will actually be cued: its audible start, held
+    // within the skip limit as the plan's cue will be.
+    val entry = cappedIncomingCue(incomingStartPoint(nextAnalysis), nextAnalysis, nextLength)
     val outReference = lowEnergyReference(analysis.lowEnergyCurve) ?: return FilterTransitionVariant.SWEEP
     val inReference = lowEnergyReference(nextAnalysis.lowEnergyCurve) ?: return FilterTransitionVariant.SWEEP
     val out = averageEnergy(analysis.lowEnergyCurve, exitAt - window, exitAt) ?: return FilterTransitionVariant.SWEEP
@@ -957,7 +954,8 @@ fun incomingMixInPoint(analysis: TrackAnalysis, latest: Double = Double.POSITIVE
     )
         .firstOrNull { it.isFinite() && it > 0 && it <= latest }
         ?: return null
-    return nearestValue(analysis.downbeats, target, tolerance)?.takeIf { it <= latest } ?: target
+    // A downbeat at 0 s is no drop to fade over: keep the candidate's own time then.
+    return nearestValue(analysis.downbeats, target, tolerance)?.takeIf { it > 0 && it <= latest } ?: target
 }
 
 /** Where the incoming track first makes sound. */
@@ -1480,9 +1478,6 @@ private fun analysisReadyForTrack(analysis: TrackAnalysis, track: TransitionTrac
  *   support a bar-aligned mix of that length — no trusted tempo, or too short
  *   to fit it — falls back to the ordinary smart plan rather than forcing a
  *   ragged one.
- * @param mixWindow Confine the mix to the last and first [MIX_WINDOW_SECONDS] of the pair — see
- *   [clampToMixWindow]. Nothing turns it on at present: the desktop and the phone both leave it
- *   off, so their plans skip the clamp.
  */
 fun planTransition(
     analysis: TrackAnalysis = TrackAnalysis(),
@@ -1497,79 +1492,20 @@ fun planTransition(
     albumSequential: Boolean = false,
     advanced: Boolean = false,
     phraseBars: Int = 0,
-    mixWindow: Boolean = false,
-): TransitionPlan {
-    val plan = planTransitionInner(
-        analysis = analysis,
-        nextAnalysis = nextAnalysis,
-        currentTrack = currentTrack,
-        nextTrack = nextTrack,
-        currentTime = currentTime,
-        duration = duration,
-        fadeSeconds = fadeSeconds,
-        minFadeSeconds = minFadeSeconds,
-        mode = mode,
-        albumSequential = albumSequential,
-        advanced = advanced,
-        phraseBars = phraseBars,
-    )
-    if (!mixWindow) return plan
-    return clampToMixWindow(
-        plan,
-        length = max(duration.orZero(), trackDurationSeconds(currentTrack)),
-        playbackTime = max(0.0, currentTime.orZero()),
-    )
-}
-
-/**
- * Apple-style Automix window: mixing is confined to the last [MIX_WINDOW_SECONDS] of the outgoing
- * track and the first [MIX_WINDOW_SECONDS] of the incoming one. The planner's own overlaps are far
- * shorter than this in practice, so the clamp is a guard that keeps the invariant true no matter how
- * the anchors are ranked — it never lengthens a mix, only refuses to let one start too early or cue
- * too deep into the next track.
- */
-private fun clampToMixWindow(plan: TransitionPlan, length: Double, playbackTime: Double): TransitionPlan {
-    if (plan.blocked || length <= 0.0) return plan
-    var result = plan
-    val earliestStart = (length - MIX_WINDOW_SECONDS).coerceAtLeast(0.0)
-    if (result.transitionStart < earliestStart) {
-        // Entirely before the window: nothing left to mix.
-        if (result.transitionEnd <= earliestStart) return blocked("mix-window")
-        val end = result.transitionEnd
-        val span = (end - earliestStart).coerceAtLeast(0.0)
-        result = result.copy(
-            shouldStart = playbackTime >= earliestStart,
-            transitionStart = earliestStart,
-            transitionEnd = end,
-            fadeSeconds = span,
-            handoffDuration = min(result.handoffDuration, span),
-        )
-    }
-    if (result.incomingCueTime > MIX_WINDOW_SECONDS) {
-        result = result.copy(incomingCueTime = MIX_WINDOW_SECONDS)
-    }
-    // The incoming side of the overlap must end inside its first window too:
-    // a late cue shortens the overlap from its start, keeping the exit.
-    val rate = result.incomingPlaybackRate.takeIf { it > 0 } ?: 1.0
-    val room = (MIX_WINDOW_SECONDS - result.incomingCueTime) / rate
-    val span = result.transitionEnd - result.transitionStart
-    if (span > room) {
-        if (room <= 0.0) return blocked("mix-window")
-        val start = result.transitionEnd - room
-        result = result.copy(
-            shouldStart = playbackTime >= start,
-            transitionStart = start,
-            fadeSeconds = room,
-            handoffDuration = min(result.handoffDuration, room),
-        )
-    }
-    // The beat count follows the span actually scheduled.
-    if (result.transitionEnd - result.transitionStart != plan.transitionEnd - plan.transitionStart && plan.transitionBeats > 0) {
-        val beat = (plan.transitionEnd - plan.transitionStart) / plan.transitionBeats
-        if (beat > 0) result = result.copy(transitionBeats = ((result.transitionEnd - result.transitionStart) / beat).roundToInt())
-    }
-    return result
-}
+): TransitionPlan = planTransitionInner(
+    analysis = analysis,
+    nextAnalysis = nextAnalysis,
+    currentTrack = currentTrack,
+    nextTrack = nextTrack,
+    currentTime = currentTime,
+    duration = duration,
+    fadeSeconds = fadeSeconds,
+    minFadeSeconds = minFadeSeconds,
+    mode = mode,
+    albumSequential = albumSequential,
+    advanced = advanced,
+    phraseBars = phraseBars,
+)
 
 private fun planTransitionInner(
     analysis: TrackAnalysis = TrackAnalysis(),
@@ -1653,6 +1589,7 @@ private fun planTransitionInner(
     val policy = assessTransitionTier(analysis, nextAnalysis, advanced)
     if (policy.tier == TransitionTier.PLAIN_CROSSFADE) {
         val transitionStart = max(0.0, mixAnchor - standardFade)
+        val plainNextLength = max(nextAnalysis.duration.orZero(), trackDurationSeconds(nextTrack))
         val started = playbackTime >= transitionStart
         return TransitionPlan(
             shouldStart = started,
@@ -1661,7 +1598,9 @@ private fun planTransitionInner(
             transitionEnd = mixAnchor,
             fadeSeconds = mixAnchor - transitionStart,
             transitionStyle = TransitionStyle.EQUAL_POWER,
-            incomingCueTime = incomingStartPoint(nextAnalysis),
+            // The skip limit holds here too: a late audible start is no reason
+            // to cue past what every other plan may skip.
+            incomingCueTime = cappedIncomingCue(incomingStartPoint(nextAnalysis), nextAnalysis, plainNextLength),
             policyReasons = policy.reasons,
             reason = if (started) "smart-plain-crossfade" else "before-plain-crossfade-window",
         )
@@ -1806,7 +1745,7 @@ private fun mixPlan(
     val nextBpm = nextAnalysis.bpm.orZero()
     val gridBeatSeconds = if (traits?.outgoingGrid == true) 60 / currentBpm else 0.0
     val filterVariant = if (traits != null) {
-        fallbackVariantFor(analysis, nextAnalysis, mixAnchor, if (currentBpm > 0) 60 / currentBpm else 0.0)
+        fallbackVariantFor(analysis, nextAnalysis, mixAnchor, if (currentBpm > 0) 60 / currentBpm else 0.0, nextLength)
     } else {
         FilterTransitionVariant.SWEEP
     }
