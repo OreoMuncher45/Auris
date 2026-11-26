@@ -107,49 +107,67 @@ object SleepTimer {
     /** How often a Cast fade asks the receiver for a new level: each step is a round trip. */
     const val CAST_FADE_STEP_MS = 500L
 
+    /** How a Cast fade ended. */
+    enum class CastFade {
+        /** The receiver confirmed the pause at the deadline. */
+        PAUSED,
+        /** The listener paused first: the timer still stands for whatever plays next. */
+        LISTENER_PAUSED,
+        /** Playback left the receiver (moved to the phone): the phone's path takes over. */
+        MOVED,
+        /** The receiver never confirmed a pause. */
+        PAUSE_FAILED,
+    }
+
+    /** Pause attempts at the deadline before a Cast fade gives up on the receiver. */
+    const val CAST_PAUSE_ATTEMPTS = 3
+
     /**
-     * Fade a Cast receiver's stream down to silence over [spanMs], pause it,
-     * then put the stream volume back where it was, so the next play is not
-     * silent.
+     * Fade a Cast receiver's stream down to silence by [spanMs] (the
+     * deadline), pause it there, then put the stream volume back where it
+     * was, so the next play is not silent.
      *
      * [volume] is null when the receiver can't set its stream volume; then,
-     * and when it refuses a step, there is no fade and it just pauses. When
-     * [stillPlaying] turns false (the listener paused or stopped, or the
-     * session ended) the fade is called off without a pause. Called off by
-     * cancellation too: either way the volume is put back.
-     *
-     * @return whether it paused.
+     * and from a refused step on, there is no fade, but the pause still waits
+     * for the deadline. [castActive] turning false means playback moved off
+     * the receiver; [playing] turning false, that the listener paused. Both
+     * end the fade without a pause, with different results. The pause is
+     * awaited: [pause] returns whether the receiver confirmed it, and is
+     * retried. The volume is put back on every exit, cancellation included,
+     * and only after the pause.
      */
     suspend fun fadeOutCast(
         volume: StreamVolume?,
         spanMs: Long,
         stepMs: Long,
         now: () -> Long,
-        stillPlaying: () -> Boolean,
-        pause: () -> Unit,
-    ): Boolean {
-        if (volume == null || spanMs <= 0L) {
-            pause()
-            return true
-        }
-        val original = volume.level
-        val end = now() + spanMs
+        castActive: () -> Boolean,
+        playing: () -> Boolean,
+        pause: suspend () -> Boolean,
+    ): CastFade {
+        val original = volume?.level
+        val end = now() + spanMs.coerceAtLeast(0L)
+        var fading = volume != null && spanMs > 0L
         var touched = false
         try {
             while (true) {
-                if (!stillPlaying()) return false
+                if (!castActive()) return CastFade.MOVED
+                if (!playing()) return CastFade.LISTENER_PAUSED
                 val left = (end - now()).coerceAtLeast(0L)
-                // Refused: the receiver won't fade, so it just stops.
-                if (!volume.set(original * fadeVolume(left, spanMs))) break
-                touched = true
+                if (fading && volume != null && original != null) {
+                    // Refused: no more fading, but the pause keeps its deadline.
+                    if (volume.set(original * fadeVolume(left, spanMs))) touched = true else fading = false
+                }
                 if (left <= 0L) break
-                delay(stepMs)
+                delay(minOf(stepMs, left))
             }
-            if (!stillPlaying()) return false
-            pause()
-            return true
+            repeat(CAST_PAUSE_ATTEMPTS) {
+                if (!castActive()) return CastFade.MOVED
+                if (pause()) return CastFade.PAUSED
+            }
+            return CastFade.PAUSE_FAILED
         } finally {
-            if (touched) withContext(NonCancellable) { volume.set(original) }
+            if (touched && volume != null && original != null) withContext(NonCancellable) { volume.set(original) }
         }
     }
 }
