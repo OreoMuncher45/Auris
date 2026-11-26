@@ -90,4 +90,27 @@ class PlaylistShelfContinuationTest {
     fun `an appended page of episodes is left to the general reading`() {
         assertNull(InnertubeParser.parsePlaylistShelf(appendedEpisodes))
     }
+
+    private val mixedWithSuggestions = Json.parseToJsonElement(
+        """
+        { "onResponseReceivedActions": [ { "appendContinuationItemsAction": { "continuationItems": [
+          ${row("aaaaaaaaaaa", "SET1")},
+          { "musicMultiRowListItemRenderer": { "title": { "runs": [ { "text": "Episode" } ] } } },
+          { "musicShelfRenderer": { "title": { "runs": [ { "text": "Suggestions" } ] }, "contents": [
+            ${row("sssssssssss", "SUGG")}
+          ] } },
+          { "continuationItemRenderer": { "continuationEndpoint": { "continuationCommand": { "token": "PAGE3" } } } }
+        ] } } ] }
+        """,
+    )
+
+    @Test
+    fun `a page mixing rows, an episode and Suggestions keeps its own items for the general reading`() {
+        val page = assertNotNull(InnertubeParser.parsePlaylistShelf(mixedWithSuggestions))
+        assertEquals(InnertubeParser.PlaylistShelfPage.Kind.UNREADABLE, page.kind)
+        // Its own items, the shelf taken out: the track, the episode and the next-page token.
+        assertEquals(3, assertNotNull(page.unreadItems).size)
+        assertEquals("PAGE3", InnertubeParser.continuationToken(page.unreadItems!!))
+        assertEquals(listOf("sssssssssss"), page.suggested.map { it.videoId })
+    }
 }

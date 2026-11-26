@@ -814,13 +814,27 @@ object YtMusicRepository {
         // tracks" never read as songs the user added — see
         // parsePlaylistShelf. Anything else (album, library, history) has no
         // such shelf, and falls back to the layout-agnostic walk.
-        InnertubeParser.parsePlaylistShelf(response)?.let { shelf ->
-            return SongPage(shelf.songs, shelf.continuation, shelf.suggested, library, header = header)
-        }
         // A podcast page's episodes don't name their own show — the header
         // does, once. Carry it down so every episode is credited to the show
         // it belongs to instead of to nobody.
         val show = InnertubeParser.podcastShow(response)
+        InnertubeParser.parsePlaylistShelf(response)?.let { shelf ->
+            // An appended page whose rows the playlist reading couldn't take
+            // (an episode among them) is read the general way — its own items
+            // only, so its Suggestions stay suggestions and its next-page token
+            // keeps the playlist going.
+            val unread = shelf.unreadItems
+            if (unread != null) {
+                return SongPage(
+                    songs = InnertubeParser.collectSongsDeep(unread, show).distinctBy { it.videoId },
+                    continuation = InnertubeParser.continuationToken(unread),
+                    suggested = shelf.suggested,
+                    library = library,
+                    header = header,
+                )
+            }
+            return SongPage(shelf.songs, shelf.continuation, shelf.suggested, library, header = header)
+        }
         return SongPage(
             // One response can name the same track twice — an album page that
             // also carries a "you might also like" shelf, say. Collecting into a
