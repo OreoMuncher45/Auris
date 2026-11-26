@@ -344,7 +344,12 @@ class PlaybackService : MediaLibraryService() {
     private var mediaSession: MediaLibrarySession? = null
     private val searchResults = ConcurrentHashMap<String, List<Song>>()
     private val searchBrowseResults = ConcurrentHashMap<String, List<BrowseItem>>()
-    private val songCache = ConcurrentHashMap<String, Song>()
+    /**
+     * Songs listed to Android Auto, by video id, for resolving a row it hands
+     * back. Scoped to the listener they were listed for: an account switch
+     * drops the previous account's rows.
+     */
+    private val songCache = ListenerScopedCache<Song> { currentListener() }
 
     /**
      * [YtMusicRepository.home] cached briefly for Android Auto's browse tree.
@@ -636,6 +641,39 @@ class PlaybackService : MediaLibraryService() {
         autoContinuationEpoch++
     }
 
+    /** The Auto queue handed to Media3 and not yet installed; see [PendingAutoInstall]. Main thread only. */
+    private var pendingAutoInstall: PendingAutoInstall? = null
+
+    /**
+     * Whether [items] are the pending Auto queue and the session it was built
+     * for is no longer the one signed in: an account switch, even one away and
+     * back, landed between the build and the install. That queue is not
+     * installed, and its continuation stops, so a folder listed for one
+     * account never starts playing under another. Main thread only.
+     */
+    private fun refusesStaleAutoInstall(items: List<MediaItem>): Boolean {
+        val refuse = staleAutoInstall(pendingAutoInstall, items.size, { items.getOrNull(it)?.queueEntryId }, listenerStamp())
+            ?: return false
+        if (!refuse) return false
+        pendingAutoInstall = null
+        Log.w("BitChord", "Auto queue not installed: the account changed after it was built")
+        clearAutoContinuation()
+        return true
+    }
+
+    /**
+     * After a session player installed [items]: when they are the pending
+     * Auto queue, its continuation learns the entries the folder was installed
+     * as (a later queue carrying the same source id mints its own). Main
+     * thread only.
+     */
+    private fun onSessionQueueSet(items: List<MediaItem>) {
+        val pending = pendingAutoInstall ?: return
+        staleAutoInstall(pending, items.size, { items.getOrNull(it)?.queueEntryId }, pending.owner) ?: return
+        pendingAutoInstall = null
+        pending.installed.complete(items.mapNotNullTo(HashSet()) { it.queueEntryId }.takeIf { it.isNotEmpty() })
+    }
+
     /**
      * [songs] as Auto rows whose ids name this very listing, so a tap plays
      * the folder from that row — see [AutoBrowseContexts].
@@ -676,36 +714,15 @@ class PlaybackService : MediaLibraryService() {
      * [startIndex] — and never as the one it replaces, whatever else edits
      * that one first.
      */
-    private fun followAutoBrowseContinuation(context: AutoBrowseContext, startEntryId: String?, startIndex: Int) {
+    private fun followAutoBrowseContinuation(context: AutoBrowseContext, installed: CompletableDeferred<HashSet<String>?>) {
         clearAutoContinuation()
         val first = context.continuation ?: return
         val sourceId = context.source.id ?: return
-        val installedOn = player ?: return
-        val installed = CompletableDeferred<HashSet<String>?>()
-        val installListener = object : Player.Listener {
-            override fun onTimelineChanged(timeline: Timeline, reason: Int) {
-                if (reason != Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) return
-                val installedHere = isAutoQueueInstalled(startEntryId, startIndex, installedOn.mediaItemCount) {
-                    installedOn.getMediaItemAt(it).queueEntryId
-                }
-                if (!installedHere || installed.isCompleted) return
-                // The entries the folder was installed as: a later queue that
-                // carries the same source id mints its own.
-                val entries = HashSet<String>()
-                for (i in 0 until installedOn.mediaItemCount) {
-                    installedOn.getMediaItemAt(i).queueEntryId?.let(entries::add)
-                }
-                installed.complete(entries.takeIf { it.isNotEmpty() })
-            }
-        }
-        installedOn.addListener(installListener)
+        // Installation is reported by whichever session player Media3 hands
+        // the queue to (see [onSessionQueueSet]), not by a listener on the
+        // player active now: a crossfade can hand off before Media3 applies it.
         autoContinuationJob = scope.launch {
-            // [scope] is the main thread's, which the listener is removed on.
-            try {
-                followAutoBrowsePages(context, first, sourceId, installed)
-            } finally {
-                installedOn.removeListener(installListener)
-            }
+            followAutoBrowsePages(context, first, sourceId, installed)
         }
     }
 
@@ -726,6 +743,15 @@ class PlaybackService : MediaLibraryService() {
         var next: String? = first
         var pages = 0
         while (next != null && pages++ < AUTO_CONTINUATION_MAX_PAGES) {
+            // Before every fetch, a page with nothing new included: no request
+            // for a folder that is no longer this driver's to grow.
+            if (!stillOurs() || castPlayback.active) return
+            if (installed.isCompleted) {
+                val exoPlayer = player ?: return
+                val queuedSongs = (0 until exoPlayer.mediaItemCount).map { exoPlayer.getMediaItemAt(it).toSong() }
+                autoContinuationInsertIndex(queuedSongs, sourceId, exoPlayer.currentMediaItemIndex, installed.await())
+                    ?: return
+            }
             val token: String = next
             val page = withContext(Dispatchers.IO) {
                 try {
@@ -1169,7 +1195,7 @@ class PlaybackService : MediaLibraryService() {
     private val sessionSongHistory = mutableListOf<Song>()
 
     private var serviceLyricsJob: Job? = null
-    private var serviceLyrics: List<LyricLine>? = null
+    private val serviceLyrics = TrackLyrics()
     private var lastPublishedSubtitle: String? = null
     private var lyricsTickerJob: Job? = null
 
@@ -2075,6 +2101,8 @@ class PlaybackService : MediaLibraryService() {
         cast = castPlayback,
         onShuffleRequest = ::toggleShuffleFromSession,
         onRemotePlaying = ::onRemotePlaying,
+        refusesQueue = ::refusesStaleAutoInstall,
+        onQueueSet = ::onSessionQueueSet,
     ) { lastPublishedSubtitle }
 
     /**
@@ -9722,7 +9750,7 @@ class PlaybackService : MediaLibraryService() {
         lyricsTickerJob = null
         serviceLyricsJob?.cancel()
         serviceLyricsJob = null
-        serviceLyrics = null
+        serviceLyrics.clear()
         cancelPrefetch()
         trackAnalyzer.release()
         loudnessRetryJob?.cancel()
@@ -9797,16 +9825,21 @@ class PlaybackService : MediaLibraryService() {
 
     private fun loadLyricsForCurrentTrack() {
         val currentSong = player?.currentMediaItem?.toSong() ?: run {
-            serviceLyrics = null
+            serviceLyrics.clear()
             stopLyricsTicker()
             return
         }
 
         if (!AppSettings.syncedLyrics.value) {
-            serviceLyrics = null
+            serviceLyrics.clear()
             stopLyricsTicker()
             return
         }
+
+        // Another track's lines go now, not when this lookup answers: until
+        // then the ticker would read them at this track's position.
+        val trackId = currentSong.videoId
+        if (serviceLyrics.lookUp(trackId)) updateLyricSubtitle()
 
         val trackDurationMs = (player?.duration ?: 0L).takeIf { it > 0 } ?: 0L
 
@@ -9831,8 +9864,7 @@ class PlaybackService : MediaLibraryService() {
                 lines = found?.lines?.takeIf(EmbeddedLyrics::isSynced) ?: embedded ?: found?.lines
             }
             withContext(Dispatchers.Main) {
-                serviceLyrics = lines
-                if (player?.isPlaying == true) {
+                if (serviceLyrics.publish(trackId, lines) && player?.isPlaying == true) {
                     updateLyricSubtitle()
                 }
             }
@@ -9897,7 +9929,7 @@ class PlaybackService : MediaLibraryService() {
     private fun updateLyricSubtitle() {
         val exoPlayer = player ?: return
         val currentSong = exoPlayer.currentMediaItem?.toSong() ?: return
-        val lines = serviceLyrics
+        val lines = serviceLyrics.lines
         val pos = crossfade?.loopPositionMs() ?: exoPlayer.currentPosition
         val subtitleText = if (lines != null && lines.isNotEmpty() && AppSettings.syncedLyrics.value) {
             val idx = lines.indexOfLast { it.timeMs <= pos }
@@ -9979,6 +10011,10 @@ class PlaybackService : MediaLibraryService() {
         private val onShuffleRequest: () -> Unit,
         /** The receiver started or stopped making sound; see [PlaybackService.onRemotePlaying]. */
         private val onRemotePlaying: (Boolean) -> Unit,
+        /** Whether a queue arriving here was built for an account that is no longer the listener; see [PlaybackService.refusesStaleAutoInstall]. */
+        private val refusesQueue: (List<MediaItem>) -> Boolean,
+        /** A queue was installed through here; see [PlaybackService.onSessionQueueSet]. */
+        private val onQueueSet: (List<MediaItem>) -> Unit,
         private val getSubtitle: () -> String?,
     ) : ForwardingPlayer(player), CastSink {
 
@@ -10312,7 +10348,10 @@ class PlaybackService : MediaLibraryService() {
                 cast.seekTo(cast.positionMs - seekBackIncrement)
                 return
             }
-            super.seekBack()
+            // From what the listener hears: during a loop mix the decoder sits
+            // at the loop start while the mix plays on, and the player's own
+            // seekBack would measure from there.
+            super.seekTo(SeekOffset.target(currentPosition, -seekBackIncrement, duration))
         }
 
         override fun seekForward() {
@@ -10322,7 +10361,10 @@ class PlaybackService : MediaLibraryService() {
                 cast.seekTo(cast.positionMs + seekForwardIncrement)
                 return
             }
-            super.seekForward()
+            // From what the listener hears: during a loop mix the decoder sits
+            // at the loop start while the mix plays on, and the player's own
+            // seekForward would measure from there.
+            super.seekTo(SeekOffset.target(currentPosition, +seekForwardIncrement, duration))
         }
 
         override fun seekToPrevious() {
@@ -10352,9 +10394,10 @@ class PlaybackService : MediaLibraryService() {
         }
 
         override fun setMediaItems(mediaItems: List<MediaItem>, resetPosition: Boolean) {
-            if (locked()) return
+            if (locked() || refusesQueue(mediaItems)) return
             onAutoMixInterruptingIntent()
             super.setMediaItems(mediaItems, resetPosition)
+            onQueueSet(mediaItems)
         }
 
         override fun setMediaItems(
@@ -10362,9 +10405,10 @@ class PlaybackService : MediaLibraryService() {
             startIndex: Int,
             startPositionMs: Long,
         ) {
-            if (locked()) return
+            if (locked() || refusesQueue(mediaItems)) return
             onAutoMixInterruptingIntent()
             super.setMediaItems(mediaItems, startIndex, startPositionMs)
+            onQueueSet(mediaItems)
         }
 
         // Every other way the running order can change from outside: Play next,
@@ -11136,7 +11180,10 @@ class PlaybackService : MediaLibraryService() {
             mediaId: String,
             startPositionMs: Long,
         ): MediaSession.MediaItemsWithStartPosition {
-            val selection = autoBrowseContexts.select(mediaId, currentListener())
+            // The session the row is selected under: the queue is built and
+            // installed under this one or not at all.
+            val selectedAt = listenerStamp()
+            val selection = autoBrowseContexts.select(mediaId, selectedAt.listener)
             if (selection !is AutoBrowseContexts.Selection.Found) {
                 withContext(Dispatchers.Main) {
                     mediaSession.sendError(
@@ -11154,8 +11201,9 @@ class PlaybackService : MediaLibraryService() {
             val index = (0 until selection.index).count { !context.songs[it].isUnresolvedSpotify }
             songs.forEach { songCache[it.videoId] = it }
             val built = withContext(Dispatchers.Main) {
-                // The account can change between the IO-side select and here.
-                if (!context.belongsTo(currentListener())) {
+                // The account can change between the IO-side select and here,
+                // even away and back: the generation says so.
+                if (!context.belongsTo(currentListener()) || listenerStamp() != selectedAt) {
                     mediaSession.sendError(
                         controller,
                         SessionError(SessionError.ERROR_BAD_VALUE, getString(R.string.auto_unavailable_subtitle)),
@@ -11170,7 +11218,10 @@ class PlaybackService : MediaLibraryService() {
                 QueueCoordinator.buildContextQueue(timeline, currentIndex, songs, index, context.source)
                     .also { built ->
                         val startEntryId = built.timeline.getOrNull(built.startIndex)?.queueEntryId
-                        followAutoBrowseContinuation(context, startEntryId, built.startIndex)
+                        // Rechecked when Media3 installs it: see [refusesStaleAutoInstall].
+                        val pending = PendingAutoInstall(startEntryId, built.startIndex, built.timeline.size, selectedAt)
+                        pendingAutoInstall = pending
+                        followAutoBrowseContinuation(context, pending.installed)
                     }
             } ?: throw IllegalArgumentException("Auto browse row unusable: ${AutoBrowseContexts.Selection.AccountChanged}")
             return MediaSession.MediaItemsWithStartPosition(
