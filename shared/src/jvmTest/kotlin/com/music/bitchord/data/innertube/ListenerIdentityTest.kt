@@ -6,6 +6,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.runBlocking
@@ -158,5 +159,29 @@ class ListenerIdentityTest {
         assertFailsWith<Innertube.ListenerChangedException> {
             runBlocking { Innertube.asListener(opened) { Innertube.requestIdentityForTest() } }
         }
+    }
+
+    @Test
+    fun `a rejection is owned by the session that signed it, after scope setup moved the generation`() = runBlocking {
+        Innertube.cookie = "SID=one"
+        val beforeCall = Innertube.listenerStamp()
+        val signed = Innertube.recordingSignedStamp { holder ->
+            // Scope setup inside the call advances the generation under the same cookie.
+            Innertube.adoptSessionScope("brand", "brand||owner", "1", null, null, loggedIn = true)
+            Innertube.requestIdentityForTest()
+            holder.stamp
+        }
+        // The pre-call stamp no longer owns the session; the signing one does, so recovery may run.
+        assertFalse(Innertube.isCurrentSession(beforeCall))
+        assertTrue(Innertube.isCurrentSession(assertNotNull(signed)))
+    }
+
+    @Test
+    fun `a rejection signed before a switch to B and back to A owns nothing`() = runBlocking {
+        Innertube.cookie = "SID=A"
+        val signed = Innertube.recordingSignedStamp { holder -> Innertube.requestIdentityForTest(); holder.stamp }
+        Innertube.cookie = "SID=B"
+        Innertube.cookie = "SID=A"
+        assertFalse(Innertube.isCurrentSession(assertNotNull(signed)))
     }
 }
