@@ -68,5 +68,22 @@ internal sealed interface QueueReconcile {
             }
             return if (firstDifference <= heldCurrent) Bail else ReplaceFrom(firstDifference)
         }
+
+        /**
+         * History rows (before [heldCurrent]) that are the same occurrence in
+         * both queues but now play something else: a finished download swaps
+         * an entry's stream in place. They don't stop a handoff, but the
+         * standby must take the new copy, or going back after the handoff
+         * plays the old stream.
+         */
+        fun <T> historyRefresh(
+            live: List<T>,
+            held: List<T>,
+            heldCurrent: Int,
+            same: (T, T) -> Boolean,
+            samePlayable: (T, T) -> Boolean,
+        ): List<Int> = (0 until minOf(heldCurrent, live.size, held.size)).filter {
+            same(live[it], held[it]) && !samePlayable(live[it], held[it])
+        }
     }
 }
