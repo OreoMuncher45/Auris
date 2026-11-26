@@ -59,7 +59,8 @@ import org.jetbrains.compose.resources.stringResource
  * part, by the pill or by just listening, it goes for the rest of the track. A
  * track with no best part known (no replay curve, no synced lyrics to find a
  * chorus in), a local file, and the stretch while Automix is mixing into the
- * next song never show it.
+ * next song never show it. Nor does a Listen Together guest whose host has taken
+ * control: the seek would be refused, so there is nothing for the pill to offer.
  *
  * Sits over the artwork, so nothing under the artwork moves when it comes and
  * goes. A plain translucent fill and a hairline rim rather than a live blur:
@@ -81,6 +82,12 @@ internal fun BestPartPill(
     onSeek: (Long) -> Unit,
     /** Whether the pill may take a tap; false while it sits under faded-out chrome. */
     interactive: () -> Boolean = { true },
+    /**
+     * Listen Together has locked transport on this device. Hides the pill rather
+     * than taking a tap the player would refuse; it comes back when the lock
+     * lifts, if the best part is still ahead.
+     */
+    locked: () -> Boolean = { false },
     modifier: Modifier = Modifier,
 ) {
     val enabled by PlayerSettings.showBestPart.collectAsStateWithLifecycle()
@@ -137,8 +144,12 @@ internal fun BestPartPill(
     val haptics = rememberHaptics()
     val currentInteractive by rememberUpdatedState(interactive)
     val tappable by remember { derivedStateOf { currentInteractive() } }
+    val currentLocked by rememberUpdatedState(locked)
+    // Read through derivedStateOf: the pill recomposes when the lock flips
+    // (about twice a party), not when the party's state is replaced.
+    val isLocked by remember { derivedStateOf { currentLocked() } }
     AnimatedVisibility(
-        visible = at != null && ahead && !heard && !mixing,
+        visible = bestPartOffered(found = at != null, ahead = ahead, heard = heard, mixing = mixing, locked = isLocked),
         enter = fadeIn(tween(BEST_PART_FADE_MS)),
         exit = fadeOut(tween(BEST_PART_FADE_MS)),
         modifier = modifier,
@@ -177,6 +188,20 @@ internal fun BestPartPill(
         }
     }
 }
+
+/**
+ * Whether the pill is on screen: a best part found, still ahead, not yet heard,
+ * no Automix mix under way, and transport not locked by a Listen Together host.
+ * A lock never marks the part heard, so lifting it brings the pill back while
+ * the part is still ahead.
+ */
+internal fun bestPartOffered(
+    found: Boolean,
+    ahead: Boolean,
+    heard: Boolean,
+    mixing: Boolean,
+    locked: Boolean,
+): Boolean = found && ahead && !heard && !mixing && !locked
 
 /**
  * The track whose best part has been heard; see [BestPartPill]. Cleared when the
