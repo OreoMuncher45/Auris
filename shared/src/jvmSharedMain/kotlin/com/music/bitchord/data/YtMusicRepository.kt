@@ -1211,8 +1211,11 @@ object YtMusicRepository {
                 Log.w(TAG, "$label rejected; refreshing active session context once")
                 // Only for the session that was rejected: one that took over
                 // since keeps its scope, and gets no retry of another's request.
-                if (!Innertube.refreshSessionScope(owner)) {
-                    Log.w(TAG, "$label not retried: the account changed before the refresh")
+                // Null when another session took over before the refresh, or an
+                // account transition landed during it (even A, B, then A again):
+                // the retry belongs to the original session and nothing since.
+                val refreshed = Innertube.refreshSessionScope(owner) ?: run {
+                    Log.w(TAG, "$label not retried: the account changed around the refresh")
                     throw failure
                 }
                 // The refresh drops an adopted profile and reads the shell's
@@ -1226,7 +1229,6 @@ object YtMusicRepository {
                     Log.w(TAG, "$label not retried: bound to the session it was asked under")
                     throw failure
                 }
-                val refreshed = Innertube.listenerStamp()
                 if (refreshed.listener != owner.listener) {
                     Log.w(TAG, "$label not retried: the account changed during the refresh")
                     throw failure
