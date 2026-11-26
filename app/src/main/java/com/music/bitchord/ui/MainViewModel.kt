@@ -1803,14 +1803,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * Files a release into one playlist, and says how many tracks went in.
      */
     private suspend fun addReleaseTo(playlist: UserPlaylist, songs: List<Song>): Pair<AddOutcome, Int> {
-        val openSongs = (_detailStack.value.latestOpening(playlist.browseId)
-            ?.songs as? UiState.Success)?.data
-        val known = openSongs
-            ?: YtMusicRepository.allSongs(playlist.browseId).getOrNull()
-        val existing = known?.mapNotNull { it.videoId }?.toSet()
-        val ids = songs.mapNotNull { it.videoId }
-            .filter { id -> existing == null || id !in existing }
-            .distinct()
+        // A track the open page already shows is there; anything else is
+        // checked against the whole playlist, since the page may not have
+        // loaded all of it yet and can't rule a track out.
+        val visible = (_detailStack.value.latestOpening(playlist.browseId)?.songs as? UiState.Success)
+            ?.data?.mapNotNullTo(HashSet()) { it.videoId }.orEmpty()
+        val unseen = songs.mapNotNull { it.videoId }.filter { it !in visible }.distinct()
+        val listed = if (unseen.isEmpty()) emptySet() else {
+            YtMusicRepository.allSongs(playlist.browseId).getOrNull()?.mapNotNullTo(HashSet()) { it.videoId }
+        }
+        val ids = unseen.filter { id -> listed == null || id !in listed }
         if (ids.isEmpty()) return AddOutcome.ALREADY_THERE to 0
         var failed = false
         val addedIds = mutableListOf<String>()
@@ -1840,10 +1842,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun addOne(playlist: UserPlaylist, song: Song): AddOutcome {
-        val openSongs = (_detailStack.value.latestOpening(playlist.browseId)
-            ?.songs as? UiState.Success)?.data
-        val known = openSongs
-            ?: YtMusicRepository.allSongs(playlist.browseId).getOrNull()
+        // Shown on the open page: there. Not shown: the page may be partial,
+        // so only the whole playlist can say it is absent.
+        val visible = (_detailStack.value.latestOpening(playlist.browseId)?.songs as? UiState.Success)?.data
+        if (visible?.any { it.videoId == song.videoId } == true) return AddOutcome.ALREADY_THERE
+        val known = YtMusicRepository.allSongs(playlist.browseId).getOrNull()
         if (known?.any { it.videoId == song.videoId } == true) return AddOutcome.ALREADY_THERE
         return YtMusicRepository.addToPlaylist(playlist.playlistId, listOf(song.videoId)).fold(
             onSuccess = { added ->
@@ -3264,7 +3267,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         settleCredentials()
         // Validation that switched the account reloads the library itself.
         if (identity != listenerKey()) return
-        val credentials = Innertube.listenerGeneration
+        val credentialStamp = Innertube.listenerStamp()
+        val credentials = credentialStamp.generation
         // Hearts before bytes: the persistent liked list seeds LikeState
         // instantly, so nothing waits on the network to read as liked.
         identity?.let { id ->
@@ -3286,7 +3290,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (Innertube.listenerGeneration == credentials) {
                     LikeState.seedLiked(page.likedSongs.mapTo(HashSet()) { it.videoId })
                     identity?.let { id -> LikedCache.write(id, page.likedSongs) }
-                    page.likedContinuation?.let { token -> syncLikedMusic(identity, credentials, token) }
+                    page.likedContinuation?.let { token -> syncLikedMusic(identity, credentialStamp, token) }
                 }
                 if (page.isEmpty) UiState.Error(text(R.string.library_empty))
                 else UiState.Success(page.copy(likedContinuation = null))
@@ -3299,7 +3303,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // account. That is never published as this listener's library: it is
         // asked for again under the settled credentials.
         if (Innertube.listenerGeneration != credentials) {
-            if (attempt < LIBRARY_CREDENTIAL_RETRIES) fetchLibrary(identity, attempt + 1)
+            if (attempt < LIBRARY_CREDENTIAL_RETRIES) {
+                fetchLibrary(identity, attempt + 1)
+            } else if (_library.value is UiState.Loading) {
+                // Out of retries, still this listener's tab: a library already
+                // up stays up, and a first load shows an error it can retry
+                // from rather than a spinner that never ends.
+                _library.value = UiState.Error(text(R.string.failed))
+            }
             return
         }
         _library.value = next
@@ -3320,15 +3331,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * [credentials] is the [Innertube.listenerGeneration] the token was read
      * under; a page fetched across a change of it is dropped.
      */
-    private fun syncLikedMusic(identity: String?, credentials: Long, token: String) {
+    private fun syncLikedMusic(identity: String?, credentials: Innertube.ListenerStamp, token: String) {
         likedSyncJob?.cancel()
         likedSyncJob = viewModelScope.launch {
-            fun stillOurs() = identity == listenerKey() && Innertube.listenerGeneration == credentials
+            fun stillOurs() = identity == listenerKey() && Innertube.listenerStamp() == credentials
             YtMusicRepository.syncLikedMusic(token) { next ->
                 if (!stillOurs()) {
                     null
                 } else {
-                    YtMusicRepository.moreSongs(next).getOrNull()?.takeIf { stillOurs() }?.also { page ->
+                    // Sent under the session the token was read under, or not at all.
+                    Innertube.asListener(credentials) { YtMusicRepository.moreSongs(next) }
+                        .getOrNull()?.takeIf { stillOurs() }?.also { page ->
                         identity?.let { id -> LikedCache.mergeBottom(id, page.songs) }
                     }
                 }
@@ -4345,6 +4358,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // start during the scope wait, so both repeat until none is active.
             // Already-resolved scopes return at once; on-device pages skip it.
             if (remotePage) settleCredentials()
+            // Closed during the wait: no session recorded and no browse sent for
+            // a page that is gone. An opening still on the stack, even under
+            // another page, carries on.
+            if (!isDetailOpen(browseId, opened)) return@launch
             // The session the page is opened under, kept for its later pages:
             // a continuation goes out under this one or not at all.
             val openingStamp = Innertube.listenerStamp()
@@ -4956,7 +4973,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // long playlist cut short on screen and in its menu.
                 fetch = { next ->
                     retryingOrNull(FILL_IN_RETRIES_MS, stop = { !stillOurs() }) {
-                        YtMusicRepository.moreSongs(next).getOrNull()
+                        // Under the page's opening session, as loadMoreDetail: the
+                        // token is that session's, and is not sent under another.
+                        val opening = openingStamps[opened]
+                        if (opening == null) {
+                            YtMusicRepository.moreSongs(next).getOrNull()
+                        } else {
+                            Innertube.asListener(opening) { YtMusicRepository.moreSongs(next) }.getOrNull()
+                        }
                     }?.takeIf { stillOurs() }
                 },
                 nextToken = { fetched ->
