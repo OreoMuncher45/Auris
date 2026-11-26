@@ -3889,6 +3889,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 if (owns) _searchLoadingMore.value = false
             }
+            // Lost ownership (an account change) while this search is still the
+            // one shown: nothing else will clear the flag, and every later
+            // load-more would return early on it. A newer search manages its own.
+            if (searchSession == session && !searchOwnership.owns(session.ticket)) _searchLoadingMore.value = false
         }
     }
 

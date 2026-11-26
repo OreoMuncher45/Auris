@@ -13,10 +13,16 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class SleepTimerFadeTest {
 
-    /** A receiver's stream volume that records every level asked of it. */
+    /**
+     * A receiver's stream volume that records every level asked of it. It
+     * suspends and checks for cancellation first, as the real round trip does,
+     * so a restore attempted from a cancelled coroutine (without
+     * NonCancellable) would throw here and never be recorded.
+     */
     private class FakeStreamVolume(override val level: Double, private val accepts: Boolean = true) : StreamVolume {
         val asked = mutableListOf<Double>()
         override suspend fun set(level: Double): Boolean {
+            kotlinx.coroutines.yield()
             asked += level
             return accepts
         }
@@ -64,62 +70,86 @@ class SleepTimerFadeTest {
     fun aCastFadeGoesToSilenceThenPausesThenPutsTheVolumeBack() = runTest {
         val volume = FakeStreamVolume(level = 0.8)
         val events = mutableListOf<String>()
-        val paused = SleepTimer.fadeOutCast(
+        val result = SleepTimer.fadeOutCast(
             volume = volume,
             spanMs = 2_000L,
             stepMs = 500L,
             now = { testScheduler.currentTime },
-            stillPlaying = { true },
-            pause = { events += "pause at ${volume.asked.last()}" },
+            castActive = { true },
+            playing = { true },
+            pause = { events += "pause at ${volume.asked.last()}"; true },
         )
-        assertTrue(paused)
-        // Down in steps from the starting level to silence, then back up.
+        assertEquals(SleepTimer.CastFade.PAUSED, result)
+        // Down in steps from the starting level to silence, then back up after the pause.
         assertEquals(listOf(0.8, 0.6, 0.4, 0.2, 0.0, 0.8), volume.asked.map { Math.round(it * 10) / 10.0 })
         assertEquals(listOf("pause at 0.0"), events)
     }
 
     @Test
-    fun aReceiverThatRefusesStreamVolumeIsJustPaused() = runTest {
+    fun aReceiverThatRefusesStreamVolumeStillPausesAtTheDeadline() = runTest {
         val volume = FakeStreamVolume(level = 0.8, accepts = false)
-        var pauses = 0
-        val paused = SleepTimer.fadeOutCast(
-            volume = volume,
-            spanMs = 30_000L,
-            stepMs = 500L,
-            now = { testScheduler.currentTime },
-            stillPlaying = { true },
-            pause = { pauses++ },
+        var pausedAt = -1L
+        val result = SleepTimer.fadeOutCast(
+            volume, 30_000L, 500L, { testScheduler.currentTime }, { true }, { true },
+            pause = { pausedAt = testScheduler.currentTime; true },
         )
-        assertTrue(paused)
-        assertEquals(1, pauses)
-        // One refused ask and no fade or restore after it.
+        assertEquals(SleepTimer.CastFade.PAUSED, result)
+        assertEquals("not 30 s early", 30_000L, pausedAt)
+        // One refused ask, no fade after it, and nothing to restore.
         assertEquals(1, volume.asked.size)
-        assertEquals(0L, testScheduler.currentTime)
     }
 
     @Test
-    fun noStreamVolumeAtAllIsJustAPause() = runTest {
-        var pauses = 0
-        SleepTimer.fadeOutCast(null, 30_000L, 500L, { testScheduler.currentTime }, { true }, { pauses++ })
-        assertEquals(1, pauses)
+    fun noStreamVolumeAtAllPausesAtTheDeadline() = runTest {
+        var pausedAt = -1L
+        val result = SleepTimer.fadeOutCast(
+            null, 30_000L, 500L, { testScheduler.currentTime }, { true }, { true },
+            pause = { pausedAt = testScheduler.currentTime; true },
+        )
+        assertEquals(SleepTimer.CastFade.PAUSED, result)
+        assertEquals(30_000L, pausedAt)
     }
 
     @Test
-    fun aPauseByTheListenerMidFadeCallsItOffAndPutsTheVolumeBack() = runTest {
+    fun aPauseByTheListenerMidFadeIsReportedAsSuchAndPutsTheVolumeBack() = runTest {
         val volume = FakeStreamVolume(level = 0.5)
         var playing = true
         var pauses = 0
-        var result: Boolean? = null
+        var result: SleepTimer.CastFade? = null
         val job = launch {
-            result = SleepTimer.fadeOutCast(volume, 4_000L, 500L, { testScheduler.currentTime }, { playing }, { pauses++ })
+            result = SleepTimer.fadeOutCast(volume, 4_000L, 500L, { testScheduler.currentTime }, { true }, { playing }) { pauses++; true }
         }
         advanceTimeBy(1_100L)
         playing = false
         advanceTimeBy(1_000L)
         job.join()
-        assertFalse(result!!)
+        assertEquals(SleepTimer.CastFade.LISTENER_PAUSED, result)
         assertEquals(0, pauses)
         assertEquals(0.5, volume.asked.last(), 0.0)
+    }
+
+    @Test
+    fun playbackMovingToThePhoneIsReportedAsAMoveNotAPause() = runTest {
+        val volume = FakeStreamVolume(level = 0.5)
+        var onReceiver = true
+        var result: SleepTimer.CastFade? = null
+        val job = launch {
+            result = SleepTimer.fadeOutCast(volume, 4_000L, 500L, { testScheduler.currentTime }, { onReceiver }, { true }) { true }
+        }
+        advanceTimeBy(1_100L)
+        onReceiver = false
+        advanceTimeBy(1_000L)
+        job.join()
+        assertEquals(SleepTimer.CastFade.MOVED, result)
+        assertEquals(0.5, volume.asked.last(), 0.0)
+    }
+
+    @Test
+    fun anUnconfirmedPauseIsRetriedThenReportedAsFailed() = runTest {
+        var asks = 0
+        val result = SleepTimer.fadeOutCast(null, 0L, 500L, { testScheduler.currentTime }, { true }, { true }) { asks++; false }
+        assertEquals(SleepTimer.CastFade.PAUSE_FAILED, result)
+        assertEquals(SleepTimer.CAST_PAUSE_ATTEMPTS, asks)
     }
 
     @Test
@@ -127,7 +157,7 @@ class SleepTimerFadeTest {
         val volume = FakeStreamVolume(level = 0.5)
         var pauses = 0
         val job = launch {
-            SleepTimer.fadeOutCast(volume, 4_000L, 500L, { testScheduler.currentTime }, { true }, { pauses++ })
+            SleepTimer.fadeOutCast(volume, 4_000L, 500L, { testScheduler.currentTime }, { true }, { true }) { pauses++; true }
         }
         advanceTimeBy(1_100L)
         runCurrent()
@@ -135,6 +165,6 @@ class SleepTimerFadeTest {
         job.join()
         assertEquals(0, pauses)
         assertTrue("it had faded part of the way", volume.asked.dropLast(1).last() < 0.5)
-        assertEquals(0.5, volume.asked.last(), 0.0)
+        assertEquals("restored despite the cancellation", 0.5, volume.asked.last(), 0.0)
     }
 }

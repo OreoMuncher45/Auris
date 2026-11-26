@@ -100,6 +100,12 @@ class LoopMixSession private constructor(
     var alignmentConfirmed: Boolean = false
         private set
 
+    /** The incoming player stalled: whatever was measured before no longer describes it. */
+    fun invalidateAlignment() {
+        alignmentConfirmed = false
+        alignedErrorMs = Double.NaN
+    }
+
     fun recordAligned(errorSeconds: Double, confirmed: Boolean = true) {
         alignmentConfirmed = confirmed
         alignedErrorMs = errorSeconds * 1000
