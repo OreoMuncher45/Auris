@@ -99,7 +99,12 @@ const val VOCAL_ACTIVE_THRESHOLD = 0.25
 /**
  * The DSP heuristic's vocal value, moved onto the model's scale: its own
  * decision boundary (0.6, where it was tuned) lands on [VOCAL_ACTIVE_THRESHOLD],
- * linearly on either side, so it decides exactly what it used to.
+ * linearly on either side, so each frame is called sung or not exactly as
+ * before. Averages over a window are not: the two sides are scaled by
+ * different factors, so a window half at 0.2 and half at 0.9 averages under
+ * 0.6 on the old scale but over [VOCAL_ACTIVE_THRESHOLD] on this one. That is
+ * the model's reading, which the planner's window checks are tuned for; on
+ * DSP-fallback tracks it leans towards calling a mixed window sung.
  */
 fun heuristicVocalOnModelScale(value: Double): Double {
     if (!value.isFinite()) return value
