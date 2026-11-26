@@ -1,23 +1,30 @@
 package com.music.bitchord.playback
 
 /**
- * A map whose entries belong to the listener they were read for, the one
- * [owner] names: when the listener changes, everything kept for the previous
- * one is dropped on the next read or write, so a row listed for one account
- * is never handed back while another is signed in.
+ * A map whose entries belong to the session they were read for, the one
+ * [owner] names: when the session changes (another listener, or the same one
+ * after a switch away and back), everything kept for the previous one is
+ * dropped on the next read or write, so a row read for one session is never
+ * handed back in another.
  *
- * A write names the listener its entries were read for, and is dropped when
- * that is no longer the listener: a listing that lands after a switch, even
- * one away and back to the same listener's key, can't file its rows under
- * the account that took over. Entries that belong to no account (files on
- * the device, downloads) go through [putShared].
+ * A write names the session its entries were read for, and is dropped when
+ * that is no longer the current one: a listing or search that lands after a
+ * switch, even one away and back, files nothing. Entries that belong to no
+ * account (files on the device, downloads) go through [putShared].
+ *
+ * Holds at most [capacity] entries, the oldest written dropped first.
  */
-internal class ListenerScopedCache<V : Any>(private val owner: () -> String?) {
-    private val entries = HashMap<String, V>()
-    private var scope: String? = null
+internal class ListenerScopedCache<S, V : Any>(
+    private val capacity: Int = Int.MAX_VALUE,
+    private val owner: () -> S,
+) {
+    private val entries = object : LinkedHashMap<String, V>() {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, V>?): Boolean = size > capacity
+    }
+    private var scope: Any? = UNSET
 
-    /** [entries] for the listener now, emptied first when that is another one. Called under the lock. */
-    private fun current(): HashMap<String, V> {
+    /** [entries] for the session now, emptied first when that is another one. Called under the lock. */
+    private fun current(): LinkedHashMap<String, V> {
         val now = owner()
         if (now != scope) {
             entries.clear()
@@ -30,18 +37,29 @@ internal class ListenerScopedCache<V : Any>(private val owner: () -> String?) {
     @Synchronized
     operator fun get(key: String): V? = current()[key]
 
-    /** Files [values] (by [keyOf]) read for [listener], unless another listener is current now. */
+    /** Files [value] under [key], read for [session], unless another session is current now. */
     @Synchronized
-    fun putAll(listener: String?, values: Iterable<V>, keyOf: (V) -> String) {
+    fun put(session: S, key: String, value: V) {
         val map = current()
-        if (listener != scope) return
+        if (session == scope) map[key] = value
+    }
+
+    /** Files [values] (by [keyOf]) read for [session], unless another session is current now. */
+    @Synchronized
+    fun putAll(session: S, values: Iterable<V>, keyOf: (V) -> String) {
+        val map = current()
+        if (session != scope) return
         values.forEach { map[keyOf(it)] = it }
     }
 
-    /** Files [values] that belong to no account, for whoever is listening now. */
+    /** Files [values] that belong to no account, for whichever session is current. */
     @Synchronized
     fun putShared(values: Iterable<V>, keyOf: (V) -> String) {
         val map = current()
         values.forEach { map[keyOf(it)] = it }
+    }
+
+    private companion object {
+        val UNSET = Any()
     }
 }
