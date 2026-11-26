@@ -109,7 +109,8 @@ class ListenerIdentityTest {
         Innertube.cookie = "SID=A"
         val before = Innertube.listenerStamp()
         assertTrue(Innertube.installSession(candidateB))
-        assertNotEquals(before, Innertube.listenerStamp())
+        // One publish for the whole install, not one per field.
+        assertEquals(before.generation + 1, Innertube.listenerGeneration)
         assertTrue(Innertube.requestIdentityForTest().startsWith("SID=B|1|brandB|brandB||owner|"))
     }
 
@@ -144,7 +145,7 @@ class ListenerIdentityTest {
         // The listener adopts a profile under the same cookie after the request went out.
         Innertube.adoptSessionScope("brand", "brand||owner", "1", null, null, loggedIn = true)
         val adopted = Innertube.listenerStamp()
-        assertFalse(Innertube.refreshSessionScope(earlier))
+        assertNull(Innertube.refreshSessionScope(earlier))
         assertEquals(adopted, Innertube.listenerStamp())
     }
 
@@ -190,5 +191,42 @@ class ListenerIdentityTest {
         Innertube.cookie = "SID=one"
         assertFalse(Innertube.boundToSession())
         assertTrue(Innertube.asListener(Innertube.listenerStamp()) { Innertube.boundToSession() })
+    }
+
+    @Test
+    fun `an adopted personal scope and the shell's default for it are the same listener`() {
+        Innertube.cookie = "SID=one"
+        val shellDefault = Innertube.listenerStamp()
+        // A personal profile adopted with no page or data-sync id, at index 0.
+        Innertube.adoptSessionScope(null, null, null, null, null, loggedIn = true)
+        assertEquals(shellDefault.listener, Innertube.listener)
+    }
+
+    @Test
+    fun `a brand page at the same account index is another listener`() {
+        Innertube.cookie = "SID=one"
+        val personal = Innertube.listener
+        Innertube.adoptSessionScope("brand", "brand||owner", "0", null, null, loggedIn = true)
+        assertNotEquals(personal, Innertube.listener)
+    }
+
+    @Test
+    fun `a refresh with an account switch away and back during it hands back no retry stamp`() {
+        Innertube.cookie = "SID=A"
+        val start = Innertube.accountTransitionsForTest()
+        assertNotNull(Innertube.retryStampAfter(start))
+        Innertube.cookie = "SID=B"
+        Innertube.cookie = "SID=A"
+        assertNull(Innertube.retryStampAfter(start))
+    }
+
+    @Test
+    fun `an installed profile under the same cookie does not inherit the previous visitor id`() = runBlocking {
+        Innertube.cookie = "SID=A"
+        Innertube.adoptSessionScope("pageA", "pageA||owner", "0", "VISITOR-A", null, loggedIn = true)
+        assertTrue(Innertube.requestIdentityForTest().endsWith("|VISITOR-A"))
+        val sameCookieB = Innertube.CandidateSession("SID=A", "pageB", "pageB||owner", "0", null, null)
+        assertTrue(Innertube.installSession(sameCookieB))
+        assertTrue(Innertube.requestIdentityForTest().endsWith("|null"))
     }
 }
