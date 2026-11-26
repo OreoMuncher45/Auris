@@ -109,6 +109,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import com.music.bitchord.ui.LocalPageHidden
 import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
@@ -7805,6 +7806,10 @@ private fun WebSessionHost(
 ) {
     if (mode == null) return
     BackHandler(onBack = onDismiss)
+    // However the sheet goes away — Back, Close, another screen taking over —
+    // a validation still running goes with it. Its candidate never touched the
+    // shared session, so there is nothing else to undo.
+    DisposableEffect(Unit) { onDispose { viewModel.cancelWebSession() } }
     // Raised by "Use this channel", read by the browser as "take the
     // session from the page as it now stands". A counter rather than a
     // flag so a second tap, after a failed first one, is still a new

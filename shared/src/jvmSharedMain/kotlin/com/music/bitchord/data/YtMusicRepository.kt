@@ -1193,29 +1193,38 @@ object YtMusicRepository {
 
     private suspend fun <T> call(label: String, block: suspend () -> T): Result<T> =
         withContext(Dispatchers.IO) {
-            // Who the request was made as: the retry may only go out as the same one.
-            val identity = Innertube.listener
+            // Who the request was made as: the refresh and the retry belong to it.
+            val owner = Innertube.listenerStamp()
             runCatching { block() }.recoverCatching { failure ->
                 // Context cookies can rotate while a process is alive. Refresh
                 // once and retry; never loop or silently sign the listener out.
                 val rejected = failure.message?.contains("401") == true ||
                     failure.message?.contains("403") == true ||
                     failure.message?.contains("rejected", true) == true
-                if (!rejected || Innertube.cookie == null) throw failure
+                // A candidate under validation has no shared session to refresh:
+                // its rejection is the validation's answer.
+                if (!rejected || Innertube.cookie == null || Innertube.inCandidate()) throw failure
                 Log.w(TAG, "$label rejected; refreshing active session context once")
-                Innertube.refreshSessionScope()
+                // Only for the session that was rejected: one that took over
+                // since keeps its scope, and gets no retry of another's request.
+                if (!Innertube.refreshSessionScope(owner)) {
+                    Log.w(TAG, "$label not retried: the account changed before the refresh")
+                    throw failure
+                }
                 // The refresh drops an adopted profile and reads the shell's
                 // default, and a switch can land while it waits: a retry under
                 // another identity could send a rating or playlist edit to an
                 // account the listener did not pick, so it is not made.
-                if (Innertube.listener != identity) {
+                val refreshed = Innertube.listenerStamp()
+                if (refreshed.listener != owner.listener) {
                     Log.w(TAG, "$label not retried: the account changed during the refresh")
                     throw failure
                 }
-                // Checked again where the retry's credentials are taken, under
-                // the same lock, so a switch after the line above can't slip in.
+                // Bound to the refreshed session, checked where the retry's
+                // credentials are taken, under the same lock: a switch after the
+                // line above, even away and back, can't slip in.
                 try {
-                    Innertube.asListener(identity) { block() }
+                    Innertube.asListener(refreshed) { block() }
                 } catch (_: Innertube.ListenerChangedException) {
                     Log.w(TAG, "$label not retried: the account changed before it was sent")
                     throw failure
