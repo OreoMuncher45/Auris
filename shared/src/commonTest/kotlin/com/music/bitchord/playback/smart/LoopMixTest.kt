@@ -530,4 +530,13 @@ class LoopMixTest {
         assertEquals(45.0, p.inn.loopStart, 1e-9)
         assertEquals(LoopMix.LOOP_BARS, p.inn.bars)
     }
+
+    @Test
+    fun noLoopIsCutFromAudioWhoseLevelWasNeverMeasured() {
+        // Synced lyrics vouch for the whole song, but the outgoing song carries no level windows.
+        val out = analysis(120.0, 200.0).copy(levelWindows = emptyList())
+        val why = StringBuilder()
+        assertNull(LoopMix.plan(out, 200.0, analysis(120.0, 180.0), 180.0, 0.0, clear, clear, why = why))
+        assertTrue("no level" in why.toString(), why.toString())
+    }
 }
