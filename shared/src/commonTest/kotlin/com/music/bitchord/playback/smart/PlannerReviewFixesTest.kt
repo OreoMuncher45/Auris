@@ -148,4 +148,31 @@ class PlannerReviewFixesTest {
         assertEquals(20.0, unchanged.incomingCueTime, 1e-9)
         assertEquals(0.0, unchanged.vocalOverlap, 1e-9)
     }
+
+    @Test
+    fun advancedNeedsBothGridsTrustedForACloseTempoBlend() {
+        // Equal tempi; the incoming opening measured at 0.9, the outgoing grid at 0.1.
+        val next = track(120.0).let { it.copy(headBeats = BeatSide(it.downbeats, it.downbeats, 120.0, 0.9)) }
+        val p = plan(track(120.0).copy(beatConfidence = 0.1), next)
+        assertNotEquals(TransitionStyle.DJ_BLEND, p.transitionStyle)
+        // Both trusted: still a blend.
+        assertEquals(TransitionStyle.DJ_BLEND, plan(track(120.0), next).transitionStyle)
+    }
+
+    @Test
+    fun aBlendNeverCuesTheIncomingSongInsideItsLeadInSilence() {
+        // The incoming song is silent until [start] and its drop comes a second
+        // later: the blend's 8 s overlap reached back to start - 3 s.
+        for (start in listOf(5.0, 10.0, 20.0)) {
+            val next = track(120.0).copy(
+                audibleStartTime = start,
+                firstBeat = start,
+                mixInTime = start + 1.0,
+                mixInCandidates = listOf(MixCandidate(start + 1.0, 1.0, "drop")),
+            )
+            val p = plan(track(120.0), next)
+            assertEquals(TransitionStyle.DJ_BLEND, p.transitionStyle, "start $start")
+            assertTrue(p.incomingCueTime >= start - 1e-9, "start $start: cue ${p.incomingCueTime}")
+        }
+    }
 }
