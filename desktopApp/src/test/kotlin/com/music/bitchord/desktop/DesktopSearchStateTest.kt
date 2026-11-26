@@ -80,4 +80,52 @@ class DesktopSearchStateTest {
         assertFalse(state.owns(old, generation = 1))
         assertTrue(state.owns(new, generation = 1))
     }
+
+    @Test
+    fun `library rows shown under a catalogue pill are still cleared on a listener change`() {
+        val state = DesktopSearchState().apply { filter = SearchFilter.LIBRARY }
+        val ticket = state.begin(SearchFilter.LIBRARY, generation = 1)
+        // The pill is moved while the Library search runs; its rows still land.
+        state.filter = SearchFilter.ALL
+        state.show(ticket, listOf(row()))
+        state.committed = true
+        state.onListenerChanged(signedIn = true)
+        assertTrue(state.rows.isEmpty())
+        assertFalse(state.committed)
+        assertEquals(SearchFilter.ALL, state.filter)
+    }
+
+    @Test
+    fun `a library search in flight under a catalogue pill is dropped on a listener change`() {
+        val state = DesktopSearchState()
+        val ticket = state.begin(SearchFilter.LIBRARY, generation = 1)
+        state.loading = true
+        state.filter = SearchFilter.SONGS
+        state.onListenerChanged(signedIn = false)
+        assertFalse(state.owns(ticket, generation = 1))
+        assertFalse(state.loading)
+        assertEquals(SearchFilter.SONGS, state.filter)
+    }
+
+    @Test
+    fun `a library search that only lost its credentials still clears loading`() {
+        val state = DesktopSearchState()
+        val ticket = state.begin(SearchFilter.LIBRARY, generation = 1)
+        state.loading = true
+        // A cookie or channel change under the same account: no listener-change call.
+        assertFalse(state.owns(ticket, generation = 2))
+        assertTrue(state.isNewest(ticket))
+        state.finish(ticket)
+        assertFalse(state.loading)
+    }
+
+    @Test
+    fun `a superseded search leaves loading to the one that replaced it`() {
+        val state = DesktopSearchState()
+        val old = state.begin(SearchFilter.SONGS, generation = 1)
+        state.begin(SearchFilter.SONGS, generation = 1)
+        state.loading = true
+        state.finish(old)
+        assertTrue(state.loading)
+    }
 }
