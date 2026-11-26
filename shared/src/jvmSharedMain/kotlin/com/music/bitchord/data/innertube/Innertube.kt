@@ -517,6 +517,28 @@ object Innertube {
         companion object Key : kotlin.coroutines.CoroutineContext.Key<CandidateContext>
     }
 
+    /**
+     * Holds the [ListenerStamp] the last request inside [recordingSignedStamp]
+     * was signed under. The stamp taken before a call can be stale by the time
+     * it is sent — installing the session scope advances the generation under
+     * the same cookie — so a rejection is attributed to the session that
+     * actually signed it.
+     */
+    class SignedStamp internal constructor() :
+        kotlin.coroutines.AbstractCoroutineContextElement(Key) {
+        @Volatile
+        var stamp: ListenerStamp? = null
+            internal set
+
+        companion object Key : kotlin.coroutines.CoroutineContext.Key<SignedStamp>
+    }
+
+    /** Runs [block], recording in the returned holder the session its requests were signed under. */
+    suspend fun <T> recordingSignedStamp(block: suspend (SignedStamp) -> T): T {
+        val holder = SignedStamp()
+        return kotlinx.coroutines.withContext(holder) { block(holder) }
+    }
+
     /** Runs [block] with every request in it signed as [candidate], and only them. */
     suspend fun <T> asCandidate(candidate: CandidateSession, block: suspend () -> T): T =
         kotlinx.coroutines.withContext(CandidateContext(candidate)) { block() }
@@ -566,6 +588,7 @@ object Innertube {
             if (expected != null && published.let { it.listener != expected.stamp.listener || it.generation != expected.stamp.generation }) {
                 throw ListenerChangedException()
             }
+            context[SignedStamp]?.stamp = ListenerStamp(published.listener, published.generation)
             snapshotCredentials()
         }
     }
@@ -658,13 +681,16 @@ object Innertube {
      * drop *that* listener's adopted scope for a failure it never had.
      * Returns whether the refresh ran.
      */
+    /** Whether [owner] is the session requests are signed with now: same listener, same generation. */
+    internal fun isCurrentSession(owner: ListenerStamp): Boolean = synchronized(identityLock) {
+        published.listener == owner.listener && published.generation == owner.generation
+    }
+
     suspend fun refreshSessionScope(owner: ListenerStamp): Boolean {
         if (cookie == null) return false
         val cleared = scopeLock.withLock {
             synchronized(identityLock) {
-                if (published.listener != owner.listener || published.generation != owner.generation) {
-                    return@synchronized false
-                }
+                if (!isCurrentSession(owner)) return@synchronized false
                 scope = null
                 adoptedIdentity = null
                 refreshListener()
