@@ -47,29 +47,64 @@ internal class DesktopSearchState {
     private var newestRequest = 0L
 
     /**
+     * Whether the rows on screen, or the newest search still running, are a Library answer. Set
+     * from the search that produced them rather than read off [filter]: a filter tapped while a
+     * Library search runs starts nothing (the search in flight blocks it), and that search still
+     * lands its rows under the catalogue pill. Plain, like [newestRequest]: nothing draws them.
+     */
+    private var rowsPrivate = false
+    private var inFlightPrivate = false
+
+    /**
      * Starts a search: every one before it is superseded. A Library search also remembers the
      * [Innertube.listenerGeneration] it was asked under, since it is the account's own songs.
      */
-    fun begin(filter: SearchFilter, generation: Long = Innertube.listenerGeneration): DesktopSearchTicket =
-        DesktopSearchTicket(++newestRequest, if (filter.requiresAuth) generation else null)
+    fun begin(filter: SearchFilter, generation: Long = Innertube.listenerGeneration): DesktopSearchTicket {
+        inFlightPrivate = filter.requiresAuth
+        return DesktopSearchTicket(++newestRequest, if (filter.requiresAuth) generation else null)
+    }
 
-    /** Whether [ticket]'s answer may still be shown. */
+    /** Whether no search has been asked for since [ticket]'s: it decides the [loading] flag. */
+    fun isNewest(ticket: DesktopSearchTicket): Boolean = ticket.id == newestRequest
+
+    /**
+     * Whether [ticket]'s answer may still be shown: it is the newest search and, for Library, the
+     * credentials have not moved under it. A Library search can lose only the second — a cookie
+     * or channel change under the same account — and is then still the one that owns [loading].
+     */
     fun owns(ticket: DesktopSearchTicket, generation: Long = Innertube.listenerGeneration): Boolean =
-        ticket.id == newestRequest && (ticket.credentials == null || ticket.credentials == generation)
+        isNewest(ticket) && (ticket.credentials == null || ticket.credentials == generation)
+
+    /** Puts [ticket]'s answer on screen, remembering whether it is the account's own. */
+    fun show(ticket: DesktopSearchTicket, found: List<SearchResult>) {
+        rows = found
+        rowsPrivate = ticket.credentials != null
+    }
+
+    /** The newest search is over, however it ended. */
+    fun finish(ticket: DesktopSearchTicket) {
+        if (!isNewest(ticket)) return
+        loading = false
+        inFlightPrivate = false
+    }
 
     /**
      * The listener changed. A Library search, on screen or in flight, was the leaving account's:
-     * it is superseded and its rows dropped, and signed out the filter goes back to All, since
-     * Library is no longer offered. A catalogue search is nobody's in particular and stays.
+     * it is superseded and its rows dropped, whichever pill is selected now, and signed out a
+     * Library filter goes back to All, since Library is no longer offered. A catalogue search is
+     * nobody's in particular and stays.
      */
     fun onListenerChanged(signedIn: Boolean) {
-        if (!filter.requiresAuth) return
+        val privateInFlight = loading && inFlightPrivate
+        if (!filter.requiresAuth && !rowsPrivate && !privateInFlight) return
         newestRequest++
         loading = false
+        inFlightPrivate = false
         rows = emptyList()
+        rowsPrivate = false
         committed = false
         error = null
-        if (!signedIn) filter = SearchFilter.ALL
+        if (!signedIn && filter.requiresAuth) filter = SearchFilter.ALL
     }
 }
 
