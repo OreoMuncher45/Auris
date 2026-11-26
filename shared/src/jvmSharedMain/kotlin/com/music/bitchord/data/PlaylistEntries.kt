@@ -98,8 +98,7 @@ private fun listingPage(response: JsonElement, page: Int, whole: Boolean): Pair<
     InnertubeParser.parsePlaylistContinuation(response)?.let { return it.songs to it.continuation }
     // A playlist page, scoped to its own shelf so its Suggestions never join.
     val shelf = InnertubeParser.parsePlaylistShelf(response)
-        ?: return InnertubeParser.collectSongsDeep(response).distinctBy { it.videoId } to
-            InnertubeParser.continuationToken(response)
+        ?: return generalPage(response, page, whole)
     // An appended page with an episode among its rows: its own items, the
     // general way, so its next-page token keeps the list going.
     shelf.unreadItems?.let { items ->
@@ -110,4 +109,18 @@ private fun listingPage(response: JsonElement, page: Int, whole: Boolean): Pair<
         error("page $page of the list could not be read")
     }
     return shelf.songs to shelf.continuation
+}
+
+/**
+ * A page neither playlist reading recognised (an album's first page, say),
+ * walked the general way. A later page of a [whole] read that yields nothing
+ * at all this way (no rows, no next-page token) is not a page the list is
+ * known to end on, only one that wasn't understood, so it fails the read
+ * rather than end it with the rows read so far.
+ */
+private fun generalPage(response: JsonElement, page: Int, whole: Boolean): Pair<List<Song>, String?> {
+    val songs = InnertubeParser.collectSongsDeep(response).distinctBy { it.videoId }
+    val token = InnertubeParser.continuationToken(response)
+    if (whole && page > 1 && songs.isEmpty() && token == null) error("page $page of the list could not be read")
+    return songs to token
 }
