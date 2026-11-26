@@ -203,7 +203,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      * The rest are on disk and are restored when a track comes round again,
      * as after an ordinary eviction. Unregistered in [release].
      */
-    private val onMemoryPressure: () -> Unit = { results.trimTo(PRESSURE_MEMORY_MAX, ::isAnalysing) }
+    private val onMemoryPressure: () -> Unit = { results.trimTo(PRESSURE_MEMORY_MAX, ::inFlight) }
 
     init {
         com.music.bitchord.util.MemoryPressure.register(onMemoryPressure)
@@ -211,12 +211,12 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
 
     /** Publishes [analysis] for [trackId], keeping the in-memory results bounded. */
     private fun remember(trackId: String, analysis: TrackAnalysis) {
-        results.put(trackId, analysis, ::isAnalysing)
+        results.put(trackId, analysis, ::inFlight)
     }
 
     /** [remember], unless a result is already there; returns whichever is cached. */
     private fun rememberIfAbsent(trackId: String, analysis: TrackAnalysis): TrackAnalysis {
-        return results.putIfAbsent(trackId, analysis, ::isAnalysing).first
+        return results.putIfAbsent(trackId, analysis, ::inFlight).first
     }
 
     /**
@@ -364,7 +364,19 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      * block. Returns an empty analysis for anything not yet finished, which
      * [assessTransitionTier] reads as no evidence rather than as a failure.
      */
-    fun analysisFor(trackId: String): TrackAnalysis = results[trackId] ?: TrackAnalysis(trackId = trackId)
+    fun analysisFor(trackId: String): TrackAnalysis = results[scoped(trackId)] ?: TrackAnalysis(trackId = trackId)
+
+    /**
+     * [trackId] as the analyser files it: scoped to the rendition the resolver
+     * serves now, so each rendition keeps its own result (in memory and on
+     * disk) and never reads another's. Applied once, at every public entry;
+     * everything inside works on the scoped id. See
+     * [AutomixAnalysisSource.rendition].
+     */
+    private fun scoped(trackId: String): String = AutomixAnalysisSource.scopedTrackId(trackId)
+
+    /** Whether a pass for the already-[scoped] [id] is in flight. */
+    private fun inFlight(id: String): Boolean = id in running
 
     /**
      * Looks [trackId] up on disk, once, off the playback thread.
@@ -416,7 +428,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
     }
 
     /** True once [trackId] has a result, including a failure. Nothing more will arrive. */
-    fun isAnalysed(trackId: String): Boolean = results.containsKey(trackId)
+    fun isAnalysed(trackId: String): Boolean = results.containsKey(scoped(trackId))
 
     /**
      * True while a decode and inference for [trackId] is actually in flight.
@@ -426,7 +438,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      * is the difference between something being wrong and something simply
      * taking the several seconds it takes.
      */
-    fun isAnalysing(trackId: String): Boolean = trackId in running
+    fun isAnalysing(trackId: String): Boolean = scoped(trackId) in running
 
     /**
      * Queues [trackId] (playing at [uri]) for analysis if it is not already
@@ -450,7 +462,9 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      * to wait for and nothing to escalate through. See [LocalAudioSource] for
      * why that needed saying at all.
      */
-    fun request(trackId: String, uri: Uri, durationSeconds: Double) {
+    fun request(trackId: String, uri: Uri, durationSeconds: Double) = requestScoped(scoped(trackId), uri, durationSeconds)
+
+    private fun requestScoped(trackId: String, uri: Uri, durationSeconds: Double) {
         if (trackId.isBlank()) return
         // Before anything else this would spend: [analysisUriFor] alone can put
         // a catalogue match on the network for a track the party will never
@@ -1868,7 +1882,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      * ordinary blend instead.
      */
     fun loopRegion(
-        trackId: String,
+        track: String,
         uri: Uri,
         durationSeconds: Double,
         fromSeconds: Double,
@@ -1876,6 +1890,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         sampleRate: Int,
         plannedOn: String? = null,
     ): com.music.bitchord.playback.loopmix.LoopRegion? {
+        val trackId = scoped(track)
         if (uri.getQueryParameter("v") == null && uri.authority == "source") return null
         val began = SystemClock.elapsedRealtime()
         val copy = runCatching { loopCopy(trackId, uri, durationSeconds, plannedOn) }.getOrNull() ?: return null
@@ -1943,13 +1958,14 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      * is no such copy to read. Blocking — call it off the main thread.
      */
     fun mixWaveform(
-        trackId: String,
+        track: String,
         uri: Uri,
         durationSeconds: Double,
         fromSeconds: Double,
         toSeconds: Double,
         bins: Int,
     ): MixWaveform.Bands? {
+        val trackId = scoped(track)
         // Not [analysisUriFor]: that starts a catalogue search, and this only
         // wants whatever analysis already settled on.
         val analysisUri = if (uri.getQueryParameter("v") != null || uri.authority != "source") {
