@@ -705,6 +705,21 @@ class CrossfadeController(
 
     fun cancelAutoMixVisual() = AutoMixVisualFeed.cancel(visualGeneration)
 
+    /**
+     * Automix switched off: its artwork reveal, its seek-bar marker and the
+     * mix popup's preview all go now. Paused, the ticker stops at once and
+     * nothing would clear them; playing, the plain crossfade path never
+     * publishes a smart window to replace the marker.
+     */
+    fun onAutomixDisabled() {
+        cancelAutoMixVisual()
+        AppSettings.smartTransitionWindow.value = null
+        lastSmartPlan = null
+        AppSettings.smartMixPreview.value = null
+        mixPreviewIds = null
+        mixPreviewKey = ""
+    }
+
     private fun armAutoMixVisual(out: ExoPlayer, into: ExoPlayer, nextIndex: Int, items: List<MediaItem>) {
         fun trackAt(index: Int): AutoMixVisualTrack? {
             val item = items.getOrNull(index) ?: return null
@@ -1155,6 +1170,8 @@ class CrossfadeController(
             // otherwise sit on screen for as long as the party lasts.
             AppSettings.smartTransitionWindow.value = null
             AppSettings.smartMixInProgress.value = false
+            // And the stats line's plan: the pair is not going to be mixed.
+            lastSmartPlan = null
             return
         }
         // Bit-perfect output promises the samples are unaltered, and a blend
@@ -1324,7 +1341,7 @@ class CrossfadeController(
             lastPlanVerdict = verdict
             TrackLog.d(
                 TAG,
-                "plan ${currentItem.mediaId}->${nextItem.mediaId}: $verdict " +
+                "plan ${currentItem.mediaId}->${TrackLog.idForLog(nextItem.mediaId)}: $verdict " +
                     "bpm=${currentAnalysis.bpm}/${nextAnalysis.bpm} " +
                     "conf=${currentAnalysis.beatConfidence}/${nextAnalysis.beatConfidence}",
             )
@@ -1395,6 +1412,9 @@ class CrossfadeController(
         // most of the time the marker was missing.
         val markable = !plan.blocked &&
             plan.markerVisible &&
+            // Bit-perfect allows no blend: with "sleep after this song" also on,
+            // planning carries on this far, but no window it finds will run.
+            !AppSettings.bitPerfect.value &&
             duration > 0L &&
             analysisState.current == TrackAnalysisState.ANALYSED &&
             analysisState.next in MEASURED_ENOUGH_TO_ENTER_ON &&
@@ -1403,6 +1423,7 @@ class CrossfadeController(
         val markerVerdict = when {
             markable -> "shown"
             plan.blocked -> "hidden: plan blocked (${plan.reason})"
+            AppSettings.bitPerfect.value -> "hidden: bit-perfect"
             !plan.markerVisible -> "hidden: plan has no marker (${plan.reason})"
             duration <= 0L -> "hidden: no duration"
             analysisState.current != TrackAnalysisState.ANALYSED -> "hidden: current is ${analysisState.current}"
@@ -1416,7 +1437,7 @@ class CrossfadeController(
                 // Not the next item's title: copying this track's log must not
                 // carry what is queued after it (a private local file, say).
                 "marker ${currentItem.mediaId} \"${currentItem.mediaMetadata.title}\" -> " +
-                    "${nextItem.mediaId}: $markerVerdict",
+                    "${TrackLog.idForLog(nextItem.mediaId)}: $markerVerdict",
             )
         }
         AppSettings.smartTransitionWindow.value = if (markable) {
@@ -2116,6 +2137,11 @@ class CrossfadeController(
                 into.addMediaItems(queue.subList(plan.from, queue.size))
                 TrackLog.d(TAG, "reconciled the queue from entry ${plan.from} onto the incoming player")
             }
+        }
+        // History rows whose stream was replaced in place (a finished download):
+        // not a reason to refuse the handoff, but the standby takes the new copy.
+        for (i in QueueReconcile.historyRefresh(queue, heldQueue, into.currentMediaItemIndex, ::sameQueueEntry, ::samePlayableEntry)) {
+            into.replaceMediaItem(i, queue[i])
         }
         queuedItemCount = queue.size
         return true
@@ -2868,8 +2894,10 @@ class CrossfadeController(
         state: SmartAnalysis,
     ): LoopMix.Plan? {
         val pair = "${current.mediaId}->${next.mediaId}"
+        // What [noteLoopVerdict] logs: the next track by a stand-in, not its path.
+        val logPair = "${current.mediaId}->${TrackLog.idForLog(next.mediaId)}"
         loopRefusalFor(player, current, next, state)?.let { why ->
-            noteLoopVerdict(pair, null, why)
+            noteLoopVerdict(logPair, null, why)
             return null
         }
         askLyrics(current, durationMs)
@@ -2877,7 +2905,7 @@ class CrossfadeController(
         val outLyrics = lyricSpans[current.mediaId]
         val inLyrics = lyricSpans[next.mediaId]
         if (outLyrics == null || inLyrics == null) {
-            noteLoopVerdict(pair, null, "waiting on lyrics")
+            noteLoopVerdict(logPair, null, "waiting on lyrics")
             return null
         }
         // The lyric snapshots too: a retry that finds timed lines replaces them, and must plan again.
@@ -2913,7 +2941,7 @@ class CrossfadeController(
         loopPlanned = plan
         loopPlanEarliestSec = earliestOutSec
         val lyricsNote = "lyrics ${if (outLyrics.spans != null) "out" else "-"}/${if (inLyrics.spans != null) "in" else "-"}"
-        noteLoopVerdict(pair, plan, if (plan == null) "$why; $lyricsNote" else null)
+        noteLoopVerdict(logPair, plan, if (plan == null) "$why; $lyricsNote" else null)
         return plan
     }
 
@@ -2980,7 +3008,7 @@ class CrossfadeController(
         val inLevel = loopLevel(outItem, inItem)
         TrackLog.d(
             TAG,
-            "loop build ${outItem.mediaId}->${inItem.mediaId} at ${sampleRate}Hz, loop at " +
+            "loop build ${outItem.mediaId}->${TrackLog.idForLog(inItem.mediaId)} at ${sampleRate}Hz, loop at " +
                 "${"%.2f".format(Locale.ROOT, plan.out.loopStart)}s, playhead ${out.currentPosition}ms",
         )
         // The built session until [armLoop] takes it: a skip or a timeout can
