@@ -216,12 +216,6 @@ class CrossfadeController(
     /** Invoked after [finish] has completed cleanup and returned to IDLE. */
     private val onSettled: () -> Unit = {},
     /**
-     * Whether the incoming track's audio is ready to blend into, as one more
-     * condition on showing the Automix window on the seek bar. Only marks the
-     * window; arming the transition never waits on it.
-     */
-    private val nextStreamReady: (MediaItem) -> Boolean = { true },
-    /**
      * A three-band waveform of a stretch of a media item — its duration in ms,
      * then the span in seconds and how many bins — for the mix popup, or null
      * when its audio cannot be read. Blocking; called off the main thread.
@@ -1350,7 +1344,6 @@ class CrossfadeController(
         lastSmartPlan = plan
         lastSmartPlanFrom = currentItem.mediaId
         lastSmartPlanTo = nextItem.mediaId
-        publishMixPreview(currentItem, nextItem, duration, nextDuration, currentAnalysis, nextAnalysis, analysisState, plan, advanced)
 
         // The loop mix first: a pair it can do never reaches the blend below.
         // A pair the planner refuses outright (speech, a live recording, a
@@ -1362,8 +1355,19 @@ class CrossfadeController(
                 player, currentItem, nextItem, currentAnalysis, nextAnalysis, duration, nextDuration, analysisState,
             )
         }
+        val loopChosen = loop != null && !AppSettings.bitPerfect.value
+        // The popup previews the blend only when the blend is what will run: a
+        // pair the loop mix takes shows the loop once it arms (smartMixView),
+        // not a blend's cue and faders until then.
+        if (loopChosen) {
+            AppSettings.smartMixPreview.value = null
+            mixPreviewIds = null
+            mixPreviewKey = ""
+        } else {
+            publishMixPreview(currentItem, nextItem, duration, nextDuration, currentAnalysis, nextAnalysis, analysisState, plan, advanced)
+        }
         // Never under Bit-perfect, which only lets the sleep timer's fade through.
-        if (loop != null && !AppSettings.bitPerfect.value && nextStreamReady(nextItem)) {
+        if (loop != null && loopChosen) {
             val loopStartMs = (loop.out.loopStart * 1000).roundToLong()
             AppSettings.smartTransitionWindow.value = TransitionWindow(
                 start = (loopStartMs.toFloat() / duration).coerceIn(0f, 1f),
@@ -1417,9 +1421,7 @@ class CrossfadeController(
             !AppSettings.bitPerfect.value &&
             duration > 0L &&
             analysisState.current == TrackAnalysisState.ANALYSED &&
-            analysisState.next in MEASURED_ENOUGH_TO_ENTER_ON &&
-            // Last, because it is the only one that can read the cache.
-            nextStreamReady(nextItem)
+            analysisState.next in MEASURED_ENOUGH_TO_ENTER_ON
         val markerVerdict = when {
             markable -> "shown"
             plan.blocked -> "hidden: plan blocked (${plan.reason})"
@@ -1427,8 +1429,7 @@ class CrossfadeController(
             !plan.markerVisible -> "hidden: plan has no marker (${plan.reason})"
             duration <= 0L -> "hidden: no duration"
             analysisState.current != TrackAnalysisState.ANALYSED -> "hidden: current is ${analysisState.current}"
-            analysisState.next !in MEASURED_ENOUGH_TO_ENTER_ON -> "hidden: next is ${analysisState.next}"
-            else -> "hidden: next stream not ready"
+            else -> "hidden: next is ${analysisState.next}"
         }
         if (markerVerdict != lastMarkerVerdict) {
             lastMarkerVerdict = markerVerdict
@@ -2359,7 +2360,9 @@ class CrossfadeController(
     private var mixWavePair: String? = null
 
     /** The media ids [mixViewJob] has still to decode, which the popup shows as skeletons. */
-    private val pendingWaveIds = mutableSetOf<String>()
+    /** Each deck's waveform still decoding: per deck, since one song can be on both. */
+    private var pendingOutWave = false
+    private var pendingInWave = false
 
     /**
      * When a media id's waveform last failed to decode. Held off for
@@ -2410,9 +2413,8 @@ class CrossfadeController(
         if (mixViewJob?.isActive == true && mixWavePair == pair) return
         mixViewJob?.cancel()
         mixWavePair = pair
-        pendingWaveIds.clear()
-        if (!outReady) pendingWaveIds += outItem.mediaId
-        if (!inReady) pendingWaveIds += inItem.mediaId
+        pendingOutWave = !outReady
+        pendingInWave = !inReady
         republishWaves()
         mixViewJob = scope.launch {
             suspend fun wave(item: MediaItem, durationMs: Long, from: Double, to: Double): DeckWave? =
@@ -2424,7 +2426,7 @@ class CrossfadeController(
                         .getOrNull()
                     TrackLog.d(
                         TAG,
-                        "mix waveform ${item.mediaId} " +
+                        "mix waveform ${TrackLog.idForLog(item.mediaId)} " +
                             String.format(Locale.ROOT, "%.1f-%.1fs", from, to) +
                             ": ${if (bands == null) "none" else "ok"} in ${SystemClock.elapsedRealtime() - began}ms",
                     )
@@ -2433,13 +2435,13 @@ class CrossfadeController(
             if (!outReady) {
                 outgoingWave = wave(outItem, outDurationMs, outFrom, outTo)
                 if (outgoingWave == null) failedWaveAt[outItem.mediaId] = SystemClock.elapsedRealtime()
-                pendingWaveIds -= outItem.mediaId
+                pendingOutWave = false
                 republishWaves()
             }
             if (!inReady) {
                 incomingWave = wave(inItem, inDurationMs, inFrom, inTo)
                 if (incomingWave == null) failedWaveAt[inItem.mediaId] = SystemClock.elapsedRealtime()
-                pendingWaveIds -= inItem.mediaId
+                pendingInWave = false
                 republishWaves()
             }
         }
@@ -2453,17 +2455,17 @@ class CrossfadeController(
 
     /** [view] with the decoded waveforms of [ids] in, and each deck marked while its own is still coming. */
     private fun withWaves(view: MixTransitionView, ids: Pair<String, String>?): MixTransitionView {
-        fun MixDeck.with(wave: DeckWave?, id: String?): MixDeck {
+        fun MixDeck.with(wave: DeckWave?, id: String?, pending: Boolean): MixDeck {
             val decoded = if (wave != null && wave.mediaId == id) {
                 withWave(wave.bands.low, wave.bands.mid, wave.bands.high, wave.from, wave.to)
             } else {
                 this
             }
-            return decoded.withDecoding(id != null && id in pendingWaveIds)
+            return decoded.withDecoding(id != null && pending)
         }
         return view.withDecks(
-            view.outgoing.with(outgoingWave, ids?.first),
-            view.incoming.with(incomingWave, ids?.second),
+            view.outgoing.with(outgoingWave, ids?.first, pendingOutWave),
+            view.incoming.with(incomingWave, ids?.second, pendingInWave),
         )
     }
 
@@ -2676,7 +2678,8 @@ class CrossfadeController(
         mixViewIds = null
         outgoingWave = null
         incomingWave = null
-        pendingWaveIds.clear()
+        pendingOutWave = false
+        pendingInWave = false
         failedWaveAt.clear()
         AppSettings.smartMixView.value = null
     }
@@ -3114,10 +3117,14 @@ class CrossfadeController(
         inPort.armIncoming(LoopMixPort.InArm((session.handoverTrack * 1_000_000).roundToLong()))
         into.prepare()
         session.attach(outPort, inPort)
-        // A stall is seen the moment the incoming player reports it, not on
-        // the next tick: what alignment measured before it no longer holds.
+        // A stall is seen the moment either player reports it, not on the
+        // next tick: what alignment measured before it no longer holds. The
+        // outgoing one too: the mix's clock is its sink, so a stall there
+        // that recovers without a flush moves the deck against the player.
         into.removeListener(loopStallListener)
         into.addListener(loopStallListener)
+        out.removeListener(loopStallListener)
+        out.addListener(loopStallListener)
         loopSession = session
         loopIncomingStarted = false
         lastLoopPositionMs = -1L
@@ -3485,13 +3492,11 @@ class CrossfadeController(
         val into = incoming
         val wasHandedOff = handedOff
         val m = session?.mixSeconds(System.nanoTime(), playing = false)
-        val tookOverBefore = session?.outPort?.tookOver == true
-        session?.outPort?.disarm()
+        // One decision with the sink's takeover commit: whether the outgoing
+        // song needs the recovery seek is settled by the disarm itself, and no
+        // sink mid-buffer can take over after it.
+        val tookOver = session?.outPort?.disarm() == true
         session?.inPort?.disarm()
-        // Read again after the disarm: a sink mid-buffer can commit the takeover
-        // between the two, and then its song needs the recovery seek too. (Its
-        // next buffer adopts the disarm and clears the flag.)
-        val tookOver = tookOverBefore || session?.outPort?.tookOver == true
         // The settle point, worked out before [finish] forgets the plan.
         val target: Long? = when {
             session == null -> null
