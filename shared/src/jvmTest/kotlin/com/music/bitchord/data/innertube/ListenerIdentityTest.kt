@@ -4,7 +4,11 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
+import kotlinx.coroutines.runBlocking
 
 /** [Innertube.listener]: what an account-bound cache has to match before it is reused. */
 class ListenerIdentityTest {
@@ -82,20 +86,64 @@ class ListenerIdentityTest {
         assertEquals(second, Innertube.listener)
     }
 
+    private val candidateB = Innertube.CandidateSession(
+        cookie = "SID=B", pageId = "brandB", dataSyncId = "brandB||owner", authUser = "1",
+        visitorData = null, clientVersion = null,
+    )
+
     @Test
-    fun `a captured session comes back whole under the same cookie, scope included`() {
-        // A profile with no channel ids and no account index of its own.
+    fun `a candidate's requests sign as the candidate and never touch the shared session`() = runBlocking {
+        Innertube.cookie = "SID=A"
+        val before = Innertube.listenerStamp()
+        val shared = Innertube.requestIdentityForTest()
+        val asCandidate = Innertube.asCandidate(candidateB) { Innertube.requestIdentityForTest() }
+        assertTrue(asCandidate.startsWith("SID=B|1|brandB|brandB||owner|"), asCandidate)
+        // Nothing of B reached the shared session: same listener, same generation, same credentials.
+        assertEquals(before, Innertube.listenerStamp())
+        assertEquals(shared, Innertube.requestIdentityForTest())
+    }
+
+    @Test
+    fun `an accepted candidate is installed whole, in one step`() = runBlocking {
+        Innertube.cookie = "SID=A"
+        val before = Innertube.listenerStamp()
+        assertTrue(Innertube.installSession(candidateB))
+        assertNotEquals(before, Innertube.listenerStamp())
+        assertTrue(Innertube.requestIdentityForTest().startsWith("SID=B|1|brandB|brandB||owner|"))
+    }
+
+    @Test
+    fun `a superseded acceptance installs nothing`() {
+        Innertube.cookie = "SID=A"
+        val before = Innertube.listenerStamp()
+        // A sign-out or profile switch landed while B was being validated.
+        assertFalse(Innertube.installSession(candidateB) { true })
+        assertEquals(before, Innertube.listenerStamp())
+    }
+
+    @Test
+    fun `a request bound to A is refused after a switch to B and back to A`() {
+        Innertube.cookie = "SID=A"
+        val stampA = Innertube.listenerStamp()
+        Innertube.cookie = "SID=B"
+        Innertube.cookie = "SID=A"
+        // Same listener as before, but not the same session: the request is not sent.
+        assertEquals(stampA.listener, Innertube.listener)
+        assertFailsWith<Innertube.ListenerChangedException> {
+            runBlocking { Innertube.asListener(stampA) { Innertube.requestIdentityForTest() } }
+        }
+        // Bound to the current session, it goes out.
+        runBlocking { Innertube.asListener(Innertube.listenerStamp()) { Innertube.requestIdentityForTest() } }
+    }
+
+    @Test
+    fun `a rejection from an earlier session does not clear the current one's adopted scope`() = runBlocking {
         Innertube.cookie = "SID=one"
-        Innertube.adoptSessionScope(null, null, null, null, null, loggedIn = true)
-        val before = Innertube.listener
-        val saved = Innertube.captureSession()
-        // A channel switch under the same cookie: the candidate's scope and channel go in.
+        val earlier = Innertube.listenerStamp()
+        // The listener adopts a profile under the same cookie after the request went out.
         Innertube.adoptSessionScope("brand", "brand||owner", "1", null, null, loggedIn = true)
-        Innertube.selectChannel("brand", "brand||owner", "1")
-        assertNotEquals(before, Innertube.listener)
-        // Not accepted: everything goes back, so requests sign as before.
-        saved.restore()
-        assertEquals(before, Innertube.listener)
+        val adopted = Innertube.listenerStamp()
+        assertFalse(Innertube.refreshSessionScope(earlier))
+        assertEquals(adopted, Innertube.listenerStamp())
     }
 }
-

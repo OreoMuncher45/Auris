@@ -77,4 +77,26 @@ class PlaylistEntriesTest {
         val entries = collectPlaylistEntries(appended(row("aaaaaaaaaaa", "SET1"), token("P2")), maxPages = 10) { lastPage }
         assertEquals(listOf("SET1"), entries.map { it.setVideoId })
     }
+
+    private fun suggestionsShelf() =
+        """{ "musicShelfRenderer": { "title": { "runs": [ { "text": "Suggestions" } ] }, "contents": [ ${row("sssssssssss", "SUGG")} ] } }"""
+
+    @Test
+    fun `an owned playlist's chain ending on a Suggestions-only continuation reads whole`() = runBlocking {
+        val suggestionsOnly = Json.parseToJsonElement(
+            """{ "continuationContents": { "sectionListContinuation": { "contents": [ ${suggestionsShelf()} ] } } }""",
+        )
+        val entries = collectPlaylistEntries(appended(row("aaaaaaaaaaa", "SET1"), token("P2")), maxPages = 10) { suggestionsOnly }
+        assertEquals(listOf("SET1"), entries.map { it.setVideoId })
+    }
+
+    @Test
+    fun `an appended later page holding only a Suggestions shelf fails the read`() {
+        val onlyShelf = appended(suggestionsShelf())
+        assertFailsWith<IllegalStateException> {
+            runBlocking {
+                collectPlaylistEntries(appended(row("aaaaaaaaaaa", "SET1"), token("P2")), maxPages = 10) { onlyShelf }
+            }
+        }
+    }
 }
