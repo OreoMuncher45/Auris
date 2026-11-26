@@ -1233,9 +1233,13 @@ object YtMusicRepository {
 
     private suspend fun <T> call(label: String, block: suspend () -> T): Result<T> =
         withContext(Dispatchers.IO) {
-            // Who the request was made as: the refresh and the retry belong to it.
-            val owner = Innertube.listenerStamp()
-            runCatching { block() }.recoverCatching { failure ->
+            // The session the request was actually signed under — recorded where
+            // its credentials were taken, after any scope setup that moved the
+            // generation — owns the refresh and the retry.
+            val before = Innertube.listenerStamp()
+            var signed: Innertube.SignedStamp? = null
+            runCatching { Innertube.recordingSignedStamp { signed = it; block() } }.recoverCatching { failure ->
+                val owner = signed?.stamp ?: before
                 // Context cookies can rotate while a process is alive. Refresh
                 // once and retry; never loop or silently sign the listener out.
                 val rejected = failure.message?.contains("401") == true ||
