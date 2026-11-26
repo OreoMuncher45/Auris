@@ -45,6 +45,11 @@ object AndroidStreamHooks {
         }
         StreamResolver.maxKbps = { AppSettings.effectiveAudioQuality.maxKbps }
         StreamResolver.premiumAudio = { AppSettings.youtubePremiumAudio.value }
+        // Premium's higher Opus rung is another encoding of the recording, so
+        // its audio and its analysis live under keys of their own.
+        com.music.bitchord.playback.smart.AutomixAnalysisSource.rendition = {
+            if (AppSettings.youtubePremiumAudio.value) YOUTUBE_PREMIUM_RENDITION else null
+        }
         InnerTubeXResolver.debugLogging = BuildConfig.DEBUG
     }
 
@@ -70,3 +75,6 @@ object AndroidStreamHooks {
         )
     }
 }
+
+/** The rendition tag Premium audio is filed under; see [com.music.bitchord.playback.smart.AutomixAnalysisSource.rendition]. */
+const val YOUTUBE_PREMIUM_RENDITION = "premium"
