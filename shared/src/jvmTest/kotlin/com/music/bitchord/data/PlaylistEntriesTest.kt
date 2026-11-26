@@ -99,4 +99,19 @@ class PlaylistEntriesTest {
             }
         }
     }
+
+    @Test
+    fun `a continuation with an episode beside its Suggestions shelf fails the read`() {
+        val episodeAndSuggestions = Json.parseToJsonElement(
+            """{ "continuationContents": { "sectionListContinuation": { "contents": [
+                { "musicMultiRowListItemRenderer": { "title": { "runs": [ { "text": "Episode" } ] } } },
+                ${suggestionsShelf()}
+            ] } } }""",
+        )
+        assertFailsWith<IllegalStateException> {
+            runBlocking {
+                collectPlaylistEntries(appended(row("aaaaaaaaaaa", "SET1"), token("P2")), maxPages = 10) { episodeAndSuggestions }
+            }
+        }
+    }
 }
