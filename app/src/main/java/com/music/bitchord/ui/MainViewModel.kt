@@ -2787,7 +2787,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // The mixes are the listener's own. A candidate account under
             // validation signs requests before [listenerKey] moves, so wait it
             // out, and drop an answer the credentials changed under.
-            credentialsInValidation.awaitSettled()
+            // Settled (no validation and the session scope in) right before the
+            // generation is read, with no suspension between the two.
+            settleCredentials()
             val credentials = Innertube.listenerGeneration
             val fresh = YtMusicRepository.mixedForYouKeyed().getOrNull()?.let(::yourMixes)
             if (identity != listenerKey() || credentials != Innertube.listenerGeneration) {
