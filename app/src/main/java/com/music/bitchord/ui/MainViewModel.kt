@@ -626,24 +626,26 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * Spotify catalogue entry and resolved when it plays — see
      * [com.music.bitchord.data.model.asSpotifyQueueRow].
      */
-    private val spotifyPageJobs = java.util.concurrent.ConcurrentHashMap<String, Job>()
+    /** Each Spotify page's load, by the page's opening; see [trackSpotifyLoad]. */
+    private val spotifyPageJobs = java.util.concurrent.ConcurrentHashMap<Long, Job>()
 
     /**
-     * Keeps [job] as [browseId]'s Spotify load, cancelling any earlier one:
-     * its rows and matches are written by browse id, so a load left running
-     * after its page closed would fill a later opening of the same page.
-     * Main thread; the loads write only between suspensions, so a cancelled
-     * one writes nothing more.
+     * Keeps [job] as the Spotify load of the page opened as [opening]. Keyed
+     * by opening, not browse id: the same page opened twice is two pages,
+     * each with its own load, and opening the second must not strand the
+     * first on its spinner. A load ends when its page leaves the stack
+     * ([cancelClosedSpotifyLoads]). Main thread; the loads write only between
+     * suspensions, so a cancelled one writes nothing more.
      */
-    private fun trackSpotifyLoad(browseId: String, job: Job) {
-        spotifyPageJobs.put(browseId, job)?.cancel()
-        job.invokeOnCompletion { spotifyPageJobs.remove(browseId, job) }
+    private fun trackSpotifyLoad(opening: Long, job: Job) {
+        spotifyPageJobs[opening] = job
+        job.invokeOnCompletion { spotifyPageJobs.remove(opening, job) }
     }
 
     /** Cancels the Spotify loads of pages no longer on the stack. */
     private fun cancelClosedSpotifyLoads() {
-        val open = _detailStack.value.mapTo(HashSet()) { it.browseId }
-        spotifyPageJobs.forEach { (browseId, job) -> if (browseId !in open) job.cancel() }
+        val open = _detailStack.value.mapTo(HashSet()) { it.opening }
+        spotifyPageJobs.forEach { (opening, job) -> if (opening !in open) job.cancel() }
     }
 
     private data class SearchCacheEntry(
@@ -988,17 +990,22 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     private val _detailStack = MutableStateFlow<List<DetailPage>>(emptyList())
 
-    /** Which opening of each browse id is the current one; see [markDetailOpened]. Main thread only. */
-    private val detailOpenings = HashMap<String, Long>()
+    /** Numbers each page pushed onto the stack; see [markDetailOpened]. Main thread only. */
     private var detailOpeningCount = 0L
 
-    /** Records that [browseId] was just pushed, returning that opening's number. */
-    private fun markDetailOpened(browseId: String): Long =
-        (++detailOpeningCount).also { detailOpenings[browseId] = it }
+    /**
+     * A new opening number for a page about to be pushed for [browseId]. The
+     * same page opened twice gets two numbers: loads and continuations are
+     * bound to the opening, not the browse id.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    private fun markDetailOpened(browseId: String): Long = ++detailOpeningCount
 
-    /** Whether the page opened as [opening] is still on the stack, not closed or reopened since. */
+    /** Whether the page opened as [opening] is still on the stack. */
     private fun isDetailOpen(browseId: String, opening: Long): Boolean =
-        detailOpenings[browseId] == opening && _detailStack.value.any { it.opening == opening }
+        // Its own opening still on the stack, whatever else is: the same page
+        // opened again on top is another page, and this one keeps loading.
+        _detailStack.value.any { it.browseId == browseId && it.opening == opening }
     val detailStack: StateFlow<List<DetailPage>> = _detailStack.asStateFlow()
 
     private val _releaseLibrary = MutableStateFlow<Map<String, LibraryState>>(emptyMap())
@@ -4571,7 +4578,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
             matchSpotifyTracks(browseId, opened, tracks, ::setSongs)
         }
-        trackSpotifyLoad(browseId, job)
+        trackSpotifyLoad(opened, job)
     }
 
     /**
@@ -4682,7 +4689,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
             matchSpotifyTracks(browseId, opened, page.tracks, ::setSongs)
         }
-        trackSpotifyLoad(browseId, job)
+        trackSpotifyLoad(opened, job)
     }
 
     /**
@@ -5202,7 +5209,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             onComplete(false)
             return
         }
-        viewModelScope.launch {
+        // The acceptance is for the account state as it is now: a sign-out,
+        // profile switch or dismissal before it lands supersedes it.
+        val epoch = accountEpoch
+        webSessionJob = viewModelScope.launch {
             // Validate the exact cookie/profile pair before writing any of it.
             // The old implementation persisted first and unconditionally set
             // signedIn=true; a half-finished channel chooser therefore became
@@ -5216,9 +5226,33 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // and restoring has to put back what was there when this one began.
                 val oldAccountId = _activeAccountId.value
                 val oldProfileId = _activeProfileId.value
-                validateWebSession(session, mode, oldAccountId, oldProfileId, onComplete)
+                validateWebSession(session, mode, oldAccountId, oldProfileId, epoch, onComplete)
             }
         }
+    }
+
+    /**
+     * Bumped by every account transition that is not a validation's own
+     * acceptance — sign-out, profile switch, account removal, the sign-in sheet
+     * dismissed — so a validation that started before one of them can't accept
+     * over it. Main thread.
+     */
+    @Volatile
+    private var accountEpoch = 0L
+
+    /** The running web-session validation, cancelled when the sign-in sheet goes away. */
+    private var webSessionJob: Job? = null
+
+    /**
+     * Abandons a pending sign-in or channel validation: its candidate never
+     * touched the shared session ([Innertube.asCandidate]), so cancelling it
+     * is the whole of the rollback. Called when the sign-in sheet closes, and
+     * by the account transitions that supersede it.
+     */
+    fun cancelWebSession() {
+        accountEpoch++
+        webSessionJob?.cancel()
+        webSessionJob = null
     }
 
     private suspend fun validateWebSession(
@@ -5226,37 +5260,32 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         mode: WebSessionMode,
         oldAccountId: String?,
         oldProfileId: String?,
+        epoch: Long,
         onComplete: (Boolean) -> Unit,
     ) {
-        // Set once the candidate becomes the listener. Every other exit —
-        // cancellation included, the ViewModel cleared mid-request — puts the
-        // previous session back before the validation reports settled.
-        var accepted = false
-        // What requests were signed with before the candidate went in: put
-        // back whole, scope included, if it is not accepted.
-        val previous = Innertube.captureSession()
-        try { run {
-            Innertube.cookie = session.cookie
-            Innertube.adoptSessionScope(
+        run {
+            // The candidate, kept apart from the shared session: the account is
+            // asked about itself with these credentials alone, and nothing of
+            // them is installed until it is accepted below.
+            val candidate = Innertube.CandidateSession(
+                cookie = session.cookie,
                 pageId = session.pageId,
                 dataSyncId = session.dataSyncId,
                 authUser = session.authUser,
                 visitorData = session.visitorData,
                 clientVersion = session.clientVersion,
-                loggedIn = true,
             )
-            Innertube.selectChannel(session.pageId, session.dataSyncId, session.authUser)
-
             val account = withTimeoutOrNull(20_000L) {
-                var result = YtMusicRepository.account()
-                if (result.isFailure) {
-                    delay(750L)
-                    result = YtMusicRepository.account()
+                Innertube.asCandidate(candidate) {
+                    var result = YtMusicRepository.account()
+                    if (result.isFailure) {
+                        delay(750L)
+                        result = YtMusicRepository.account()
+                    }
+                    result.getOrNull()
                 }
-                result.getOrNull()
             }
             if (account == null) {
-                restoreActiveSession(oldAccountId, oldProfileId)
                 onComplete(false)
                 return@run
             }
@@ -5272,7 +5301,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }?.accountId ?: sessionId(session.cookie, null)
             }
             if (accountId == null) {
-                restoreActiveSession(oldAccountId, oldProfileId)
                 onComplete(false)
                 return@run
             }
@@ -5304,10 +5332,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
             val wasSignedIn = _signedIn.value
             if (wasSignedIn) cacheCurrentListener()
+            // Installed whole, in one locked write, or not at all: a sign-out,
+            // profile switch or dismissal since this validation began wins.
+            if (!Innertube.installSession(candidate) { accountEpoch != epoch }) {
+                onComplete(false)
+                return@run
+            }
             authStore.upsertSession(stored)
             authStore.cookie = session.cookie // legacy compatibility only
             _googleAccounts.value = authStore.sessions
-            accepted = true
             _activeAccountId.value = accountId
             _activeProfileId.value = profile.profileId
             _selectedChannelKey.value = profile.profileId
@@ -5323,21 +5356,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             reloadForAccount()
             loadChannels(force = true)
             onComplete(true)
-        } } finally {
-            if (!accepted) previous.restore()
         }
-    }
-
-    /** Put request signing back exactly as it was after a rejected candidate. */
-    private fun restoreActiveSession(accountId: String?, selectedProfileId: String?) {
-        val account = authStore.sessions.firstOrNull { it.accountId == accountId }
-        val profile = account?.profiles?.firstOrNull { it.profileId == selectedProfileId }
-        Innertube.cookie = account?.cookie
-        Innertube.selectChannel(profile?.pageId, profile?.dataSyncId, profile?.authUser)
     }
 
     /** Selects an identity without ever allowing a response to replace it. */
     fun selectProfile(accountId: String, selectedProfileId: String, supplied: YouTubeProfile? = null) {
+        // Supersedes a sign-in still being validated: it must not accept over this.
+        cancelWebSession()
         val source = _googleAccounts.value.firstOrNull { it.accountId == accountId } ?: return
         val profile = supplied ?: source.profiles.firstOrNull { it.profileId == selectedProfileId } ?: return
         if (accountId == _activeAccountId.value && profile.profileId == _activeProfileId.value) return
@@ -5370,6 +5395,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun removeAccount(accountId: String) {
+        // Supersedes a sign-in still being validated: it must not accept over this.
+        cancelWebSession()
         val fallback = authStore.removeAccount(accountId)
         _googleAccounts.value = authStore.sessions
         if (fallback == null) { signOut(); return }
@@ -5485,6 +5512,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun signOut() {
+        // Supersedes a sign-in still being validated: it must not accept over this.
+        cancelWebSession()
         // In a multi-account install, sign out removes only the current Google
         // session and restores another one. A legacy single-account install
         // retains the familiar full sign-out behaviour.
