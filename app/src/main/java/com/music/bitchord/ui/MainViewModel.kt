@@ -1805,7 +1805,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun addReleaseTo(playlist: UserPlaylist, songs: List<Song>): Pair<AddOutcome, Int> {
         // A track the open page already shows is there; anything else is
         // checked against the whole playlist, since the page may not have
-        // loaded all of it yet and can't rule a track out.
+        // loaded all of it yet and can't rule a track out. That read is all
+        // or nothing (see YtMusicRepository.allSongs): a partial list never
+        // says a track is absent. When it can't be read, the tracks are added
+        // anyway: duplicate prevention is best effort, and a failed lookup
+        // must not lose the add the listener asked for.
         val visible = (_detailStack.value.latestOpening(playlist.browseId)?.songs as? UiState.Success)
             ?.data?.mapNotNullTo(HashSet()) { it.videoId }.orEmpty()
         val unseen = songs.mapNotNull { it.videoId }.filter { it !in visible }.distinct()
@@ -1843,7 +1847,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun addOne(playlist: UserPlaylist, song: Song): AddOutcome {
         // Shown on the open page: there. Not shown: the page may be partial,
-        // so only the whole playlist can say it is absent.
+        // so only the whole playlist can say it is absent, and that read is
+        // all or nothing. A lookup that fails adds the track anyway: duplicate
+        // prevention is best effort (see addReleaseTo).
         val visible = (_detailStack.value.latestOpening(playlist.browseId)?.songs as? UiState.Success)?.data
         if (visible?.any { it.videoId == song.videoId } == true) return AddOutcome.ALREADY_THERE
         val known = YtMusicRepository.allSongs(playlist.browseId).getOrNull()
