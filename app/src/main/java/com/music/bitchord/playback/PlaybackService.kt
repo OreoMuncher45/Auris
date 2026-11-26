@@ -10110,7 +10110,10 @@ class PlaybackService : MediaLibraryService() {
                 cast.seekTo(cast.positionMs - seekBackIncrement)
                 return
             }
-            super.seekBack()
+            // From what the listener hears: during a loop mix the decoder sits
+            // at the loop start while the mix plays on, and the player's own
+            // seekBack would measure from there.
+            super.seekTo(SeekOffset.target(currentPosition, -seekBackIncrement, duration))
         }
 
         override fun seekForward() {
@@ -10120,7 +10123,10 @@ class PlaybackService : MediaLibraryService() {
                 cast.seekTo(cast.positionMs + seekForwardIncrement)
                 return
             }
-            super.seekForward()
+            // From what the listener hears: during a loop mix the decoder sits
+            // at the loop start while the mix plays on, and the player's own
+            // seekForward would measure from there.
+            super.seekTo(SeekOffset.target(currentPosition, +seekForwardIncrement, duration))
         }
 
         override fun seekToPrevious() {
