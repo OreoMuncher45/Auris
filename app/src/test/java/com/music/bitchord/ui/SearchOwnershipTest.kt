@@ -116,4 +116,23 @@ class SearchOwnershipTest {
         assertFalse(shouldReissueSearch(ownership.owns(ticket), ownership.isNewest(ticket)))
         assertFalse(shouldReissueSearch(ownership.owns(newer), ownership.isNewest(newer)))
     }
+
+    @Test
+    fun `a load-more that lost ownership releases the flag only while its search is still shown`() {
+        // Ownership lost before the merge: nothing settled, the search is still the one shown.
+        val beforeMerge = ownership.issue(SearchFilter.LIBRARY)
+        generation++
+        assertTrue(loadMoreReleasesFlag(settledWhileOwned = false, stillShown = true, ownsNow = ownership.owns(beforeMerge)))
+        // Ownership lost during the merge: owned at the first check, not after it.
+        val duringMerge = ownership.issue(SearchFilter.LIBRARY)
+        assertTrue(ownership.owns(duringMerge))
+        generation++
+        assertTrue(loadMoreReleasesFlag(settledWhileOwned = false, stillShown = true, ownsNow = ownership.owns(duringMerge)))
+        // A newer search started meanwhile: it manages its own flag.
+        val older = ownership.issue(SearchFilter.LIBRARY)
+        ownership.issue(SearchFilter.LIBRARY)
+        assertFalse(loadMoreReleasesFlag(settledWhileOwned = false, stillShown = false, ownsNow = ownership.owns(older)))
+        // Published (or failed) while still owned: released as always.
+        assertTrue(loadMoreReleasesFlag(settledWhileOwned = true, stillShown = false, ownsNow = true))
+    }
 }

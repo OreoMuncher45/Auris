@@ -4031,6 +4031,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val next = YtMusicRepository.searchContinuation(token, session.filter)
             val stillCurrent = searchSession == session && searchOwnership.owns(session.ticket)
+            var settled = false
             if (stillCurrent) {
                 // Cleared only while this request still owns the search: the
                 // merge below suspends, and a newer search's load-more may be
@@ -4052,12 +4053,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         _results.value = UiState.Success(merged)
                     }
                 }
-                if (owns) _searchLoadingMore.value = false
+                settled = owns
             }
-            // Lost ownership (an account change) while this search is still the
-            // one shown: nothing else will clear the flag, and every later
-            // load-more would return early on it. A newer search manages its own.
-            if (searchSession == session && !searchOwnership.owns(session.ticket)) _searchLoadingMore.value = false
+            // See [loadMoreReleasesFlag]: lost ownership before or during the
+            // merge with this search still shown would otherwise leave every
+            // later load-more returning early.
+            if (loadMoreReleasesFlag(settled, searchSession == session, searchOwnership.owns(session.ticket))) {
+                _searchLoadingMore.value = false
+            }
         }
     }
 

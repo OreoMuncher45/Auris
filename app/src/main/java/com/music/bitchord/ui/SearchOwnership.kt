@@ -70,6 +70,16 @@ internal fun <S> cachedSearchUsable(key: String, answeredFor: S?, now: S): Boole
  */
 internal fun shouldReissueSearch(owns: Boolean, isNewest: Boolean): Boolean = !owns && isNewest
 
+/**
+ * Whether a finished load-more releases the loading-more flag. It does when
+ * it settled while still owning its search (published, or failed), and when
+ * its search is still the one shown but lost ownership, before or during the
+ * merge, since nothing else would clear it. A newer search started meanwhile
+ * keeps its own flag.
+ */
+internal fun loadMoreReleasesFlag(settledWhileOwned: Boolean, stillShown: Boolean, ownsNow: Boolean): Boolean =
+    settledWhileOwned || (stillShown && !ownsNow)
+
 internal fun isAccountPrivateSearchKey(key: String): Boolean {
     val filter = key.substringAfter(':', "").substringBefore(':')
     return SearchFilter.entries.any { it.requiresAuth && it.name == filter }
