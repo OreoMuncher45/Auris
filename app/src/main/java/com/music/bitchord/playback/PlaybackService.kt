@@ -7788,6 +7788,9 @@ class PlaybackService : MediaLibraryService() {
             playbackSourceType = videoSong.playbackSourceType,
             playbackSourceId = videoSong.playbackSourceId,
             setVideoId = videoSong.setVideoId,
+            // Still a music-video row underneath, as the manual swap keeps it:
+            // what keeps video-origin rows out of a loop mix (see VideoRowAutomix).
+            isVideoOrigin = true,
         ).toMediaItem()
         player.replaceMediaItem(index, replacement)
         TrackLog.d(
@@ -8851,7 +8854,7 @@ class PlaybackService : MediaLibraryService() {
     private fun observeSettings() {
         scope.launch {
             AppSettings.smartFadeEnabled.collect { enabled ->
-                if (!enabled) crossfade?.cancelAutoMixVisual()
+                if (!enabled) crossfade?.onAutomixDisabled()
             }
         }
         scope.launch {

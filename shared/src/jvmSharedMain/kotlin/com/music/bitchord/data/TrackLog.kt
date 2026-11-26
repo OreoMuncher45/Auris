@@ -79,6 +79,16 @@ object TrackLog {
     // reads it (see the class doc), so a release build skips straight to
     // record(), which is what Copy Log actually depends on.
 
+    /**
+     * [id] as a log line may carry it: a YouTube video id as it is, anything
+     * else (a local file's content URI, a source's URL) as a short stable
+     * stand-in, so a copied log never names another track's file or address.
+     */
+    fun idForLog(id: String): String =
+        if (YOUTUBE_ID.matches(id)) id else "local#" + (id.hashCode().toUInt().toString(16))
+
+    private val YOUTUBE_ID = Regex("[A-Za-z0-9_-]{11}")
+
     fun d(tag: String, message: String, about: String? = working.get()) {
         echo?.invoke('D', tag, message, null)
         record('D', message, about)
