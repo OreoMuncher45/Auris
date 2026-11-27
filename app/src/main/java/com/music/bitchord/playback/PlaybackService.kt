@@ -87,6 +87,8 @@ import androidx.media3.session.SessionResult
 import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
+import com.google.common.util.concurrent.SettableFuture
+import com.google.common.util.concurrent.MoreExecutors
 import kotlinx.coroutines.guava.future
 import com.music.bitchord.playback.audio.ContainerBitrate
 import com.music.bitchord.playback.audio.BitPerfectMixer
@@ -10975,29 +10977,49 @@ class PlaybackService : MediaLibraryService() {
         ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> {
             // The session these rows are read for: a write that lands after a switch is dropped.
             val owner = listenerStamp()
-            return searchResultFor(owner, query, page, pageSize, params)
-                // A switch after the check below but before Media3 delivers the
-                // rows: Auto is told the result changed, and asks again.
-                .recheckedFor(owner, { listenerStamp() }) { session.notifySearchResultChanged(browser, query, 0, params) }
+            val none = LibraryResult.ofItemList(ImmutableList.of<MediaItem>(), params)
+            val delivered = SettableFuture.create<LibraryResult<ImmutableList<MediaItem>>>()
+            val search = scope.launch(Dispatchers.IO) {
+                val rows = try {
+                    searchResultFor(owner, query, page, pageSize, params)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    none
+                }
+                // Media3 attached its delivery to [delivered] in the
+                // application-thread task that called this one, with a direct
+                // executor, for Media3 and MediaBrowserCompat browsers alike.
+                // Completed in a later task on that thread, inside the session
+                // lock, the rows go to the browser before any switch or not at
+                // all: a switch first answers none.
+                withContext(Dispatchers.Main) {
+                    delivered.completeWhile(
+                        { complete -> com.music.bitchord.data.innertube.Innertube.whileListener(innertubeStamp(owner), complete) },
+                        rows,
+                        none,
+                    )
+                }
+            }
+            delivered.addListener({ if (delivered.isCancelled) search.cancel() }, MoreExecutors.directExecutor())
+            return delivered
         }
 
         /** [query]'s results for [owner], or none once another session is current. */
-        private fun searchResultFor(
+        private suspend fun searchResultFor(
             owner: ListenerStamp,
             query: String,
             page: Int,
             pageSize: Int,
             params: LibraryParams?,
-        ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> = scope.future(Dispatchers.IO) {
+        ): LibraryResult<ImmutableList<MediaItem>> {
             val (songs, browses) = searchCache[query]
                 ?: searchAll(query, owner).also { storeSearchResults(owner, query, it.first, it.second) }
             // Read for a session that has since ended: not delivered.
-            if (owner != listenerStamp()) {
-                return@future LibraryResult.ofItemList(ImmutableList.of(), params)
-            }
+            if (owner != listenerStamp()) return LibraryResult.ofItemList(ImmutableList.of(), params)
             cacheSongs(owner, songs)
             val items = songs.map { it.toMediaItem() } + browses.map(::browseItemToGridItem)
-            LibraryResult.ofItemList(ImmutableList.copyOf(paginate(items, page, pageSize)), params)
+            return LibraryResult.ofItemList(ImmutableList.copyOf(paginate(items, page, pageSize)), params)
         }
 
         override fun onSetMediaItems(

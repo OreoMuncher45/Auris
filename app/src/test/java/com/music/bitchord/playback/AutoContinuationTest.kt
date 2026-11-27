@@ -199,50 +199,72 @@ class AutoContinuationTest {
         assertEquals(listOf("handed-over"), rows.finish(0, ListenerStamp("B", 5)).first)
     }
 
-    // ---- An answer checked again once it is delivered ----
+    // ---- An answer handed over only while its session is current ----
 
-    @Test
-    fun `a switch after the answer was checked but before it is delivered makes the recipient ask again`() {
-        var session = a
-        var stale = 0
-        val answer = com.google.common.util.concurrent.SettableFuture.create<String>()
-        val delivered = answer.recheckedFor(a, { session }) { stale++ }
-        // The answer was checked under A; the switch lands before Media3 delivers it.
-        session = ListenerStamp("B", 5)
-        answer.set("a-rows")
-        assertEquals("a-rows", delivered.get())
-        assertEquals(1, stale)
+    /** A recipient's direct listener, the way Media3 attaches its delivery: what it was handed, if anything. */
+    private fun <V> com.google.common.util.concurrent.SettableFuture<V>.recipient(onDelivery: () -> Unit = {}): () -> V? {
+        var got: V? = null
+        addListener({ got = get(); onDelivery() }, com.google.common.util.concurrent.MoreExecutors.directExecutor())
+        return { got }
     }
 
     @Test
-    fun `a switch during the delivery is followed by asking again`() {
-        var session = a
-        var stale = 0
+    fun `rows read for the current session are handed over`() {
         val answer = com.google.common.util.concurrent.SettableFuture.create<String>()
-        val delivered = answer.recheckedFor(a, { session }) { stale++ }
-        // The recipient's own listener runs first; the switch lands while it delivers.
-        delivered.addListener({ session = ListenerStamp("A", 6) }, com.google.common.util.concurrent.MoreExecutors.directExecutor())
-        answer.set("a-rows")
-        assertEquals(1, stale)
+        val got = answer.recipient()
+        answer.completeWhile({ complete -> complete() }, rows = "a-rows", none = "none")
+        assertEquals("a-rows", got())
     }
 
     @Test
-    fun `an answer delivered with no switch is not asked again`() {
-        var stale = 0
-        val answer = com.google.common.util.concurrent.SettableFuture.create<String>()
-        val delivered = answer.recheckedFor(a, { a }) { stale++ }
-        answer.set("a-rows")
-        assertEquals("a-rows", delivered.get())
-        assertEquals(0, stale)
+    fun `rows read for A after a switch to B are never handed over`() {
+        com.music.bitchord.data.innertube.Innertube.cookie = "SID=A"
+        val a = com.music.bitchord.data.innertube.Innertube.listenerStamp()
+        com.music.bitchord.data.innertube.Innertube.cookie = "SID=B"
+        try {
+            val answer = com.google.common.util.concurrent.SettableFuture.create<String>()
+            val got = answer.recipient()
+            answer.completeWhile(
+                { complete -> com.music.bitchord.data.innertube.Innertube.whileListener(a, complete) },
+                rows = "a-rows",
+                none = "none",
+            )
+            assertEquals("none", got())
+        } finally {
+            com.music.bitchord.data.innertube.Innertube.cookie = null
+        }
     }
 
     @Test
-    fun `cancelling the delivered answer cancels the search and asks nothing again`() {
-        var stale = 0
+    fun `a switch during the delivery waits until the rows are handed over`() {
+        val innertube = com.music.bitchord.data.innertube.Innertube
+        innertube.cookie = "SID=A"
+        val a = innertube.listenerStamp()
+        try {
+            val answer = com.google.common.util.concurrent.SettableFuture.create<String>()
+            var switchWaited = false
+            lateinit var switcher: Thread
+            val got = answer.recipient {
+                // The switch is asked for while the recipient is being handed the rows.
+                switcher = Thread { innertube.cookie = "SID=B" }.also { it.start() }
+                switcher.join(300)
+                switchWaited = switcher.isAlive && innertube.listenerStamp() == a
+            }
+            answer.completeWhile({ complete -> innertube.whileListener(a, complete) }, rows = "a-rows", none = "none")
+            switcher.join(5_000)
+            assertEquals("a-rows", got())
+            assertTrue("the switch landed while A's rows were being handed over", switchWaited)
+            assertFalse(switcher.isAlive)
+            assertFalse(innertube.listenerStamp() == a)
+        } finally {
+            innertube.cookie = null
+        }
+    }
+
+    @Test
+    fun `a recipient attached after the step gets what the step decided`() {
         val answer = com.google.common.util.concurrent.SettableFuture.create<String>()
-        val delivered = answer.recheckedFor(a, { ListenerStamp("B", 5) }) { stale++ }
-        delivered.cancel(false)
-        assertTrue(answer.isCancelled)
-        assertEquals(0, stale)
+        answer.completeWhile({ null }, rows = "a-rows", none = "none")
+        assertEquals("none", answer.recipient()())
     }
 }
