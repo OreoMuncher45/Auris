@@ -58,4 +58,20 @@ class AnalysisStoreEntryTest {
             assertNull(entry.measuredOn)
         }
     }
+
+    @Test
+    fun aLevelWindowKeepsItsPrecisionAcrossAReload() {
+        withStore { store, _ ->
+            val levels = floatArrayOf(0.334f, 0.3341f, 0.01005f, 0.5f)
+            store.save(
+                "t",
+                analysis().copy(levelWindows = listOf(CurveWindow(10.0, 20.0, levels))),
+            )
+            val restored = assertNotNull(store.load("t")).levelWindows.single().values
+            // Within a ten-thousandth: two bars that differ in memory still
+            // differ after a reload, so loop screening decides the same way.
+            for (i in levels.indices) assertEquals(levels[i], restored[i], 1e-4f)
+            kotlin.test.assertTrue(restored[1] > restored[0])
+        }
+    }
 }
