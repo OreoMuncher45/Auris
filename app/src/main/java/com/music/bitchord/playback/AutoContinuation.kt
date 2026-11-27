@@ -118,3 +118,88 @@ internal fun staleAutoInstall(pending: PendingAutoInstall?, size: Int, entryAt: 
     if (pending == null || size != pending.size || entryAt(pending.startIndex) != pending.startEntryId) return null
     return now != pending.owner
 }
+
+/**
+ * The queue resolved from the items an Auto controller handed over, built
+ * row by row, noting which rows were read for the account session [owner]:
+ * search results, playlists, browse folders and the account's own folders.
+ *
+ * Any later item can suspend on the network, and the account can change
+ * meanwhile, even away and back. [finish] therefore checks once everything is
+ * resolved: if [owner] is no longer the session, every row read for it goes,
+ * and the rows that belong to no account (downloads, music on the device,
+ * items the controller handed over complete) stay.
+ */
+internal class SessionRows<T>(private val owner: ListenerStamp) {
+    private val rows = ArrayList<T>()
+    private val bound = HashSet<Int>()
+    private val boundRequests = HashSet<Int>()
+
+    /** How many rows so far: the index the next one gets. */
+    val size: Int get() = rows.size
+
+    /** A row that belongs to no account. */
+    fun add(row: T) {
+        rows += row
+    }
+
+    /** Rows that belong to no account. */
+    fun addAll(rows: Collection<T>) {
+        this.rows.addAll(rows)
+    }
+
+    /**
+     * Rows read for [owner]'s account from the handed-over item at [request].
+     * The request is noted even when it read nothing, so a stale one is not
+     * handed back as it came either (see [staleRequests]).
+     */
+    fun addForSession(request: Int, rows: Collection<T>) {
+        boundRequests += request
+        rows.forEach {
+            bound += this.rows.size
+            this.rows += it
+        }
+    }
+
+    /**
+     * The rows, and where [start] (an index into them) lands, for the session
+     * [now]: all of them while it is still [owner], else without those read
+     * for [owner] (see [withoutRevoked]).
+     */
+    fun finish(start: Int, now: ListenerStamp): Pair<List<T>, Int> =
+        if (now == owner) rows to start else withoutRevoked(rows, bound, start)
+
+    /** The handed-over items read for [owner], when [now] is another session; empty while it is not. */
+    fun staleRequests(now: ListenerStamp): Set<Int> = if (now == owner) emptySet() else boundRequests
+}
+
+/**
+ * [this] future as the recipient sees it, checked again once its answer has
+ * been handed over: when the session it was answered for, [owner], is no
+ * longer [now] by then, [onStale] runs, so the recipient asks again and gets
+ * the current session's answer.
+ *
+ * An answer is checked before it is returned, but delivered after: a switch
+ * can land in between. The returned future completes first, which runs the
+ * recipient's own listeners (Media3's delivery), and only then is the session
+ * checked, so a switch before or during the delivery is always followed by
+ * [onStale]. Cancelling the returned future cancels [this].
+ */
+internal fun <V> com.google.common.util.concurrent.ListenableFuture<V>.recheckedFor(
+    owner: ListenerStamp,
+    now: () -> ListenerStamp,
+    onStale: () -> Unit,
+): com.google.common.util.concurrent.ListenableFuture<V> {
+    val direct = com.google.common.util.concurrent.MoreExecutors.directExecutor()
+    val delivered = com.google.common.util.concurrent.SettableFuture.create<V>()
+    addListener(
+        {
+            // Already done: this completes [delivered] and runs its listeners
+            // now. False when the recipient cancelled it: nothing was delivered.
+            if (delivered.setFuture(this) && now() != owner) onStale()
+        },
+        direct,
+    )
+    delivered.addListener({ if (delivered.isCancelled) cancel(false) }, direct)
+    return delivered
+}
