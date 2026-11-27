@@ -73,4 +73,22 @@ class LoopMixPortPositionTest {
         assertEquals(0L, a.pendingShift.get())
         assertEquals(240L, b.pendingShift.get())
     }
+
+    @Test
+    fun noReadingIsProjectedThroughInsertedSilence() {
+        val port = LoopMixPort()
+        // Track time 5 s, read while the delegate plays a 40 ms silence.
+        port.publishPosition(5_000_000L, 1_000_000_000L, port.generation, steadyUs = 0L)
+        assertNull("10 ms later the track hasn't moved", port.presentedSeconds(1_010_000_000L, playing = true))
+        assertEquals(5.0, port.presentedSeconds(1_000_000_000L, playing = true)!!, 1e-9)
+    }
+
+    @Test
+    fun aReadingIsProjectedOnlyUpToTheNextShift() {
+        val port = LoopMixPort()
+        // A shift's boundary 20 ms after the reading.
+        port.publishPosition(5_000_000L, 1_000_000_000L, port.generation, steadyUs = 20_000L)
+        assertEquals(5.010, port.presentedSeconds(1_010_000_000L, playing = true)!!, 1e-9)
+        assertNull(port.presentedSeconds(1_030_000_000L, playing = true))
+    }
 }

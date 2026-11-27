@@ -236,9 +236,17 @@ object SourceResolver {
             }
         }
 
+        // A capped request (the analyser's light read) allows only an answer at
+        // or under its ceiling, and some sources answer above it regardless
+        // (JioSaavn's 320 kbps AAC). Such an answer is held back while the
+        // others are asked, and served only if none of them does better: a
+        // recording is still measured, at worst at the cost the cap meant to
+        // avoid.
+        var overCeiling: SourceStream? = null
         if (pinned != null) {
             attempt(pinned) { pinned.stream(trackId, request) }
-                ?.let { return it.copy(sourceConfigId = pinned.configId) }
+                ?.copy(sourceConfigId = pinned.configId)
+                ?.let { answer -> if (withinCeiling(answer, request)) return answer else overCeiling = answer }
         }
 
         // Last resort. A track whose own source is down is still a track the
@@ -259,9 +267,22 @@ object SourceResolver {
                 // runtime is what says so, and a row that states none cannot
                 // be checked.
                 strictLength = target.durationSec != null,
-            ) ?: return null
+            )?.takeIf { (_, stream) -> overCeiling == null || withinCeiling(stream, request) }
+                ?: return overCeiling
         TrackLog.d(TAG, "fallback: '${target.title}' served by ${fallbackSource.displayName}")
         return stream
+    }
+
+    /**
+     * Whether [stream] honours [request]'s ceiling: a [StreamRequest.Capped]
+     * answer is lossy and, where its rate is known, at or under `maxKbps`.
+     * Every other request has no ceiling to break.
+     */
+    internal fun withinCeiling(stream: SourceStream, request: StreamRequest): Boolean {
+        if (request !is StreamRequest.Capped) return true
+        if (stream.format.isLossless == true || stream.format.isDolbyAtmos) return false
+        val kbps = stream.format.kbps ?: return true
+        return kbps <= request.maxKbps
     }
 
     /**

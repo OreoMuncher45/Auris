@@ -304,7 +304,7 @@ class AnalysisStore(
                 headBeats = analysis.headBeats?.let(StoredBeats::of),
                 tailBeats = analysis.tailBeats?.let(StoredBeats::of),
                 vocalWindows = analysis.vocalWindows.map { StoredCurve.of(it, keepingSidesOf = VOCAL_ACTIVE_THRESHOLD) },
-                levelWindows = analysis.levelWindows.map(StoredCurve::of),
+                levelWindows = analysis.levelWindows.map { StoredCurve.of(it, scale = LEVEL_SCALE) },
             )
         }
     }
@@ -347,12 +347,24 @@ class AnalysisStore(
      * plain rounding made both 0.25.
      */
     @Serializable
-    private data class StoredCurve(val startTime: Double, val frameRate: Double, val values: List<Int>) {
-        fun toWindow() = CurveWindow(startTime, frameRate, FloatArray(values.size) { values[it] / 100f })
+    private data class StoredCurve(
+        val startTime: Double,
+        val frameRate: Double,
+        val values: List<Int>,
+        /**
+         * Steps per unit each value is stored in. Hundredths for the vocal
+         * curve, whose threshold side is kept anyway; finer for the level curve,
+         * whose loop screening compares bars against each other, and hundredths
+         * (about ±0.3 dB a bar) let a borderline loop pass before a reload and
+         * fail after it. Absent from older entries, which were hundredths.
+         */
+        val scale: Int = 100,
+    ) {
+        fun toWindow() = CurveWindow(startTime, frameRate, FloatArray(values.size) { values[it] / scale.toFloat() })
 
         companion object {
-            fun of(window: CurveWindow, keepingSidesOf: Double? = null): StoredCurve {
-                val threshold = keepingSidesOf?.let { (it * 100).roundToInt() }
+            fun of(window: CurveWindow, keepingSidesOf: Double? = null, scale: Int = 100): StoredCurve {
+                val threshold = keepingSidesOf?.let { (it * scale).roundToInt() }
                 return StoredCurve(
                     round(window.startTime),
                     window.frameRate,
@@ -361,7 +373,7 @@ class AnalysisStore(
                         // whole entry; stored as clear, which is what an unmeasured
                         // point means to the mask.
                         if (value.isNaN()) return@map 0
-                        val stored = (value.coerceIn(0f, 1f) * 100).roundToInt()
+                        val stored = (value.coerceIn(0f, 1f) * scale).roundToInt()
                         when {
                             keepingSidesOf == null || threshold == null -> stored
                             value >= keepingSidesOf && stored < threshold -> threshold
@@ -369,6 +381,7 @@ class AnalysisStore(
                             else -> stored
                         }
                     },
+                    scale,
                 )
             }
         }
@@ -385,6 +398,9 @@ class AnalysisStore(
 
     private companion object {
         const val DIRECTORY = "smart_analysis"
+
+        /** Ten-thousandths: see [StoredCurve.scale]. */
+        const val LEVEL_SCALE = 10_000
 
         /**
          * Bump whenever a stored number starts being computed differently.

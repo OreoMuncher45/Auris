@@ -100,6 +100,18 @@ internal class ShiftTimeline(private val capacity: Int = 32) {
         return delegatePositionUs - heardUs
     }
 
+    /**
+     * How long from [delegatePositionUs] the delegate's timeline and the
+     * track's still advance together, µs: up to the next shift's boundary, 0
+     * inside inserted silence, [Long.MAX_VALUE] with no shift ahead. A
+     * position extrapolated further than this crosses a shift.
+     */
+    fun steadyUs(delegatePositionUs: Long): Long {
+        if (count == 0) return Long.MAX_VALUE
+        val start = starts[head]
+        return if (delegatePositionUs >= start) 0L else start - delegatePositionUs
+    }
+
     private companion object {
         /** The most it ever is: under one frame at 48 kHz (20.8 µs), well over the µs rounding of a boundary. */
         const val MERGE_TOLERANCE_US = 10L

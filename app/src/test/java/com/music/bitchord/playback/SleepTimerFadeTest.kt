@@ -326,4 +326,42 @@ class SleepTimerFadeTest {
         SleepTimer.pauseAtDeadline(castActive = { true }, confirmCastPause = { true }, pauseLocal = { local++ })
         assertEquals(0, local)
     }
+
+    @Test
+    fun aPlayerAdoptedMidFadeKeepsTheFadesGain() {
+        // A version swap landing while the timer fades: the new player goes in
+        // at the faded level, not at full volume until the next step.
+        assertEquals(0.2f, SleepTimer.handoffGain(0.2f), 0f)
+        // No step has run yet: nothing has been turned down.
+        assertEquals(1f, SleepTimer.handoffGain(null), 0f)
+    }
+
+    @Test
+    fun anUpgradeCannotStartBlendingUnderTheSleepFade() {
+        try {
+            SleepTimer.fadingOut = true
+            assertFalse("deferred, not blended in under the fade", SleepTimer.claimUpgradeBlend())
+            assertFalse("so the fade has no blend to wait for", SleepTimer.upgradeBlending)
+            assertFalse("and a stopped upgrade leaves the faded volume alone", SleepTimer.upgradeMayRestoreVolume)
+        } finally {
+            SleepTimer.fadingOut = false
+            SleepTimer.releaseUpgradeBlend()
+        }
+    }
+
+    @Test
+    fun onlyARunningUpgradeBlendHoldsTheSleepFade() {
+        try {
+            // Preparing and aligning its standby: no claim yet, so a fade
+            // starting now does not wait on it.
+            assertFalse(SleepTimer.upgradeBlending)
+            assertTrue(SleepTimer.claimUpgradeBlend())
+            assertTrue("a blend writing both volumes is waited out", SleepTimer.upgradeBlending)
+            SleepTimer.releaseUpgradeBlend()
+            assertFalse(SleepTimer.upgradeBlending)
+            assertTrue(SleepTimer.upgradeMayRestoreVolume)
+        } finally {
+            SleepTimer.releaseUpgradeBlend()
+        }
+    }
 }
