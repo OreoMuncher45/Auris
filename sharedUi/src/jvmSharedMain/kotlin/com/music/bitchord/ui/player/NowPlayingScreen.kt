@@ -2373,8 +2373,9 @@ fun NowPlayingScreen(
                 lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
         }
     }
-    val trackMotionAllowed: () -> Boolean = remember(trackMotionVisible, autoMixCover) {
-        { trackMotionVisible() && !autoMixCover.holdsCover() }
+    // Only the portrait sleeve draws the reveal: landscape keeps its slide.
+    val trackMotionAllowed: () -> Boolean = remember(trackMotionVisible, autoMixCover, landscape) {
+        { TrackMotionVeto.allows(trackMotionVisible(), landscape, autoMixCover::holdsCover) }
     }
     val trackCoverLoaded: () -> Boolean = remember(art) { { art.loaded } }
     SideEffect {

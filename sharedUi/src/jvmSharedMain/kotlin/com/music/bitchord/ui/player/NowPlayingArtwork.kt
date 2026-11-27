@@ -1,5 +1,9 @@
 package com.music.bitchord.ui.player
 
+import coil3.compose.AsyncImagePainter
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -500,6 +504,13 @@ internal fun BoxScope.PortraitSleeve(
         // underneath, so it goes on loading and [PlayerArtwork.loaded] goes on
         // flipping, but is not drawn under pictures that cover it.
         val mixFrames = autoMixFrames()
+        // A cover decoded under the reveal isn't on screen: it only becomes the
+        // next cover's placeholder once the painter is drawn again.
+        val mixHides = rememberUpdatedState(mixFrames != null)
+        val onArtState: (AsyncImagePainter.State) -> Unit = remember(art) {
+            { state -> art.onState(state, displayed = !mixHides.value) }
+        }
+        SideEffect { if (mixFrames == null) art.noteVisible() }
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -693,7 +704,7 @@ internal fun BoxScope.PortraitSleeve(
                 // Video thumbnails are 16:9; letterboxing them inside
                 // the square sleeve looks like a broken frame.
                 contentScale = ContentScale.Crop,
-                onState = art::onState,
+                onState = onArtState,
                 // TextureView-backed canvas frames can arrive
                 // before Coil has decoded the sleeve. Alpha alone
                 // doesn't hide this layer for that window: a
