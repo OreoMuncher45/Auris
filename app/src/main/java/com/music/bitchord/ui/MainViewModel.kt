@@ -1764,8 +1764,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         onResult: (added: Int, alreadyThere: Int, failed: Int) -> Unit = { _, _, _ -> },
     ) {
         if (!requireSignIn() || playlists.isEmpty()) return
+        // The account the picker's playlists belong to: every read and edit
+        // below goes out as it, or not at all.
+        val startedAs = com.music.bitchord.data.innertube.Innertube.listenerStamp()
         viewModelScope.launch {
-            val outcomes = playlists.map { addOne(it, song) }
+            val outcomes = playlists.map { addOne(it, song, startedAs) }
             onResult(
                 outcomes.count { it == AddOutcome.ADDED },
                 outcomes.count { it == AddOutcome.ALREADY_THERE },
@@ -1796,8 +1799,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             { _, _, _, _ -> },
     ) {
         if (!requireSignIn() || playlists.isEmpty() || songs.isEmpty()) return
+        // As [addToPlaylists]: the add goes out as the account it started under.
+        val startedAs = com.music.bitchord.data.innertube.Innertube.listenerStamp()
         viewModelScope.launch {
-            val outcomes = playlists.map { addReleaseTo(it, songs) }
+            val outcomes = playlists.map { addReleaseTo(it, songs, startedAs) }
             onResult(
                 outcomes.count { it.first == AddOutcome.ADDED },
                 outcomes.sumOf { it.second },
@@ -1809,8 +1814,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * Files a release into one playlist, and says how many tracks went in.
+     *
+     * Every read and edit is bound to [startedAs], the account the playlist
+     * was picked under: after a switch the edit fails with nothing sent,
+     * rather than go out signed as another account.
      */
-    private suspend fun addReleaseTo(playlist: UserPlaylist, songs: List<Song>): Pair<AddOutcome, Int> {
+    private suspend fun addReleaseTo(
+        playlist: UserPlaylist,
+        songs: List<Song>,
+        startedAs: com.music.bitchord.data.innertube.Innertube.ListenerStamp,
+    ): Pair<AddOutcome, Int> {
         // A track the open page already shows is there; anything else is
         // checked against the whole playlist, since the page may not have
         // loaded all of it yet and can't rule a track out. That read is all
@@ -1822,14 +1835,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             ?.data?.mapNotNullTo(HashSet()) { it.videoId }.orEmpty()
         val unseen = songs.mapNotNull { it.videoId }.filter { it !in visible }.distinct()
         val listed = if (unseen.isEmpty()) emptySet() else {
-            YtMusicRepository.allSongs(playlist.browseId).getOrNull()?.mapNotNullTo(HashSet()) { it.videoId }
+            com.music.bitchord.data.innertube.Innertube.asListener(startedAs) { YtMusicRepository.allSongs(playlist.browseId) }
+                .getOrNull()?.mapNotNullTo(HashSet()) { it.videoId }
         }
         val ids = unseen.filter { id -> listed == null || id !in listed }
         if (ids.isEmpty()) return AddOutcome.ALREADY_THERE to 0
         var failed = false
         val addedIds = mutableListOf<String>()
         ids.chunked(ADD_TO_PLAYLIST_BATCH).forEach { batch ->
-            val result = YtMusicRepository.addToPlaylist(playlist.playlistId, batch)
+            val result = com.music.bitchord.data.innertube.Innertube.asListener(startedAs) {
+                YtMusicRepository.addToPlaylist(playlist.playlistId, batch)
+            }
             if (result.isFailure) {
                 failed = true
             } else {
@@ -1853,16 +1869,25 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         return (if (failed) AddOutcome.FAILED else AddOutcome.ADDED) to addedIds.size
     }
 
-    private suspend fun addOne(playlist: UserPlaylist, song: Song): AddOutcome {
+    /** One track into one playlist, bound to [startedAs] as [addReleaseTo] is. */
+    private suspend fun addOne(
+        playlist: UserPlaylist,
+        song: Song,
+        startedAs: com.music.bitchord.data.innertube.Innertube.ListenerStamp,
+    ): AddOutcome {
         // Shown on the open page: there. Not shown: the page may be partial,
         // so only the whole playlist can say it is absent, and that read is
         // all or nothing. A lookup that fails adds the track anyway: duplicate
         // prevention is best effort (see addReleaseTo).
         val visible = (_detailStack.value.latestOpening(playlist.browseId)?.songs as? UiState.Success)?.data
         if (visible?.any { it.videoId == song.videoId } == true) return AddOutcome.ALREADY_THERE
-        val known = YtMusicRepository.allSongs(playlist.browseId).getOrNull()
+        val known = com.music.bitchord.data.innertube.Innertube.asListener(startedAs) {
+            YtMusicRepository.allSongs(playlist.browseId)
+        }.getOrNull()
         if (known?.any { it.videoId == song.videoId } == true) return AddOutcome.ALREADY_THERE
-        return YtMusicRepository.addToPlaylist(playlist.playlistId, listOf(song.videoId)).fold(
+        return com.music.bitchord.data.innertube.Innertube.asListener(startedAs) {
+            YtMusicRepository.addToPlaylist(playlist.playlistId, listOf(song.videoId))
+        }.fold(
             onSuccess = { added ->
                 libraryStale = true
                 // The playlist's page may be open behind the picker — it is
@@ -5935,8 +5960,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 .distinct()
                 .take(FLOW_MOOD_PLAYLISTS)
             for (playlist in playlists) {
-                val entries = YtMusicRepository.browseSongsPaged(playlist).getOrNull().orEmpty()
-                entries.take(FLOW_MOOD_PLAYLIST_SONGS).forEach { song ->
+                // A sample: the head of the list, kept even when a later page fails.
+                val entries = YtMusicRepository.browseSongsHead(playlist, FLOW_MOOD_PLAYLIST_SONGS).getOrNull().orEmpty()
+                entries.forEach { song ->
                     songs.putIfAbsent(song.videoId, song)
                 }
                 if (songs.size >= FLOW_MOOD_POOL_SIZE) break

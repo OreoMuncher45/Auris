@@ -25,12 +25,16 @@ class QueueShuffleTierTest {
     }
     private var savedPrefs: Any? = null
     private var savedEnabled = false
+    private var savedSettingEnabled = false
     private var savedShuffle: List<Any?> = emptyList()
 
     @Before
     fun saveSingletons() {
         savedPrefs = runCatching { prefsField.get(com.music.bitchord.data.settings.AppSettings) }.getOrNull()
         savedEnabled = QueueShuffle.enabled.value
+        // Set on the flow directly in teardown: setShuffleEnabled would write
+        // through whatever prefs store is installed by then.
+        savedSettingEnabled = com.music.bitchord.data.settings.AppSettings.shuffleEnabled.value
         savedShuffle = shuffleFields.drop(1).map { it.get(QueueShuffle) }
     }
 
@@ -40,6 +44,7 @@ class QueueShuffleTierTest {
         @Suppress("UNCHECKED_CAST")
         (shuffleFields[0].get(QueueShuffle) as kotlinx.coroutines.flow.MutableStateFlow<Boolean>).value = savedEnabled
         shuffleFields.drop(1).zip(savedShuffle).forEach { (field, value) -> field.set(QueueShuffle, value) }
+        com.music.bitchord.data.settings.AppSettings.shuffleEnabled.value = savedSettingEnabled
     }
 
     private fun testSong(
