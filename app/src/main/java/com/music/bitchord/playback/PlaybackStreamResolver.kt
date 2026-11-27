@@ -150,6 +150,12 @@ internal class PlaybackStreamResolver(
         // been found — see [QualityUpgrade]. Answered before anything
         // else, and without re-resolving: this exact URL is what the
         // player was told it was getting when it agreed to the swap.
+        // The analyser's light read of a catalogue row goes ahead of the
+        // player's shortcuts: the forced upgrade and the pin both serve the
+        // listener's tier, which is the master the light read exists to avoid.
+        if (videoId.startsWith(SPOTIFY_ROW_PREFIX) && isLightAnalysisRead(dataSpec)) {
+            return resolveSpotifyRow(dataSpec, videoId, about)
+        }
         QualityUpgrade.forcedStream(dataSpec.uri)?.let { upgraded ->
             return serveUpgraded(dataSpec, videoId, upgraded)
         }
@@ -193,10 +199,14 @@ internal class PlaybackStreamResolver(
             ) &&
             (playbackRequest.wantsLossless || playbackRequest.wantsAtmos)
         ) {
+            // One stream for the whole round: see [AnalysisReadPins].
+            val rowId = "$configId|$trackParam"
             val light = try {
-                runBlocking(about) {
-                    withTimeout(RESOLVE_TIMEOUT_MS) {
-                        SourceResolver.resolve(dataSpec.uri, StreamRequest.Capped(AutomixAnalysisSource.ANALYSIS_KBPS))
+                AnalysisReadPins.streamFor(rowId) {
+                    runBlocking(about) {
+                        withTimeout(RESOLVE_TIMEOUT_MS) {
+                            SourceResolver.resolve(dataSpec.uri, StreamRequest.Capped(AutomixAnalysisSource.ANALYSIS_KBPS))
+                        }
                     }
                 }
             } catch (e: TimeoutCancellationException) {
@@ -541,6 +551,22 @@ internal class PlaybackStreamResolver(
     }
 
     /** A row that exists only in Spotify's catalogue, served by whichever source holds it. */
+    /**
+     * Whether [dataSpec] is the analyser's read at a lossless or immersive
+     * playback tier, which is answered with a capped copy instead: see
+     * [AutomixAnalysisSource.analysisRead].
+     */
+    private fun isLightAnalysisRead(dataSpec: DataSpec): Boolean {
+        if (!AutomixAnalysisSource.isAnalysisRead(
+                dataSpec.uri.getQueryParameter(AutomixAnalysisSource.ANALYSIS_READ_PARAMETER),
+            )
+        ) {
+            return false
+        }
+        val request = SourceResolver.requestForNow()
+        return request.wantsLossless || request.wantsAtmos
+    }
+
     private fun resolveSpotifyRow(dataSpec: DataSpec, videoId: String, about: CoroutineContext): DataSpec {
         // The analyser's read of a row the listener plays lossless or
         // immersive is answered with a capped lossy copy instead, and kept
@@ -553,6 +579,15 @@ internal class PlaybackStreamResolver(
             dataSpec.uri.getQueryParameter(AutomixAnalysisSource.ANALYSIS_READ_PARAMETER),
         ) && (playbackRequest.wantsLossless || playbackRequest.wantsAtmos)
         val request = if (lightRead) StreamRequest.Capped(AutomixAnalysisSource.ANALYSIS_KBPS) else playbackRequest
+        // One stream for the whole round: see [AnalysisReadPins].
+        if (lightRead) {
+            AnalysisReadPins.get(videoId)?.let { pinned ->
+                return dataSpec.buildUpon()
+                    .setUri(Uri.parse(pinned.url))
+                    .setHttpRequestHeaders(pinned.headers)
+                    .build()
+            }
+        }
         // The pin: the copy already chosen for this row.
         //
         // Every writer for a catalogue row — the player's own open,
@@ -652,6 +687,7 @@ internal class PlaybackStreamResolver(
             fallbackFailure,
         )
         if (lightRead) {
+            AnalysisReadPins.put(videoId, resolved)
             return dataSpec.buildUpon()
                 .setUri(Uri.parse(resolved.url))
                 .setHttpRequestHeaders(resolved.headers)
