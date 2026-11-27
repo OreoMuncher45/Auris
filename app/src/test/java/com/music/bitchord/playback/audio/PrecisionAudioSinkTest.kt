@@ -273,6 +273,45 @@ class PrecisionAudioSinkTest {
     }
 
     /**
+     * The sleep timer's fade can't turn a bit-perfect player down (its volume
+     * is held at unity), so the sink fades the samples for it, and only then.
+     */
+    @Test
+    fun `the sleep fade turns bit-perfect samples down, and only while it runs`() {
+        val samples = shortArrayOf(0, 1000, -1000, 20000, -20000, 4096, -4096, 2)
+
+        fun output(bitPerfect: Boolean, fade: Float): Pair<ByteBuffer, ShortArray> {
+            val fakeDelegate = FakeAudioSink()
+            val sink = PrecisionAudioSink(
+                delegate = fakeDelegate,
+                dspChain = idleDspChain(),
+                enableFloatOutput = false,
+                bitPerfect = { bitPerfect },
+                sleepFade = { fade },
+            )
+            sink.configure(AudioSink.AudioSinkConfig.Builder(rawFormat(C.ENCODING_PCM_16BIT)).build())
+            val input = ByteBuffer.allocate(samples.size * 2).order(ByteOrder.nativeOrder())
+            samples.forEach(input::putShort)
+            input.flip()
+            sink.handleBuffer(input, 0L, 1)
+            val handed = fakeDelegate.lastHandledBuffer!!
+            val read = handed.duplicate().order(ByteOrder.nativeOrder()).also { it.rewind() }
+            return input to ShortArray(samples.size) { read.getShort() }
+        }
+
+        val (_, halfway) = output(bitPerfect = true, fade = 0.5f)
+        samples.forEachIndexed { i, s ->
+            assertEquals("sample $i at half the fade", s / 2.0, halfway[i].toDouble(), 1.0)
+        }
+        // No fade running: the decoder's own buffer, untouched.
+        val (input, whole) = output(bitPerfect = true, fade = 1f)
+        assertTrue(whole.contentEquals(samples))
+        // Off bit-perfect the player's volume carries the fade: not applied twice.
+        val (_, mixed) = output(bitPerfect = false, fade = 0.5f)
+        assertTrue("the fade was applied on top of the player's volume", mixed.contentEquals(samples))
+    }
+
+    /**
      * Under bit-perfect the decoder's own buffer goes straight to the
      * delegate, even with a chain that isn't idle (an EQ switched on, or a
      * limiter hold left by a loop mix): the chain never runs there, so its
