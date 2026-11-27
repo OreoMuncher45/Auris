@@ -200,37 +200,84 @@ class SflxHost(
 
     /**
      * Redeems a grant that arrived as a deep link, without knowing which
-     * extension it belongs to.
-     *
-     * That is the shape a callback really arrives in: the verification page
-     * redirects to `mornye://session-grant?grant=…&state=…`, the system hands
-     * the URL to this app, and the URL names the challenge — not the package.
-     * The `state` is what identifies the extension, so it is matched against
-     * the challenge this host issued. When there is no state to match on and
-     * exactly one extension is waiting, that one is it, because a grant that
-     * arrives while one challenge is outstanding cannot belong to another.
+     * extension it belongs to. See [redeemGrant].
      */
-    fun completeGrantForState(grant: String, state: String?): Boolean {
-        if (grant.isBlank()) return false
-        val waiting = store.list().mapNotNull { installed ->
-            sessionFor(installed)?.takeIf { it.pendingState() != null }?.let { installed to it }
+    fun completeGrantForState(grant: String, state: String?): Boolean =
+        redeemGrant(null, grant, state, typed = false).isSuccess
+
+    /**
+     * Redeems a verification grant, and says why not when it can't.
+     *
+     * Which extension it is for:
+     *  - [typed] (the listener pasted it into the page opened for [extensionId]):
+     *    that extension, whatever `state` the pasted link carries. The page's
+     *    copy-link text keeps the state of the challenge it was solved for, and
+     *    the app forgets that challenge when its process is killed, when a
+     *    newer challenge replaces it after three minutes, or when an add-on
+     *    is reinstalled or imported. Refusing then left a pasted code that
+     *    could never work. The paste is the listener's own act, in a page the
+     *    app opened for that extension, so it carries the trust the state
+     *    check exists to supply.
+     *  - otherwise, the extension whose outstanding challenge has this `state`.
+     *    With no state and one challenge outstanding, that one. With no
+     *    challenge outstanding at all (the record of it died with the
+     *    process), the only enabled extension with a signed session. A grant
+     *    whose state names a different outstanding challenge is refused.
+     *
+     * Blocking network work; never call it on the main thread.
+     */
+    fun redeemGrant(
+        extensionId: String?,
+        grant: String,
+        state: String?,
+        typed: Boolean,
+    ): Result<Unit> {
+        if (grant.isBlank()) return Result.failure(SflxGrantRefused(SflxGrantRefused.REFUSED))
+        val target = (if (typed) extensionId else null)
+            ?.let { id -> store.find(id)?.let { installed -> sessionFor(installed) } }
+        // A paste is for the extension the page was opened for. If that one has
+        // since been removed (or no longer declares a signed session), or the
+        // page doesn't know it, the grant isn't any other extension's: handing
+        // it to whichever one is left would sign the listener in somewhere else.
+        if (typed && target == null) {
+            return Result.failure(SflxGrantRefused(SflxGrantRefused.NOT_WAITING))
         }
-        val matched = waiting.filter { (_, session) ->
-            state != null && session.pendingState() == state
-        }.ifEmpty {
-            if (state == null && waiting.size == 1) waiting else emptyList()
-        }
-        for ((_, session) in matched) {
-            val ok = runCatching { session.completeGrant(grant, state ?: session.pendingState()) }
-                .getOrDefault(false)
-            if (ok) {
-                Log.d(TAG, "a verification grant arrived by deep link and was redeemed")
-                SflxCatalog.refreshStatuses()
-                return true
+        // Each candidate: the client, the state to check, and whether it was
+        // chosen only because no challenge was outstanding.
+        val candidates: List<Triple<SflxSignedSession, String?, Boolean>> = if (target != null) {
+            listOf(Triple(target, null, false))
+        } else {
+            val signed = store.list().filter(::enabled).mapNotNull(::sessionFor)
+            // pendingState() is read without the session lock, so each is read
+            // once: a second read could see a challenge cleared mid-bootstrap and
+            // carry no state to bind the exchange to.
+            val waiting = signed.mapNotNull { session -> session.pendingState()?.let { session to it } }
+            val byState = waiting.filter { (_, pending) -> state != null && pending == state }
+            when {
+                byState.isNotEmpty() -> byState.map { (session, _) -> Triple(session, state, false) }
+                state == null && waiting.size == 1 ->
+                    waiting.single().let { (session, pending) -> listOf(Triple(session, pending, false)) }
+                waiting.isEmpty() && signed.size == 1 -> listOf(Triple(signed.single(), null, true))
+                else -> emptyList()
             }
         }
-        Log.w(TAG, "a verification grant arrived but matched no outstanding challenge")
-        return false
+        if (candidates.isEmpty()) {
+            Log.w(TAG, "a verification grant arrived but matched no outstanding challenge")
+            return Result.failure(SflxGrantRefused(SflxGrantRefused.NOT_WAITING))
+        }
+        var failure: SflxGrantRefused? = null
+        for ((session, expected, onlyWithoutChallenge) in candidates) {
+            val ok = runCatching { session.completeGrant(grant, expected, onlyWithoutChallenge) }
+                .onFailure { failure = SflxGrantRefused.from(it) }
+                .getOrDefault(false)
+            if (ok) {
+                Log.d(TAG, "a verification grant was redeemed")
+                SflxCatalog.refreshStatuses()
+                return Result.success(Unit)
+            }
+        }
+        SflxCatalog.refreshStatuses()
+        return Result.failure(failure ?: SflxGrantRefused(SflxGrantRefused.REFUSED))
     }
 
     /** A URL the listener must visit to verify [id], when one is pending. */
