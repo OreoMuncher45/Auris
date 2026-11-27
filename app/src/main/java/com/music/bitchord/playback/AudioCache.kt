@@ -48,6 +48,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.Locale
@@ -141,6 +142,14 @@ object AudioCache {
      * ordinary streaming track and a ten-minute one at 160 kbps.
      */
     private const val MAX_ANALYSIS_TRACK_BYTES = 16L * 1024 * 1024
+
+    /**
+     * How much of the end of a recording over [MAX_ANALYSIS_TRACK_BYTES] the
+     * analysis round fetches: the analyser's tail windows (about ninety
+     * seconds) with room for the decoder's seek, at the bitrates an analysis
+     * copy is read at.
+     */
+    private const val ANALYSIS_TAIL_BYTES = 4L * 1024 * 1024
 
     /**
      * What [requestAnalysisHead] pulls when the stream's size is unknown, which
@@ -359,6 +368,7 @@ object AudioCache {
             val previous = lastWipe
             wipe = scope.launch(start = CoroutineStart.LAZY) {
                 try {
+                    wipeWaiting?.invoke()
                     previous?.join()
                     // A round still writing would put its bytes back into the wiped cache.
                     analysing.forEach { it.join() }
@@ -378,6 +388,9 @@ object AudioCache {
         renditionKeys.clear()
         wipe.start()
     }
+
+    /** For tests: called as each [clear]'s wipe starts waiting for the writers it covers. */
+    internal var wipeWaiting: (() -> Unit)? = null
 
     /** The newest [clear] still running, which the next one waits for. Guarded by [analysisAdmission]. */
     private var lastWipe: Job? = null
@@ -1173,7 +1186,9 @@ object AudioCache {
             analysisJobs[mediaId]
         }
         var removed = 0
-        try {
+        // Finished even if the caller is cancelled meanwhile: stopping half way
+        // left the claim held and the bytes on disk.
+        try { withContext(NonCancellable) {
             round?.cancelAndJoin()
             // The same per-track bookkeeping [clear] drops for every track, and
             // for the same reason: it describes bytes that are about to be gone.
@@ -1190,7 +1205,7 @@ object AudioCache {
                     .onSuccess { removed++ }
                     .onFailure { TrackLog.d(TAG, "cache entry $key still in use: ${it.message}", about = mediaId) }
             }
-        } finally {
+        } } finally {
             synchronized(analysisAdmission) {
                 val left = (removing[mediaId] ?: 1) - 1
                 if (left > 0) removing[mediaId] = left else removing.remove(mediaId)
@@ -2513,7 +2528,8 @@ object AudioCache {
      */
     internal fun analysisCopyAddress(uri: String, videoId: String): String =
         if (isCatalogueRow(videoId)) {
-            uri
+            // Marked as the analyser's read: see [AutomixAnalysisSource.analysisRead].
+            AutomixAnalysisSource.analysisRead(uri)
         } else {
             AutomixAnalysisSource.opusUri(videoId)
         }
@@ -2525,7 +2541,10 @@ object AudioCache {
      * whether it can be measured is that source's own switch, read where the
      * row is resolved — not YouTube's.
      */
-    private fun isCatalogueRow(videoId: String): Boolean = videoId.startsWith(SPOTIFY_ROW_PREFIX)
+    private fun isCatalogueRow(videoId: String): Boolean =
+        // A Spotify catalogue row, or a source's own track (`<source>|<track>`,
+        // a key no YouTube id can take).
+        videoId.startsWith(SPOTIFY_ROW_PREFIX) || '|' in videoId
 
     /** The base key of a source-backed track's own entry — see [keyFactory]. */
     private fun sourceBaseKey(uri: Uri): String? {
@@ -2742,7 +2761,9 @@ object AudioCache {
         if (headRoundsInFlight(videoId) > 0) return false
         // Read off the entry the size belongs to, now, rather than off the
         // largest prefix of any copy read a moment earlier.
-        return cachedBytesOf(want.key, want.size) >= want.size
+        // And still this round's size once the bytes are counted: a round
+        // starting in between publishes its own, which these bytes do not meet.
+        return cachedBytesOf(want.key, want.size) >= want.size && analysisHeadWant[videoId] === want
     }
 
     /**
@@ -2799,8 +2820,12 @@ object AudioCache {
         //
         // Read defensively: [Uri.getQueryParameter] throws on an opaque URI,
         // and a source-backed track's URI is whatever the addon handed over.
+        // A recording only a source holds (no YouTube match to measure
+        // instead) is measured on its own audio, under its own source key, like
+        // a catalogue row: see [isCatalogueRow].
         val videoId = runCatching { uri.getQueryParameter("v") }.getOrNull()
-        if (videoId == null) return false
+            ?: sourceBaseKey(uri)
+            ?: return false
         // The head is a YouTube copy, fetched under the analysis-only marker —
         // see [AutomixAnalysisSource] — and read to measure a tempo rather
         // than to be played. The YouTube *source* switch is about what the
@@ -2848,7 +2873,12 @@ object AudioCache {
             if (!ignoreBackoff) {
                 analysisHeadRetryAt[videoId]?.let { if (SystemClock.elapsedRealtime() < it) return false }
             }
-            if (analysisHeads.putIfAbsent(videoId, true) != null) return false
+            if (analysisHeads.putIfAbsent(videoId, true) != null) {
+                // A claim with no round running and nothing on disk is one the
+                // cache's own eviction emptied: no wipe or removal released it,
+                // and held it kept the track unmeasured for the session.
+                if (videoId in analysisHeadRounds || cachedBytesOf(key, 1L) > 0L) return false
+            }
             // Checked before the round is claimed, so the playback thread pays a set
             // lookup per tick rather than queueing coroutines four times a second on
             // top of a fetch that is still running.
@@ -3017,6 +3047,25 @@ object AudioCache {
                             target = grown
                         }
                     }
+                    // A recording longer than [MAX_ANALYSIS_TRACK_BYTES] stops at
+                    // the cap, and its ending is what the outgoing half of a
+                    // transition reads: the mix-out anchor and the tail grid.
+                    // So its last [ANALYSIS_TAIL_BYTES] are fetched as well,
+                    // from the same stream into the same entry (one encoding,
+                    // so no seam), and the round counts as whole only once both
+                    // ends are held. Such a track is past the analyser's
+                    // whole-track cap anyway, and is measured on its head and
+                    // tail windows alone; see [coversHeadAndTail].
+                    val capped = measured > target
+                    var tailHeld = true
+                    if (capped) {
+                        val tail = minOf(ANALYSIS_TAIL_BYTES, measured - target)
+                        val from = measured - tail
+                        if (cache.getCachedBytes(filled, from, tail) < tail) {
+                            pull(filled, fetched, from, tail, pinKey = true)
+                        }
+                        tailHeld = cache.getCachedBytes(filled, from, tail) >= tail
+                    }
                     // The analyser's own copy, marked as such, so the purge can
                     // throw it away once the track is done with it.
                     //
@@ -3024,10 +3073,10 @@ object AudioCache {
                     // tagged it, because it is fetched outside the player's own
                     // data source, and a whole song per analysed track is how a
                     // phone fills up.
-                    tagAnalysisCopy(filled, videoId, uri)
+                    tagAnalysisCopy(filled, mediaIdIn(uri) ?: videoId, uri)
                     val after = cachedBytesOf(filled, target)
                     // A copy shorter than a size-unknown round's guess is whole too.
-                    complete = after >= target || (measured > 0L && after >= measured)
+                    complete = (after >= target || (measured > 0L && after >= measured)) && tailHeld
                     if (after < target) {
                         // The one line that says *this* fetch failed, as opposed to
                         // the read-ahead chatter around it: every cause below
@@ -3049,6 +3098,9 @@ object AudioCache {
                         if (analysisJobs[videoId] === round) {
                             if (complete) {
                                 analysisHeadFailures.remove(videoId)
+                                // The memo of which keys exist predates the copy
+                                // this round finished; the aligner reads it next.
+                                renditionKeys.remove(videoId)
                                 analysisHeadRetryAt.remove(videoId)
                             } else if (!round.isCancelled) {
                                 // Short or skipped: asked for again later, from the
@@ -3068,7 +3120,9 @@ object AudioCache {
         }
         // A round cancelled before its body ran never reaches the finally above.
         round.invokeOnCompletion { analysisJobs.remove(videoId, round) }
-        round.start()
+        // A wipe can cancel the lazy round before it starts; that is not a
+        // round started, and must not cost a waiter one of its attempts.
+        if (!round.start()) return false
         return true
     }
 
@@ -3249,6 +3303,39 @@ object AudioCache {
      * [key] is a cache key, not a URI: the point of this type is to name a
      * rendition the *player* is not using, which no URI in hand refers to.
      */
+    /**
+     * Whether [rendition] holds both ends of a recording too long to fetch
+     * whole: the capped opening, and the ending a round fetches past the cap.
+     * What the analyser reads such a copy for (its head and tail windows) is
+     * all there.
+     */
+    fun coversHeadAndTail(rendition: Rendition): Boolean {
+        if (!::cache.isInitialized) return false
+        return headAndTailCovered(
+            length = rendition.contentLength,
+            cachedPrefix = rendition.cachedPrefix,
+            cap = MAX_ANALYSIS_TRACK_BYTES,
+            tailBytes = ANALYSIS_TAIL_BYTES,
+        ) { from, bytes -> cache.getCachedBytes(rendition.key, from, bytes) }
+    }
+
+    /**
+     * [coversHeadAndTail] for a copy of [length] bytes holding [cachedPrefix]
+     * from the start, with [cachedAt] answering how many contiguous bytes from
+     * a position are on disk.
+     */
+    internal fun headAndTailCovered(
+        length: Long,
+        cachedPrefix: Long,
+        cap: Long,
+        tailBytes: Long,
+        cachedAt: (from: Long, bytes: Long) -> Long,
+    ): Boolean {
+        if (length <= cap || cachedPrefix < cap) return false
+        val tail = minOf(tailBytes, length - cap)
+        return cachedAt(length - tail, tail) >= tail
+    }
+
     data class Rendition(val key: String, val contentLength: Long, val cachedPrefix: Long) {
         val isComplete: Boolean get() = contentLength > 0 && cachedPrefix >= contentLength
     }
