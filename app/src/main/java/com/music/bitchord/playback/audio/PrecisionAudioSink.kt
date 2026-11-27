@@ -713,8 +713,8 @@ class PrecisionAudioSink(
             // Nothing here can mute or shift a stream that never decodes to
             // PCM, so a loop mix armed on it can't hand over: it is called off
             // (the controller reads interrupted) rather than heard over the mix.
-            val port = loop
-            if (port.inArm != null || port.outArm != null) port.interrupted = true
+            val armed = loop.armed
+            if (armed.inn != null || armed.out != null) loop.interrupt(armed.generation)
             return delegate.handleBuffer(inputBuffer, presentationTimeUs, encodedAccessUnitCount)
         }
 
@@ -806,7 +806,7 @@ class PrecisionAudioSink(
             // reconfigure since it was armed, or a sink that changed rate
             // before the arm landed): its frames and timestamps would be wrong.
             if (configuredSampleRate > 0 && arm.sampleRate != configuredSampleRate) {
-                port.interrupted = true
+                port.interrupt(armed.generation)
                 loopGenerating = false
                 null
             } else {
@@ -1088,8 +1088,7 @@ class PrecisionAudioSink(
         loopRendering = false
         loopCrossing = false
         loopInStarted = false
-        port.tookOver = false
-        port.interrupted = false
+        port.resetStatus(generation)
         port.resetSplice()
     }
 
@@ -1106,7 +1105,7 @@ class PrecisionAudioSink(
         if (end <= arm.firstFrame) return false
         if (!loopRendering && start > arm.firstFrame + frames) {
             // Armed too late to pre-roll the decks: no splice at all, rather than a cut.
-            loop.interrupted = true
+            loop.interrupt(loopGeneration)
             return false
         }
         val handover = (LOOP_HANDOVER_SECONDS * arm.sampleRate).toLong()
@@ -1114,12 +1113,12 @@ class PrecisionAudioSink(
             // Bit-perfect came on before any of the crossing was mixed: the song
             // plays on untouched — this block too, even one that would start it.
             // Once the crossing has started, it is finished instead.
-            loop.interrupted = true
+            loop.interrupt(loopGeneration)
             return false
         }
         if (!arm.renderer.render(start, loopScratch, 0, frames)) {
             // Closed under the arm: no mix to cross into, so the song plays on.
-            loop.interrupted = true
+            loop.interrupt(loopGeneration)
             return false
         }
         loopRendering = true
@@ -1166,7 +1165,7 @@ class PrecisionAudioSink(
         }
         // The renderer writes two floats a frame: never into a block of any other width.
         if (audioBlock.channelCount != 2) {
-            loop.interrupted = true
+            loop.interrupt(loopGeneration)
             loopGenerating = false
             return false
         }
@@ -1176,7 +1175,7 @@ class PrecisionAudioSink(
             if (!arm.renderer.render(loopNextFrame, audioBlock.samples, 0, frames)) {
                 // Closed under the arm: silence, not a stale block, until the controller retires it.
                 audioBlock.samples.fill(0f, 0, frames * audioBlock.channelCount)
-                loop.interrupted = true
+                loop.interrupt(loopGeneration)
             }
             loopNextFrame += frames
             // Bit-perfect switched on mid-mix: until the controller's next tick
@@ -1269,8 +1268,10 @@ class PrecisionAudioSink(
      */
     private fun loopInterrupted() {
         val port = loop
-        if ((port.outArm != null && loopRendering) || (port.inArm != null && loopInStarted)) {
-            port.interrupted = true
+        val armed = port.armed
+        if ((armed.out != null && loopRendering) || (armed.inn != null && loopInStarted)) {
+            // The sink's state is for the arm it adopted: only that arm is over.
+            if (armed.generation == loopGeneration) port.interrupt(loopGeneration)
         }
         loopGenerating = false
         loopRendering = false
@@ -1569,7 +1570,7 @@ class PrecisionAudioSink(
         // Adopted first: an arm this sink had not seen a buffer for yet would
         // otherwise be adopted on the next one, and adoption clears the flag.
         if (armed.generation != loopGeneration) adoptLoopGeneration(port, armed.generation)
-        if (armed.out != null || armed.inn != null) port.interrupted = true
+        if (armed.out != null || armed.inn != null) port.interrupt(armed.generation)
         loopGenerating = false
         loopRendering = false
         loopCrossing = false
