@@ -51,6 +51,10 @@ internal fun timedLyrics(page: JsonObject): List<LyricLine>? {
             ?.contentOrNull?.toLongOrNull()
         LyricLine(start, text, sungUntilMs = end)
     }.takeIf { it.isNotEmpty() }
+        // Each cue says when its singing stops, so a break gets its marker as
+        // every other timed provider's does, rather than the last sung line
+        // staying up through it.
+        ?.withInstrumentalGaps()
 }
 
 /** The untimed description shelf the web client gets; the old behaviour. */

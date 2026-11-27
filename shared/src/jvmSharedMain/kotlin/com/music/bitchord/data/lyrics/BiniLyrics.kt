@@ -85,9 +85,11 @@ object BiniLyrics {
      * passes the checks in [LrcRed.best].
      */
     fun best(results: List<Hit>, title: String, artist: String, durationMs: Long): Hit? {
-        // A hit without a document has nothing to fetch; one without an ISRC
-        // still has, since [lyricsFor] reads [Hit.lyricsUrl], not the ISRC.
-        val usable = results.filter { !it.lyricsUrl.isNullOrBlank() }
+        // A hit is worth matching if it has a document to fetch or names the
+        // recording: one with only an ISRC still identifies the track for the
+        // sources asked after this one, which match by ISRC. One with neither
+        // has nothing to offer.
+        val usable = results.filter { !it.lyricsUrl.isNullOrBlank() || !it.isrc.isNullOrBlank() }
         val asLrcRed = usable.map {
             LrcRed.Hit(isrc = it.isrc, title = it.trackName, artist = it.artistName, duration = it.duration?.toDouble())
         }
