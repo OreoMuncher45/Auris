@@ -1666,10 +1666,28 @@ object AppSettings {
         exportDownloads.value = prefs.getBoolean(KEY_EXPORT_DOWNLOADS, false)
         downloadLikedSongs.value = prefs.getBoolean(KEY_DOWNLOAD_LIKED_SONGS, false)
         crossfadeSeconds.value = prefs.getInt(KEY_CROSSFADE, 0)
+        val smartFadeWas = smartFadeEnabled.value
         smartFadeEnabled.value = prefs.getBoolean(KEY_SMART_FADE, false)
-        _autoMixArtwork.value = AutoMixArtworkPreferences(
-            artTransition = prefs.getBoolean(KEY_AUTOMIX_ART_TRANSITION, false),
-            miniPlayerTransition = prefs.getBoolean(KEY_AUTOMIX_MINI_ART_TRANSITION, false),
+        // A reload keeps the cutoffs the setters fenced, and fences again
+        // exactly where a setter would have: a switch, or AutoMix itself,
+        // that the reload turns over.
+        val artwork = _autoMixArtwork.value
+        val art = prefs.getBoolean(KEY_AUTOMIX_ART_TRANSITION, false)
+        val mini = prefs.getBoolean(KEY_AUTOMIX_MINI_ART_TRANSITION, false)
+        val smartFadeTurned = smartFadeWas != smartFadeEnabled.value
+        _autoMixArtwork.value = artwork.copy(
+            artTransition = art,
+            miniPlayerTransition = mini,
+            skipArtworkThrough = if (smartFadeTurned || art != artwork.artTransition) {
+                artworkCutoff(artwork.skipArtworkThrough)
+            } else {
+                artwork.skipArtworkThrough
+            },
+            skipMiniThrough = if (smartFadeTurned || mini != artwork.miniPlayerTransition) {
+                artworkCutoff(artwork.skipMiniThrough)
+            } else {
+                artwork.skipMiniThrough
+            },
         )
         sleepTimerFadeOut.value = prefs.getBoolean(KEY_SLEEP_TIMER_FADE_OUT, false)
         seamlessQualityUpgrade.value = prefs.getBoolean(KEY_SEAMLESS_QUALITY_UPGRADE, false)
