@@ -111,6 +111,7 @@ import com.music.bitchord.ui.LocalPageHidden
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import com.music.bitchord.ui.player.bestPartTrackChanged
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -1283,6 +1284,14 @@ internal fun BitChordApp(
     }
     val controller = rememberMediaController()
     val player = rememberPlayerReads(controller)
+    // The best part's "heard" mark follows the track even while the player is
+    // closed: the now-playing screen, which also reports it, is only composed
+    // while open. Read in a flow, so the root does not recompose per track.
+    LaunchedEffect(player) {
+        snapshotFlow { player.song?.videoId }.collect { id ->
+            id?.let(::bestPartTrackChanged)
+        }
+    }
     // A resume in a party is performed on the instant the server schedules, not
     // when it was pressed, and nothing about the player moves in between — so
     // the transport spends that round trip drawn as though the tap never landed.
