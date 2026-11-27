@@ -938,7 +938,6 @@ private enum class SearchProvider { SPOTIFY, YOUTUBE }
             lastYtBrowseCookie = cookie
         }
     }
-songCache\[[^\]]+\]\s*=\s*([^\s}]+)
     private suspend fun loadYtBrowseSongs(parentId: String, timeoutMs: Long = 3_000L): List<Song> {
         val cookie = com.music.bitchord.data.innertube.Innertube.cookie
         syncYtBrowseCache(cookie)
@@ -12432,7 +12431,7 @@ val cached = songCache.entry(mediaId)
             // The player is read on its own (main) thread; the rest of this
             // future stays on IO for the disk and network fallbacks. Reading
             // ExoPlayer from IO broke Media3's single-thread rule.
-<val fromPlayer = withContext(Dispatchers.Main) {
+val fromPlayer = withContext(Dispatchers.Main) {
                 val activePlayer = player
                 if (activePlayer == null || activePlayer.mediaItemCount == 0) return@withContext null
                 val currentItems = (0 until activePlayer.mediaItemCount).map { activePlayer.getMediaItemAt(it) }
@@ -12936,7 +12935,6 @@ val cached = songCache.entry(mediaId)
                         controller,
                         SessionError(SessionError.ERROR_BAD_VALUE, getString(R.string.auto_unavailable_subtitle)),
                     )
-        }
 return@withContext null
                 }
                 val exoPlayer = player
@@ -13146,9 +13144,10 @@ return@withContext null
                             }
                         }
             )
+}
         }
+        return SessionAnswer(resolved.toList(), resolvedStart)
     }
-
     private fun buildContentStyleBundle(browsableHint: Int, playableHint: Int): Bundle =
         Bundle().apply {
             putInt(EXTRA_CONTENT_STYLE_BROWSABLE_HINT, browsableHint)
@@ -13221,7 +13220,7 @@ return@withContext null
         )
     }
 
-private fun spotifyPlaylistToGridItem(playlist: SpotifyPlaylist): MediaItem =
+private 860(playlist: SpotifyPlaylist): MediaItem =
         createGridPlaylistItem(
             mediaId = "spotify_playlist:${playlist.id}",
             title = playlist.name,
