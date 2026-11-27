@@ -1,3 +1,5 @@
+# Includes changes from LastWave-Native (https://github.com/Clash-Projects/LastWave-Native, GPL-3.0-only), modified for Auris/BitChord. See NOTICE.
+
 cmake_minimum_required(VERSION 3.22.1)
 project("decent_usb_audio" C CXX)
 
