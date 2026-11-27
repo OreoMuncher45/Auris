@@ -967,8 +967,10 @@ fun incomingMixInPoint(
     )
         .firstOrNull { it.isFinite() && it > 0 && it <= latest }
         ?: return null
-    // A downbeat at 0 s is no drop to fade over: keep the candidate's own time then.
-    val snapped = nearestValue(grid, target, tolerance)?.takeIf { it > 0 && it <= latest }
+    // A downbeat at 0 s is no drop to fade over, and one past the limit is no
+    // cue: both are left out before the nearest is chosen, so a bar line in
+    // reach is found even when a nearer one lies past the limit.
+    val snapped = nearestValue(grid.filter { it > 0 && it <= latest }, target, tolerance)
     return snapped ?: target.takeIf { !strict }
 }
 
@@ -1845,7 +1847,21 @@ private fun mixPlan(
     } else {
         0.0
     }
-    val incomingDropTime = incomingCuePoint(nextAnalysis, latestIncomingCue(nextLength))
+    val rankedDropTime = incomingCuePoint(nextAnalysis, latestIncomingCue(nextLength))
+    // A beat-matched blend lands on the grid its pair was trusted on: the
+    // opening's own where the model measured one and it has a bar line near
+    // the drop (as the phrase and WSOLA paths place theirs). Past the opening
+    // it has none, and the whole track's grid is the one that applies.
+    val incomingDropTime = if (sameBeatBlend) {
+        val incomingBeat = nextAnalysis.beatInterval.orZero().takeIf { it > 0 }
+            ?: if (nextBpm > 0) 60 / nextBpm else 0.0
+        val latestCue = latestIncomingCue(nextLength)
+        nextAnalysis.headBeats?.downbeats
+            ?.let { grid -> nearestValue(grid.filter { it > 0 && it <= latestCue }, rankedDropTime, max(0.5, incomingBeat * 2)) }
+            ?: rankedDropTime
+    } else {
+        rankedDropTime
+    }
     val alignedIncomingBpm = alignTempoOctave(currentBpm, nextBpm)
     val requestedIncomingHandoff =
         if (sameBeatBlend && alignedIncomingBpm > 0) {

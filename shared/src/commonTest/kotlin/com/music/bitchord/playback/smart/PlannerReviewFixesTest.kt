@@ -176,7 +176,12 @@ class PlannerReviewFixesTest {
             plan(track(120.0), track(120.0).copy(bpm = bad))
             plan(track(120.0).copy(bpm = bad), track(120.0))
             val head = track(120.0).let { it.copy(headBeats = BeatSide(it.downbeats, it.downbeats, bad, 0.9)) }
-            assertTrue(!openingTempoDisagrees(head) || bad.isFinite())
+            // An underflowed or infinite opening tempo leaves no grid to compare:
+            // never a disagreement. MAX_VALUE has no defined answer; the plans
+            // above and below cover that it doesn't hang.
+            if (bad == Double.MIN_VALUE || bad == Double.POSITIVE_INFINITY) {
+                assertTrue(!openingTempoDisagrees(head), "no grid to compare for $bad")
+            }
             plan(track(120.0), head)
         }
     }
@@ -256,5 +261,40 @@ class PlannerReviewFixesTest {
         val next = openingGridTrack(listOf(1.0, 3.0, 5.0))
         val planned = planWsolaTransition(track(120.0), next, 200.0, 200.0, advanced = true)
         assertEquals(WsolaPlanResult.Refused("incoming-head-grid"), planned)
+    }
+
+    @Test
+    fun anAdaptiveBlendCuesOnTheOpeningGridItWasTrustedOn() {
+        // Whole-track bar lines at 0.5 + 2k s; the opening's own, measured, at 0.75 + 2k s.
+        val head = generateSequence(0.75) { it + 2.0 }.takeWhile { it < 40.0 }.toList()
+        val next = track(120.0).copy(
+            mixInTime = 16.5,
+            mixInCandidates = listOf(MixCandidate(16.5, 1.0, "drop")),
+            headBeats = BeatSide(head.flatMap { listOf(it, it + 0.5, it + 1.0, it + 1.5) }, head, 120.0, 0.9),
+        )
+        for (advanced in listOf(false, true)) {
+            val p = planTransition(
+                analysis = track(120.0),
+                nextAnalysis = next,
+                currentTime = 100.0,
+                duration = 200.0,
+                mode = CrossfadeMode.SMART,
+                advanced = advanced,
+            )
+            assertEquals(TransitionStyle.DJ_BLEND, p.transitionStyle, "advanced=$advanced: ${p.reason}")
+            val offBar = ((p.incomingCueTime - 0.75) % 2.0 + 2.0) % 2.0
+            assertTrue(offBar < 1e-6 || offBar > 2.0 - 1e-6, "advanced=$advanced: cue ${p.incomingCueTime} is off the opening's bar lines")
+        }
+    }
+
+    @Test
+    fun aStrictSnapFindsTheBarLineInReachWhenANearerOneIsPastTheLimit() {
+        // 120 BPM; the drop at 14.99 s, the cue limit 15.0 s, bar lines at 14.05 s and 15.90 s.
+        val next = track(120.0).copy(
+            downbeats = listOf(2.05, 6.05, 10.05, 14.05, 15.90),
+            mixInTime = 14.99,
+            mixInCandidates = listOf(MixCandidate(14.99, 1.0, "drop")),
+        )
+        assertEquals(14.05, incomingMixInPoint(next, latest = 15.0, grid = next.downbeats, strict = true))
     }
 }

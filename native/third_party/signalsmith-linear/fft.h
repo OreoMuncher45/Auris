@@ -120,6 +120,7 @@ struct SimpleFFT {
 	
 	void fft(const Complex *time, Complex *freq) {
 		size_t size = working.size();
+		if (size == 0) return; // Auris patch: an empty transform touches no buffer
 		if (size <= 1) {
 			*freq = *time;
 			return;
@@ -129,6 +130,7 @@ struct SimpleFFT {
 
 	void ifft(const Complex *freq, Complex *time) {
 		size_t size = working.size();
+		if (size == 0) return; // Auris patch: an empty transform touches no buffer
 		if (size <= 1) {
 			*time = *freq;
 			return;
@@ -138,6 +140,7 @@ struct SimpleFFT {
 
 	void fft(const Sample *inR, const Sample *inI, Sample *outR, Sample *outI) {
 		size_t size = working.size();
+		if (size == 0) return; // Auris patch: an empty transform touches no buffer
 		if (size <= 1) {
 			*outR = *inR;
 			*outI = *inI;
@@ -148,6 +151,7 @@ struct SimpleFFT {
 	}
 	void ifft(const Sample *inR, const Sample *inI, Sample *outR, Sample *outI) {
 		size_t size = working.size();
+		if (size == 0) return; // Auris patch: an empty transform touches no buffer
 		if (size <= 1) {
 			*outR = *inR;
 			*outI = *inI;
@@ -907,6 +911,7 @@ struct SimpleRealFFT {
 			outR[i] = tmpFreqR[i];
 			outI[i] = tmpFreqI[i];
 		}
+		outR[0] = tmpFreqR[0]; // Auris patch: size 1 has no loop pass; DC as the packed layout gives it
 		outI[0] = tmpFreqR[tmpFreq.size()/2];
 	}
 
