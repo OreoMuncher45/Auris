@@ -267,6 +267,11 @@ object SourceResolver {
                 // runtime is what says so, and a row that states none cannot
                 // be checked.
                 strictLength = target.durationSec != null,
+                // For the analyser's capped read, the same artist too: a title
+                // and a runtime alone can match another artist's recording, and
+                // measuring that would plan the mix on the wrong song. Playback
+                // fallbacks keep their rule.
+                requireSharedArtist = request is StreamRequest.Capped && target.artist.isNotBlank(),
             )?.takeIf { (_, stream) -> overCeiling == null || withinCeiling(stream, request) }
                 ?: return overCeiling
         TrackLog.d(TAG, "fallback: '${target.title}' served by ${fallbackSource.displayName}")

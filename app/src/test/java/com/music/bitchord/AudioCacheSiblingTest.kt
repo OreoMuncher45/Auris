@@ -120,9 +120,12 @@ class AudioCacheSiblingTest {
         // under #alt2 plays instead of a fresh download, under a rendition too.
         com.music.bitchord.playback.smart.AutomixAnalysisSource.rendition = { "premium" }
         try {
-            assertEquals(alt, choose(preferred = "$id#premium", offline = false, complete = setOf(alt)))
+            // The substitute buckets are the rendition's own too.
+            val premiumAlt = AudioCache.altKeyOf(id, "")
+            val premiumAltNoAtmos = AudioCache.altKeyOf(id, "-noatmos")
+            assertEquals(premiumAlt, choose(preferred = "$id#premium", offline = false, complete = setOf(premiumAlt)))
             // Still not for a substitute bucket preferred online.
-            assertNull(choose(preferred = alt, offline = false, complete = setOf(altNoAtmos)))
+            assertNull(choose(preferred = premiumAlt, offline = false, complete = setOf(premiumAltNoAtmos)))
         } finally {
             com.music.bitchord.playback.smart.AutomixAnalysisSource.rendition = { null }
         }
