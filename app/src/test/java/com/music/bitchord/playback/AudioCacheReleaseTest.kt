@@ -35,7 +35,7 @@ class AudioCacheReleaseTest {
     }
 
     @After fun tearDown() {
-        AudioCache.cancelBackgroundWorkForTest()
+        runBlocking { AudioCache.cancelBackgroundWorkForTest() }
         field.set(AudioCache, null)
         AudioCache::class.java.getDeclaredField("appContext").apply { isAccessible = true }.set(AudioCache, null)
     }

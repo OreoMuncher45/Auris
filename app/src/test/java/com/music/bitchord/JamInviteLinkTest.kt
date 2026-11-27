@@ -22,24 +22,36 @@ class JamInviteLinkTest {
     /**
      * Before Android 12 only `pathPattern` routes a tapped invite, so each of
      * the manifest's invite patterns must be one the parser accepts — and the
-     * common capitalisations must each have one.
+     * common capitalisations must each have one. Read from the manifest as
+     * XML: the patterns count only inside one browsable VIEW filter that also
+     * names the invite host and the https scheme, since the `data` elements of
+     * a filter combine and a pattern under any other filter routes nothing.
      */
     @Test
     fun `each manifest invite pattern before Android 12 reaches the parser`() {
-        val manifest = java.io.File("src/main/AndroidManifest.xml").readText()
-        // Only the invite host's own filters: a pattern moved under another
-        // host's filter would not route an invite, so it must not count.
-        val inviteFilters = Regex("""<intent-filter\b[\s\S]*?</intent-filter>""")
-            .findAll(manifest)
-            .map { it.value }
-            .filter { it.contains("""android:host="bitchord.kushagrasingh.in"""") }
-            .joinToString("\n")
-        val patterns = Regex("""android:pathPattern="(/[A-Za-z]+/\.{6})"""")
-            .findAll(inviteFilters)
-            .map { it.groupValues[1] }
-            .filter { it.lowercase().startsWith("/invite/") }
-            .toList()
-        assertEquals(setOf("/invite/", "/INVITE/", "/Invite/"), patterns.map { it.dropLast(6) }.toSet())
+        val android = "http://schemas.android.com/apk/res/android"
+        val document = javax.xml.parsers.DocumentBuilderFactory.newInstance()
+            .apply { isNamespaceAware = true }
+            .newDocumentBuilder()
+            .parse(java.io.File("src/main/AndroidManifest.xml"))
+        fun org.w3c.dom.Element.children(tag: String): List<org.w3c.dom.Element> {
+            val nodes = getElementsByTagName(tag)
+            return (0 until nodes.length).map { nodes.item(it) as org.w3c.dom.Element }
+        }
+        fun org.w3c.dom.Element.named(tag: String) = children(tag).map { it.getAttributeNS(android, "name") }
+        fun List<org.w3c.dom.Element>.values(attribute: String) =
+            map { it.getAttributeNS(android, attribute) }.filter { it.isNotEmpty() }.toSet()
+        val inviteFilters = document.documentElement.children("intent-filter").filter { filter ->
+            val data = filter.children("data")
+            "android.intent.action.VIEW" in filter.named("action") &&
+                "android.intent.category.BROWSABLE" in filter.named("category") &&
+                "bitchord.kushagrasingh.in" in data.values("host")
+        }
+        assertEquals("one browsable VIEW filter for the invite host", 1, inviteFilters.size)
+        val data = inviteFilters.single().children("data")
+        assertEquals("the invite filter routes https only", setOf("https"), data.values("scheme"))
+        val patterns = data.values("pathPattern").filter { it.lowercase().startsWith("/invite/") }
+        assertEquals(setOf("/invite/", "/INVITE/", "/Invite/"), patterns.map { it.removeSuffix("......") }.toSet())
         patterns.forEach { pattern ->
             val link = "https://bitchord.kushagrasingh.in" + pattern.replace("......", "ABC123")
             assertEquals(pattern, "ABC123", JamInviteLink.parse(link))
