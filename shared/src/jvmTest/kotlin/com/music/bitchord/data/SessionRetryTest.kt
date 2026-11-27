@@ -30,7 +30,14 @@ class SessionRetryTest {
      * Answers the shell with [shell] (its HTML for the cookie asking) and each
      * playlist edit with [edit]'s status (by how many edits came before it).
      */
-    private fun answer(shell: (cookie: String?) -> String = { shellFor() }, edit: (index: Int) -> Int) {
+    private val lookups get() = synchronized(sent) { sent.filter { it.method == "POST" && it.path.endsWith("/browse") } }
+
+    private fun answer(
+        shell: (cookie: String?) -> String = { shellFor() },
+        /** Each whole-playlist lookup's status, by how many came before it. */
+        lookup: (index: Int) -> Int = { 404 },
+        edit: (index: Int) -> Int,
+    ) {
         Innertube.answerRequestsForTest(
             Interceptor { chain ->
                 val request = chain.request()
@@ -49,13 +56,17 @@ class SessionRetryTest {
                         val index = writes.size - 1
                         Triple(edit(index), "{}", "application/json")
                     }
+                    request.method == "POST" && request.url.encodedPath.endsWith("/browse") -> {
+                        val index = lookups.size - 1
+                        Triple(lookup(index), "{}", "application/json")
+                    }
                     else -> Triple(404, "{}", "application/json")
                 }
                 Response.Builder()
                     .request(request)
                     .protocol(Protocol.HTTP_1_1)
                     .code(code)
-                    .message(if (code == 200) "OK" else "Unauthorized")
+                    .message(if (code == 200) "OK" else if (code == 404) "Not Found" else "Unauthorized")
                     .header("Content-Type", type)
                     .body(body.toResponseBody(type.toMediaType()))
                     .build()
@@ -180,6 +191,39 @@ class SessionRetryTest {
         val strict = Innertube.asListener(a) { YtMusicRepository.addToPlaylist("PL1", listOf("ddddddddddd")) }
         assertIs<Innertube.ListenerChangedException>(strict.exceptionOrNull())
         assertEquals(before, writes.size)
+    }
+
+    @Test
+    fun `an add whose lookup is recovered goes on to write under the refreshed session, for every playlist`() = runBlocking {
+        Innertube.cookie = "SID=A"
+        // The first lookup is refused for stale credentials; the shell names a
+        // dataSyncId, so the refresh moves the generation.
+        answer(shell = { shellFor(dataSyncId = "sync-A") }, lookup = { index -> if (index == 0) 401 else 404 }) { 200 }
+        Innertube.ensureSessionScope()
+        val a = Innertube.listenerStamp()
+        val results = Innertube.asListenerRecoverably(a) {
+            // The app's own call pattern: one binding, every playlist picked.
+            listOf("PL1", "PL2").map { id -> YtMusicRepository.addMissingTracks("VL$id", id, listOf("aaaaaaaaaaa"), batchSize = 1) }
+        }
+        assertTrue(Innertube.listenerStamp() != a, "the refresh did not move the generation")
+        assertTrue(results.none { it.failed }, "a write was refused after the recovered lookup")
+        assertEquals(listOf("SID=A", "SID=A"), writes.map { it.cookie })
+    }
+
+    @Test
+    fun `an add whose batch is recovered sends the next batch and never resends an accepted one`() = runBlocking {
+        Innertube.cookie = "SID=A"
+        // Batch 1 accepted, batch 2 refused once then accepted, batch 3 accepted.
+        answer(shell = { shellFor(dataSyncId = "sync-A") }) { index -> if (index == 1) 401 else 200 }
+        Innertube.ensureSessionScope()
+        val a = Innertube.listenerStamp()
+        val result = Innertube.asListenerRecoverably(a) {
+            YtMusicRepository.addMissingTracks("VLPL1", "PL1", listOf("aaaaaaaaaaa", "bbbbbbbbbbb", "ccccccccccc"), batchSize = 1)
+        }
+        assertTrue(!result.failed)
+        assertEquals(setOf("aaaaaaaaaaa", "bbbbbbbbbbb", "ccccccccccc"), result.added.keys)
+        // Three batches and one retry of the refused one.
+        assertEquals(4, writes.size)
     }
 
     @Test
