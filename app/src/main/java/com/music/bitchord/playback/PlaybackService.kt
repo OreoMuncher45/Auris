@@ -912,7 +912,8 @@ private enum class SearchProvider { SPOTIFY, YOUTUBE }
     private fun isPlaylistsFresh(): Boolean =
         playlistCardsCache[PLAYLIST_CARDS_KEY]?.let { (at, cards) -> cards.isNotEmpty() && isFresh(at, PLAYLISTS_CACHE_TTL_MS) } == true
 
-    private fun isHomeFresh(): Boolean =
+   private fun isHomeFresh(): Boolean =
+        snapshotHome()?.let { isFresh(it.at, HOME_CACHE_TTL_MS) } ?: false
         cachedHome?.let { (at, _) -> isFresh(at, HOME_CACHE_TTL_MS) } ?: false
 
     private data class YtScopedSongs(
@@ -986,26 +987,19 @@ private enum class SearchProvider { SPOTIFY, YOUTUBE }
         return cached?.takeIf { it.cookie == currentCookie }?.songs.orEmpty()
     }
 
-    private suspend fun fetchFreshPlaylistCards(): List<ShelfItem>? = playlistsMutex.withLock {
-        val cookie = com.music.bitchord.data.innertube.Innertube.cookie
-        if (cookie == null) {
-            cachedPlaylistCards = null
-            cachedPlaylistCookie = null
-            return null
+private suspend fun fetchFreshPlaylistCards(): List<ShelfItem>? = playlistsMutex.withLock {
+        if (com.music.bitchord.data.innertube.Innertube.cookie == null) return null
+        val owner = listenerStamp()
+        val cards = com.music.bitchord.data.innertube.Innertube.asListenerRecoverably(innertubeStamp(owner)) {
+            fetchPlaylistCards()
         }
-        if (cachedPlaylistCookie != null && cachedPlaylistCookie != cookie) {
-            cachedPlaylistCards = null
-        }
-        val cards = fetchPlaylistCards()
-        if (cards.isNotEmpty() && com.music.bitchord.data.innertube.Innertube.cookie == cookie) {
-            cachedPlaylistCards = SystemClock.elapsedRealtime() to cards
-            cachedPlaylistCookie = cookie
-            return cards
-        }
-        null
+        if (owner != listenerStamp() || cards.isEmpty()) return null
+        playlistCardsCache.put(owner, PLAYLIST_CARDS_KEY, SystemClock.elapsedRealtime() to cards)
+        cards
     }
 
     private suspend fun fetchFreshRecentsSongs(): List<Song>? = recentsMutex.withLock {
+        val stamp = listenerStamp()
         val songs = try {
             withTimeoutOrNull(4_000L) {
                 YtMusicRepository.recents().getOrNull()
@@ -1015,16 +1009,17 @@ private enum class SearchProvider { SPOTIFY, YOUTUBE }
         } catch (_: Exception) {
             emptyList()
         }
-        if (songs.isNotEmpty()) {
-            cachedRecents = SystemClock.elapsedRealtime() to songs
-            songs.forEach { cacheSongs(listenerStamp(), listOf(it)) }
+        if (songs.isNotEmpty() && stamp == listenerStamp()) {
+            cachedRecents = AutoListing(SystemClock.elapsedRealtime(), songs, stamp.listener)
+            cacheSongs(stamp, songs)
             return songs
         }
         null
     }
 
     private suspend fun fetchFreshQuickPicksSongs(): List<Song>? = quickPicksMutex.withLock {
-        val recentsIds = cachedRecents?.second?.mapTo(HashSet()) { it.videoId } ?: emptySet()
+        val stamp = listenerStamp()
+        val recentsIds = snapshotRecents()?.songs?.mapTo(HashSet()) { it.videoId } ?: emptySet()
         val songs = try {
             withTimeoutOrNull(4_000L) {
                 YtMusicRepository.quickPicks(excludeSongIds = recentsIds).getOrNull()
@@ -1034,24 +1029,17 @@ private enum class SearchProvider { SPOTIFY, YOUTUBE }
         } catch (_: Exception) {
             emptyList()
         }
-        if (songs.isNotEmpty()) {
-            cachedQuickPicks = SystemClock.elapsedRealtime() to songs
-            songs.forEach { cacheSongs(listenerStamp(), listOf(it)) }
+        if (songs.isNotEmpty() && stamp == listenerStamp()) {
+            cachedQuickPicks = AutoListing(SystemClock.elapsedRealtime(), songs, stamp.listener)
+            cacheSongs(stamp, songs)
             return songs
         }
         null
     }
 
     private suspend fun fetchFreshLikedSongs(): List<Song>? = likedMutex.withLock {
-        val cookie = com.music.bitchord.data.innertube.Innertube.cookie
-        if (cookie == null) {
-            cachedLiked = null
-            cachedLikedCookie = null
-            return null
-        }
-        if (cachedLikedCookie != null && cachedLikedCookie != cookie) {
-            cachedLiked = null
-        }
+        val stamp = listenerStamp()
+        val listener = stamp.listener ?: return null
         val songs = try {
             withTimeoutOrNull(4_000L) {
                 YtMusicRepository.browseSongs(YtMusicRepository.LIKED_MUSIC).getOrNull()?.songs?.ifEmpty { null }
@@ -1073,17 +1061,20 @@ private enum class SearchProvider { SPOTIFY, YOUTUBE }
         } catch (_: Exception) {
             emptyList()
         }
-        if (songs.isNotEmpty() && com.music.bitchord.data.innertube.Innertube.cookie == cookie) {
-            cachedLiked = SystemClock.elapsedRealtime() to songs
-            cachedLikedCookie = cookie
-            songs.forEach { cacheSongs(listenerStamp(), listOf(it)) }
-            LikeState.seedLiked(songs.mapTo(HashSet()) { it.videoId })
-            return songs
+        if (songs.isEmpty()) return null
+        val ours = withContext(Dispatchers.Main.immediate) {
+            (stamp == listenerStamp() && !com.music.bitchord.ui.CandidateValidation.session.active).also { current ->
+                if (current) LikeState.seedLiked(songs.mapTo(HashSet()) { it.videoId })
+            }
         }
-        null
+        if (!ours) return null
+        cacheSongs(stamp, songs)
+        cachedLiked = AutoListing(SystemClock.elapsedRealtime(), songs, listener)
+        songs
     }
 
     private suspend fun fetchFreshHomeFeed(): com.music.bitchord.data.model.HomeFeed? = homeMutex.withLock {
+        val stamp = listenerStamp()
         val feed = try {
             withTimeoutOrNull(HOME_NETWORK_TIMEOUT_MS) {
                 YtMusicRepository.home().getOrNull()
@@ -1093,10 +1084,10 @@ private enum class SearchProvider { SPOTIFY, YOUTUBE }
         } catch (_: Exception) {
             null
         } ?: return null
-        cachedHome = SystemClock.elapsedRealtime() to feed
+        if (stamp != listenerStamp()) return null
+        cachedHome = CachedHome(SystemClock.elapsedRealtime(), feed, stamp.listener)
         feed
     }
-
     private data class AccountScopedList<T>(
         val token: String,
         val fetchedAtMs: Long,
@@ -11783,9 +11774,12 @@ if (locked()) {
                     val spotifySignedIn = currentSpotifyToken() != null
                     val spHomeSnap = if (spotifySignedIn) snapshotSpotifyHome() else null
                     val dlSnap = if (spotifySignedIn) snapshotSpotifyDaylist() else null
-                    val recentsSnap = snapshotRecents()
-                    val quickSnap = snapshotQuickPicks()
-                    val ytHomeSnap = snapshotHome()
+                    val recentsListing = snapshotRecents()
+                    val quickListing = snapshotQuickPicks()
+                    val ytHomeRecord = snapshotHome()
+                    val recentsSnap = recentsListing?.songs.orEmpty()
+                    val quickSnap = quickListing?.songs.orEmpty()
+                    val ytHomeSnap = ytHomeRecord?.feed
 
                     val (daylist, spHome, recents, quickPicks, ytHome) = coroutineScope {
                         val dlJob = async {
@@ -11814,10 +11808,46 @@ if (locked()) {
 
                     val needRefreshDl = spotifySignedIn && dlSnap != null && !isSpotifyDaylistFresh()
                     val needRefreshSpHome = spotifySignedIn && spHomeSnap != null && !isSpotifyHomeFresh()
-                    val needRefreshRecents = recentsSnap.isNotEmpty() && !isRecentsFresh()
-                    val needRefreshQuick = quickSnap.isNotEmpty() && !isQuickPicksFresh()
-                    val needRefreshYtHome = ytHomeSnap != null && !isHomeFresh()
+                    val needRefreshRecents = recentsListing != null && !isFresh(recentsListing.at, RECENTS_CACHE_TTL_MS)
+                    val needRefreshQuick = quickListing != null && !isFresh(quickListing.at, RECENTS_CACHE_TTL_MS)
+                    val needRefreshYtHome = ytHomeRecord != null && !isFresh(ytHomeRecord.at, HOME_CACHE_TTL_MS)
                     if (needRefreshDl || needRefreshSpHome || needRefreshRecents || needRefreshQuick || needRefreshYtHome) {
+                        refreshFolderInBackground(session, parentId, params) {
+                            val refreshed = coroutineScope {
+                                val rDl = if (needRefreshDl) async { fetchFreshSpotifyDaylist() } else null
+                                val rSpHome = if (needRefreshSpHome) async { fetchFreshSpotifyHomeFeed() } else null
+                                val rRec = if (needRefreshRecents) async { fetchFreshRecentsSongs() } else null
+                                val rQuick = if (needRefreshQuick) async { fetchFreshQuickPicksSongs() } else null
+                                val rYtHome = if (needRefreshYtHome) async { fetchFreshHomeFeed() } else null
+                                SpotifyHubBundle(
+                                    daylist = rDl?.await(),
+                                    spHome = rSpHome?.await(),
+                                    recents = rRec?.await().orEmpty(),
+                                    quickPicks = rQuick?.await().orEmpty(),
+                                    ytHome = rYtHome?.await(),
+                                )
+                            }
+                            val updated = refreshed.daylist != null ||
+                                refreshed.spHome != null ||
+                                refreshed.recents.isNotEmpty() ||
+                                refreshed.quickPicks.isNotEmpty() ||
+                                refreshed.ytHome != null
+                            if (!updated) {
+                                null
+                            } else {
+                                val signedInNow = currentSpotifyToken() != null
+                                buildSpotifyHubItems(
+                                    spotifySignedIn = signedInNow,
+                                    daylist = if (signedInNow) snapshotSpotifyDaylist() else null,
+                                    spHome = if (signedInNow) snapshotSpotifyHome() else null,
+                                    recents = snapshotRecents()?.songs.orEmpty(),
+                                    quickPicks = snapshotQuickPicks()?.songs.orEmpty(),
+                                    ytHome = snapshotHome()?.feed,
+                                    updateCaches = false,
+                                ).size
+                            }
+                        }
+                    }
                         refreshFolderInBackground(session, parentId, params) {
                             val refreshed = coroutineScope {
                                 val rDl = if (needRefreshDl) async { fetchFreshSpotifyDaylist() } else null
@@ -13115,39 +13145,36 @@ return@withContext null
                         }
                         if (matchedFromSpotify.isNotEmpty()) {
                             resolved.addForSession(inputIndex, matchedFromSpotify)
-                        } else {
-                            val cachedYt = autoSearchCache[searchQuery]
-                                ?.takeIf {
-                                    it.provider == SearchProvider.YOUTUBE &&
-                                        isSearchResponseValidForCurrentAccount(it)
-                                }
-                                ?.ytSongs
-                                ?: searchCache[searchQuery]?.first
-                            val rawSongs = if (!cachedYt.isNullOrEmpty()) {
-                                cachedYt
-                            } else {
-                                try {
-                                    withTimeoutOrNull(3_000L) {
-                                        com.music.bitchord.data.innertube.Innertube.asListener(bound) {
-                                            YtMusicRepository.search(searchQuery, SearchFilter.SONGS).getOrNull()
-                                                ?.mapNotNull { if (it is SearchResult.Track) it.song else null }
-                                        }
-                                    } ?: emptyList()
-                                } catch (_: Exception) {
-                                    emptyList()
-                                }
-                            }
-                            val songs = rawSongs.filterNot(AppSettings::isSongBlocked)
-                            cacheSongs(owner, songs)
-                            if (songs.isNotEmpty()) {
-                                resolved.addForSession(inputIndex, songs.map { it.toMediaItem() })
-                            }
-                        }
 }
+                        }
+                    }
+                }
+                val addedCount = resolved.size - startOffset
+                if (addedCount > 0) {
+                    onItemResolved?.invoke(inputIndex, startOffset, addedCount)
+                }
+                itemPartial?.let { (parentId, initialRawCount, inFlight) ->
+                    onPartialSpotifyPlaylistSpan?.invoke(
+                        PartialSpotifySpan(
+                            startOffset = startOffset,
+                            endOffset = resolved.size,
+                            parentId = parentId,
+                            initialRawCount = initialRawCount,
+                            inFlight = inFlight,
+                        ),
+                    )
+                }
+            }
+            val current = resolved.finish(resolvedStart, current = true)
+            val stale = resolved.finish(resolvedStart, current = false)
+                .takeIf { it.first.isNotEmpty() }
+            return SessionAnswer(
+                value = current,
+                bound = resolved.anyBound,
+                stale = stale,
+            )
         }
-        return SessionAnswer(resolved.toList(), resolvedStart)
     }
-    private fun buildContentStyleBundle(browsableHint: Int, playableHint: Int): Bundle =
         Bundle().apply {
             putInt(EXTRA_CONTENT_STYLE_BROWSABLE_HINT, browsableHint)
             putInt(EXTRA_CONTENT_STYLE_PLAYABLE_HINT, playableHint)
@@ -13187,7 +13214,7 @@ return@withContext null
         return items.subList(from, to)
     }
 
-    private fun createGridPlaylistItem(
+private fun spotifyPlaylistToGridItem(playlist: SpotifyPlaylist): MediaItem = 
         mediaId: String,
         title: String,
         subtitle: String? = null,
@@ -13219,7 +13246,7 @@ return@withContext null
         )
     }
 
-private 860(playlist: SpotifyPlaylist): MediaItem =
+private fun spotifyPlaylistToGridItem(playlist: SpotifyPlaylist): MediaItem =
         createGridPlaylistItem(
             mediaId = "spotify_playlist:${playlist.id}",
             title = playlist.name,
