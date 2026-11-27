@@ -209,4 +209,47 @@ class PlaylistEntriesTest {
         val songs = collectSongListing(appended(row("bbbbbbbbbbb", "SET2"), token("P2")), maxPages = 10, whole = true) { lastPage }
         assertEquals(listOf("bbbbbbbbbbb"), songs.map { it.videoId })
     }
+
+    @Test
+    fun `a whole listing fails on a later page holding only an unreadable item beside its suggestions`() {
+        // The shelf reader hands the episode back to be read the general way, and it holds no track.
+        val unreadable = appended(episode, suggestions(row("sssssssssss", "SUGG")))
+        assertFailsWith<IllegalStateException> {
+            runBlocking {
+                collectSongListing(appended(row("aaaaaaaaaaa", "SET1"), token("P2")), maxPages = 10, whole = true) { unreadable }
+            }
+        }
+    }
+
+    @Test
+    fun `a display listing keeps its rows when a later page holds only an unreadable item`() = runBlocking {
+        val unreadable = appended(episode, suggestions(row("sssssssssss", "SUGG")))
+        val songs = collectSongListing(appended(row("aaaaaaaaaaa", "SET1"), token("P2")), maxPages = 10, whole = false) { unreadable }
+        assertEquals(listOf("aaaaaaaaaaa"), songs.map { it.videoId })
+    }
+
+    @Test
+    fun `a whole listing with no page cap reads past the foreground limit, and fails on a token handed back twice`() = runBlocking {
+        var n = 0
+        val longList: suspend (String) -> JsonElement = {
+            n++
+            if (n < 25) appended(row("v${n.toString().padStart(10, '0')}", "SET$n"), token("P$n")) else appended(row("vlast000000", "SETL"))
+        }
+        val first = appended(row("aaaaaaaaaaa", "SET0"), token("P0"))
+        assertEquals(26, collectSongListing(first, maxPages = Int.MAX_VALUE, whole = true, next = longList).size)
+        val looping: suspend (String) -> JsonElement = { appended(row("bbbbbbbbbbb", "SET1"), token("P0")) }
+        assertFailsWith<IllegalStateException> { collectSongListing(first, maxPages = Int.MAX_VALUE, whole = true, next = looping) }
+        Unit
+    }
+
+    @Test
+    fun `a head read stops once it holds enough, and keeps its rows when a later page fails`() = runBlocking {
+        var fetched = 0
+        val pages: suspend (String) -> JsonElement = { fetched++; appended(row("ccccccccccc", "SET3"), token("P3")) }
+        val first = appended(row("aaaaaaaaaaa", "SET1"), row("bbbbbbbbbbb", "SET2"), token("P2"))
+        assertEquals(2, collectSongListing(first, maxPages = 10, whole = false, enough = 2, next = pages).size)
+        assertEquals(0, fetched)
+        val failing: suspend (String) -> JsonElement = { throw java.io.IOException("page 2 failed") }
+        assertEquals(2, collectSongListing(first, maxPages = 10, whole = false, enough = 5, next = failing).size)
+    }
 }
