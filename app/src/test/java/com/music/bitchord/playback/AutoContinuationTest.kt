@@ -158,4 +158,91 @@ class AutoContinuationTest {
         assertNull(staleAutoInstall(pending, 2, listOf("x", "y")::getOrNull, ListenerStamp("B", 5)))
         assertNull(staleAutoInstall(null, entries.size, entries::getOrNull, ListenerStamp("B", 5)))
     }
+
+    // ---- An Auto queue resolved row by row, checked once everything is ----
+
+    private val a = ListenerStamp("A", generation = 4)
+
+    /** Search rows for A, then downloads and a handed-over track, resolved while a later item was out. */
+    private fun resolvedForA() = SessionRows<String>(a).apply {
+        addForSession(0, listOf("a-search-0", "a-search-1"))
+        addAll(listOf("download"))
+        add("handed-over")
+    }
+
+    @Test
+    fun `search rows read for A go after a switch to B while a later item was out, and rows of no account stay`() {
+        val (kept, start) = resolvedForA().finish(start = 3, now = ListenerStamp("B", 5))
+        assertEquals(listOf("download", "handed-over"), kept)
+        assertEquals(1, start)
+    }
+
+    @Test
+    fun `search rows read for A go after a switch away and back to A`() {
+        val (kept, _) = resolvedForA().finish(start = 0, now = ListenerStamp("A", 6))
+        assertEquals(listOf("download", "handed-over"), kept)
+    }
+
+    @Test
+    fun `with no switch every row stays`() {
+        val (kept, start) = resolvedForA().finish(start = 1, now = a)
+        assertEquals(listOf("a-search-0", "a-search-1", "download", "handed-over"), kept)
+        assertEquals(1, start)
+        assertTrue(resolvedForA().staleRequests(a).isEmpty())
+    }
+
+    @Test
+    fun `a search that went stale before reading anything is not handed back as it came`() {
+        // The search was asked under A and the switch landed before it read anything.
+        val rows = SessionRows<String>(a).apply { addForSession(0, emptyList()); add("handed-over") }
+        assertEquals(setOf(0), rows.staleRequests(ListenerStamp("B", 5)))
+        assertEquals(listOf("handed-over"), rows.finish(0, ListenerStamp("B", 5)).first)
+    }
+
+    // ---- An answer checked again once it is delivered ----
+
+    @Test
+    fun `a switch after the answer was checked but before it is delivered makes the recipient ask again`() {
+        var session = a
+        var stale = 0
+        val answer = com.google.common.util.concurrent.SettableFuture.create<String>()
+        val delivered = answer.recheckedFor(a, { session }) { stale++ }
+        // The answer was checked under A; the switch lands before Media3 delivers it.
+        session = ListenerStamp("B", 5)
+        answer.set("a-rows")
+        assertEquals("a-rows", delivered.get())
+        assertEquals(1, stale)
+    }
+
+    @Test
+    fun `a switch during the delivery is followed by asking again`() {
+        var session = a
+        var stale = 0
+        val answer = com.google.common.util.concurrent.SettableFuture.create<String>()
+        val delivered = answer.recheckedFor(a, { session }) { stale++ }
+        // The recipient's own listener runs first; the switch lands while it delivers.
+        delivered.addListener({ session = ListenerStamp("A", 6) }, com.google.common.util.concurrent.MoreExecutors.directExecutor())
+        answer.set("a-rows")
+        assertEquals(1, stale)
+    }
+
+    @Test
+    fun `an answer delivered with no switch is not asked again`() {
+        var stale = 0
+        val answer = com.google.common.util.concurrent.SettableFuture.create<String>()
+        val delivered = answer.recheckedFor(a, { a }) { stale++ }
+        answer.set("a-rows")
+        assertEquals("a-rows", delivered.get())
+        assertEquals(0, stale)
+    }
+
+    @Test
+    fun `cancelling the delivered answer cancels the search and asks nothing again`() {
+        var stale = 0
+        val answer = com.google.common.util.concurrent.SettableFuture.create<String>()
+        val delivered = answer.recheckedFor(a, { ListenerStamp("B", 5) }) { stale++ }
+        delivered.cancel(false)
+        assertTrue(answer.isCancelled)
+        assertEquals(0, stale)
+    }
 }
