@@ -622,7 +622,13 @@ object AudioCache {
                     else -> AutomixAnalysisSource.playbackKey(videoId).let { own ->
                         if (reopen) own else completeSibling(videoId, own) ?: own
                     }
-                }.also { key -> if (request != null && !reopen) request.pin(videoId, key) }
+                }.also { key ->
+                    if (request != null && !reopen) request.pin(videoId, key)
+                    // The entry the player's open is bound to, for readers that
+                    // must match what is playing (the loop deck): recomputing
+                    // the key follows the current settings, not the binding.
+                    if (request != null) boundKeys[videoId] = key
+                }
             }
             // A source-backed track keys on the source and its track id alone.
             // The full URI would work but carries the title and artist used
@@ -801,7 +807,9 @@ object AudioCache {
         if (holdsBytes(preferred)) return null
         val siblings = siblingKeysOf(videoId)
         if (offline()) return siblings.firstOrNull { it != preferred && isComplete(it) }
-        if (preferred != videoId) return null
+        // Online only for YouTube's own entry (the current rendition's), never
+        // a substitute bucket: see the paragraph above.
+        if (preferred != AutomixAnalysisSource.playbackKey(videoId)) return null
         return siblings.firstOrNull { it != preferred && isComplete(it) && isKeptOrigin(it) }
     }
 
@@ -2330,6 +2338,11 @@ object AudioCache {
         val total = runCatching { StreamResolver.contentLength(videoId) }.getOrNull()
             ?: return false
 
+        // The entry [fetch] writes this track to, resolved once: under a
+        // rendition (Premium) the write lands on `<id>#<rendition>`, and checked
+        // against the bare id the pass never saw its own bytes and kept
+        // re-fetching the first range.
+        val key = AutomixAnalysisSource.playbackKey(videoId)
         var position = 0L
         while (position < total) {
             // Checked per chunk, not just once per pass: a track long enough
@@ -2338,13 +2351,13 @@ object AudioCache {
             // now" case the guard in [fetchWhole] exists for.
             if (pendingQueue.firstOrNull() != videoId) return false
             val length = minOf(CHUNK_BYTES, total - position)
-            if (cache.getCachedBytes(videoId, position, length) < length) {
+            if (cache.getCachedBytes(key, position, length) < length) {
                 fetch(videoId, position, length)
                 // Written nowhere means the entry is held elsewhere; the rest
                 // of this pass would be just as wasted. See [fetch] for why
                 // this can be true even though the fetch just above returned
                 // without error.
-                if (cache.getCachedBytes(videoId, position, length) < length) return false
+                if (cache.getCachedBytes(key, position, length) < length) return false
             }
             position += length
         }
@@ -2910,7 +2923,7 @@ object AudioCache {
                 // A claim with no round running and nothing on disk is one the
                 // cache's own eviction emptied: no wipe or removal released it,
                 // and held it kept the track unmeasured for the session.
-                if (videoId in analysisHeadRounds || cachedBytesOf(key, 1L) > 0L) return false
+                if (videoId in analysisHeadRounds || claimStillBacked(videoId, key)) return false
             }
             // Checked before the round is claimed, so the playback thread pays a set
             // lookup per tick rather than queueing coroutines four times a second on
@@ -2922,6 +2935,9 @@ object AudioCache {
             }
             round = scope.launch(start = CoroutineStart.LAZY) {
                 var complete = false
+                // Each round reads its light copy from one stream, resolved
+                // afresh: the last round's may have expired. See [AnalysisReadPins].
+                if (isCatalogueRow(videoId)) AnalysisReadPins.forget(videoId)
                 // Published only while this round still owns the track: a wipe
                 // or removal that has taken its snapshot has reset the size,
                 // and a stale one left behind reads as a finished head later.
@@ -3166,6 +3182,24 @@ object AudioCache {
      * curve, the phrase structure and the mix-out anchor all come from the
      * tail. One resolve, one range, one encoding, under the analyser's own key.
      */
+    /**
+     * Whether a finished round's claim on [videoId] still describes what is on
+     * disk: the ranges that made it whole, on the entry it actually filled
+     * ([analysisHeadWant]'s key, which can be the substitute's), including the
+     * ending a capped copy needs. The cache's own eviction can take the tail and
+     * leave the opening; with only byte zero checked, the claim then refused
+     * every background request and the outro was never measured again.
+     */
+    private fun claimStillBacked(videoId: String, key: String): Boolean {
+        val want = analysisHeadWant[videoId] ?: return cachedBytesOf(key, 1L) > 0L
+        if (cachedBytesOf(want.key, want.size) < want.size) return false
+        val length = runCatching { ContentMetadata.getContentLength(cache.getContentMetadata(want.key)) }
+            .getOrDefault(C.LENGTH_UNSET.toLong())
+        if (length <= MAX_ANALYSIS_TRACK_BYTES) return true
+        val tail = minOf(ANALYSIS_TAIL_BYTES, length - MAX_ANALYSIS_TRACK_BYTES)
+        return cache.getCachedBytes(want.key, length - tail, tail) >= tail
+    }
+
     private fun analysisHeadSize(total: Long): Long =
         if (total > 0) minOf(total, MAX_ANALYSIS_TRACK_BYTES) else MAX_ANALYSIS_HEAD_BYTES
 
@@ -3346,7 +3380,12 @@ object AudioCache {
         if (!::cache.isInitialized) return false
         return headAndTailCovered(
             length = rendition.contentLength,
-            cachedPrefix = rendition.cachedPrefix,
+            // The snapshot's prefix as a cheap gate, and the live cache's too:
+            // an opening evicted since the snapshot is not there to read.
+            cachedPrefix = minOf(
+                rendition.cachedPrefix,
+                cache.getCachedBytes(rendition.key, 0, MAX_ANALYSIS_TRACK_BYTES),
+            ),
             cap = MAX_ANALYSIS_TRACK_BYTES,
             tailBytes = ANALYSIS_TAIL_BYTES,
         ) { from, bytes -> cache.getCachedBytes(rendition.key, from, bytes) }
@@ -3472,6 +3511,21 @@ object AudioCache {
     }
 
     private val renditionKeys = ConcurrentHashMap<String, Pair<Long, List<String>>>()
+
+    /** Latest playback open's bound entry per video id, oldest dropped first. Guarded by itself. */
+    private val boundKeys = object : LinkedHashMap<String, String>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?) = size > BOUND_KEYS_KEPT
+    }.let { java.util.Collections.synchronizedMap(it) }
+
+    /**
+     * The entry the player's latest open of [uri]'s track was bound to, or
+     * null when it has not opened it this session. Unlike [cacheKeyOf], which
+     * answers under the settings as they are now, this is what the player
+     * actually reads.
+     */
+    fun boundKeyOf(uri: Uri): String? = uri.getQueryParameter("v")?.let { boundKeys[it] }
+
+    private const val BOUND_KEYS_KEPT = 64
 
     /** The cache key [uri] itself resolves to right now — the rendition the player is using. */
     fun cacheKeyOf(uri: Uri): String = keyFactory.buildCacheKey(DataSpec(uri))

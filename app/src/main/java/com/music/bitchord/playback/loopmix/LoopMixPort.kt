@@ -34,7 +34,14 @@ class LoopMixPort {
         val sampleRate: Int,
         /** The first mix frame the renderer needs to see (its decks' pre-roll). */
         val firstFrame: Long,
+        /** Renders mix frames into an interleaved stereo block: [renderer]'s, or a test's stand-in. */
+        val render: Render = Render(renderer::render),
     )
+
+    /** One block of the mix; a `fun interface`, so the playback thread's calls box nothing. */
+    fun interface Render {
+        fun render(frame: Long, interleaved: FloatArray, offset: Int, frames: Int): Boolean
+    }
 
     class InArm(
         /** Track microseconds at which this player becomes audible. */
@@ -81,8 +88,10 @@ class LoopMixPort {
      * answer is final, not a reading a sink mid-buffer can overtake.
      */
     fun disarm(): Boolean = synchronized(lock) {
-        armed = Armed(armed.generation + 1, null, null)
-        tookOver
+        // The status of the arm being removed, not a flag an earlier arm left.
+        val removed = armed.generation
+        armed = Armed(removed + 1, null, null)
+        tookOverAt == removed
     }
 
     /**
@@ -91,7 +100,7 @@ class LoopMixPort {
      */
     fun commitTakeover(generation: Int): Boolean = synchronized(lock) {
         if (armed.generation != generation) return@synchronized false
-        tookOver = true
+        tookOverAt = generation
         true
     }
 
@@ -102,15 +111,8 @@ class LoopMixPort {
      */
     fun interrupt(generation: Int): Boolean = synchronized(lock) {
         if (armed.generation != generation) return@synchronized false
-        interrupted = true
+        interruptedAt = generation
         true
-    }
-
-    /** A sink adopting [generation]: its status starts clean, unless that arm was replaced meanwhile. */
-    fun resetStatus(generation: Int) = synchronized(lock) {
-        if (armed.generation != generation) return@synchronized
-        tookOver = false
-        interrupted = false
     }
 
     // ---- What the sink publishes ---------------------------------------------------------
@@ -125,13 +127,19 @@ class LoopMixPort {
     /** The renderer timebase's offset: track µs = presentation µs - this. */
     @Volatile var streamOffsetUs: Long = 0L
 
-    /** True from the block where the outgoing sink switched to the renderer. */
-    @Volatile var tookOver: Boolean = false
-        private set
+    /** The generation whose takeover the sink committed, and the one it interrupted. */
+    @Volatile private var tookOverAt = NO_GENERATION
+    @Volatile private var interruptedAt = NO_GENERATION
+
+    /**
+     * True from the first block the outgoing sink mixed the renderer into (the
+     * start of the audible crossing, just before the loop start), for the arm
+     * armed now.
+     */
+    val tookOver: Boolean get() = tookOverAt == armed.generation
 
     /** Set by a flush or a reset: whatever was armed is gone (a seek, a stop). Only for the arm still armed ([interrupt]). */
-    @Volatile var interrupted: Boolean = false
-        private set
+    val interrupted: Boolean get() = interruptedAt == armed.generation
 
     /**
      * The last position reading, in track µs, and when it was taken
@@ -147,6 +155,13 @@ class LoopMixPort {
     @Volatile private var positionGeneration = -1
 
     /**
+     * How long after the reading the delegate's clock and the track's still
+     * advance together, µs: up to the next shift's boundary, 0 inside inserted
+     * silence (the track holds still while the delegate plays it).
+     */
+    @Volatile private var positionSteadyUs = Long.MAX_VALUE
+
+    /**
      * Odd while [publishPosition] is between its writes. The pair is read
      * as one: a new position with the old time would extrapolate it ahead by
      * the gap between readings, a whole correction's worth of error.
@@ -159,11 +174,12 @@ class LoopMixPort {
      * lands between the clock read and this call must not relabel the older
      * reading as its own.
      */
-    fun publishPosition(us: Long, nanos: Long, takenUnder: Int) {
+    fun publishPosition(us: Long, nanos: Long, takenUnder: Int, steadyUs: Long = Long.MAX_VALUE) {
         positionSeq++
         positionUs = us
         positionNanos = nanos
         positionGeneration = takenUnder
+        positionSteadyUs = steadyUs
         positionSeq++
     }
 
@@ -180,11 +196,15 @@ class LoopMixPort {
             val position = positionUs
             val at = positionNanos
             val taken = positionGeneration
+            val steady = positionSteadyUs
             if (positionSeq != seq) continue
             // A reading from an earlier arm (this player's last mix, before a
             // pause or a gap) says nothing about this one.
             if (position == C.TIME_UNSET || taken != generation) return null
             val elapsed = if (playing) (nowNanos - at) / 1e9 else 0.0
+            // Projected across a shift's boundary, or through inserted silence,
+            // the track would not have moved as the clock did: no sample.
+            if (elapsed > 0 && elapsed * 1e6 > steady) return null
             return position / 1e6 + elapsed
         }
         return null
@@ -253,5 +273,8 @@ class LoopMixPort {
 
     companion object {
         const val SPLICE_CAPTURE = 8192
+
+        /** No arm: generations start at 0 and only go up. */
+        private const val NO_GENERATION = -1
     }
 }

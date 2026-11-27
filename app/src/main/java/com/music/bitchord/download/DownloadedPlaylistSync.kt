@@ -197,6 +197,31 @@ object DownloadedPlaylistSync {
         if (on) refresh(context, YtMusicRepository.LIKED_MUSIC, force = true)
     }
 
+    /**
+     * Bring the Liked Music record's switch and [AppSettings.downloadLikedSongs]
+     * back into agreement before the setting decides this pass.
+     *
+     * The Settings row and the Liked Music page show the switch On when the
+     * record is On, so a record On with the setting Off was a switch that
+     * looked On while every pass refused it. See [likedSwitchReconciliation].
+     */
+    private fun reconcileLikedSwitch() {
+        Downloads.withCollectionsHeld {
+            val record = Downloads.collectionFor(YtMusicRepository.LIKED_MUSIC) ?: return@withCollectionsHeld
+            when (
+                likedSwitchReconciliation(
+                    recordOn = record.autoDownload,
+                    settingOn = AppSettings.downloadLikedSongs.value,
+                    settingChosen = AppSettings.downloadLikedSongsChosen,
+                )
+            ) {
+                LikedSwitchFix.SETTING_ON -> AppSettings.setDownloadLikedSongs(true)
+                LikedSwitchFix.RECORD_OFF -> Downloads.setAutoDownloadNewSongs(record.id, false)
+                LikedSwitchFix.NONE -> Unit
+            }
+        }
+    }
+
     /** When each playlist was last looked at, so one is not walked twice. */
     private val refreshedAt = ConcurrentHashMap<String, Long>()
 
@@ -223,6 +248,7 @@ object DownloadedPlaylistSync {
         // exactly the answer that makes this pass a no-op. So the pass waits
         // for the answer it is going to act on.
         Downloads.awaitIndexReady()
+        reconcileLikedSwitch()
         val collections = collectionsToSync(
             syncable = Downloads.syncableCollections(),
             all = Downloads.collections.value,
@@ -485,3 +511,25 @@ internal fun <S> admitForListener(
     }
     return whileListener(readFor, admit) != null
 }
+
+/** What [likedSwitchReconciliation] changes so the record and the setting agree. */
+internal enum class LikedSwitchFix { NONE, SETTING_ON, RECORD_OFF }
+
+/**
+ * How a Liked Music record's switch and the keep-liked setting are brought into
+ * agreement when they differ.
+ *
+ * The setting is the listener's word once they have set it: [setKeepLiked]
+ * writes it first and the record after, so a record left On under an explicit
+ * Off is an Off whose second half never landed, and is finished. A setting
+ * never chosen leaves the record's switch as the only choice made, so it wins.
+ * A record Off under a setting On is not a disagreement the sync acts on: the
+ * setting already keeps the songs coming.
+ */
+internal fun likedSwitchReconciliation(recordOn: Boolean, settingOn: Boolean, settingChosen: Boolean): LikedSwitchFix =
+    when {
+        !recordOn || settingOn -> LikedSwitchFix.NONE
+        settingChosen -> LikedSwitchFix.RECORD_OFF
+        else -> LikedSwitchFix.SETTING_ON
+    }
+
