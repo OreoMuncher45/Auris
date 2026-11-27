@@ -88,6 +88,9 @@ class KuGouTest {
         assertTrue(instrumental("[00:00.00]纯音乐，请欣赏"))
         assertTrue(instrumental("[00:00.00]纯音乐,请欣赏"))
         assertTrue(instrumental("[00:00.00]此歌曲为没有填词的纯音乐，请您欣赏"))
+        // A sung line that only mentions the notice is a lyric.
+        assertFalse(instrumental("[00:00.00]这不是纯音乐，请欣赏我的歌声"))
+        assertFalse(instrumental("[00:00.00]纯音乐请欣赏我的歌声"))
     }
 
     @Test

@@ -591,7 +591,9 @@ object TrackMatcher {
                 if (tail.groupValues[1] !in TRAILING_NOISE) break
                 coreText = coreText.substring(0, tail.range.first)
             }
-            coreText.replace(Regex("""[\s\p{Punct}・～〜ー-]+"""), "")
+            // Latin folded as the other branch's is, so "Café 東京" and
+            // "Cafe 東京" share a core.
+            foldLatin(coreText.replace(Regex("""[\s\p{Punct}・～〜ー-]+"""), ""))
         } else {
             foldLatin(words.joinToString(""))
         }
@@ -851,16 +853,21 @@ object TrackMatcher {
     internal fun isImitationCredit(wanted: String, got: String): Boolean {
         // Folded as [artistNames] is, or an unaccented "Muslum Gurses Cover"
         // would share a credit with "Müslüm Gürses" yet not be named after it.
+        // Split before folding, as [artistNames] does: an accented "Ánd" folds
+        // to "and" and would be taken for a separator.
+        // The whole credit, folded, is still what the phrases are read in.
         val have = foldLatin(normalize(got))
         if (have.isBlank()) return false
         val want = foldLatin(normalize(wanted))
+        val haveNames = normalize(got).split(ARTIST_SEPARATORS).map(::foldLatin)
+        val wantSplit = normalize(wanted).split(ARTIST_SEPARATORS).map(::foldLatin)
         // Longest first, so "Cover Drive" is taken off before a shorter
         // requested "Drive" could leave a stray "cover" behind.
-        val wantNames = want.split(ARTIST_SEPARATORS).map(::creditWords).filter { it.isNotEmpty() }
+        val wantNames = wantSplit.map(::creditWords).filter { it.isNotEmpty() }
             .sortedByDescending { it.size }
         // Each credited name on its own, so a genuine extra artist ("River
         // Lane, Cover Drive") is judged as that artist and not as an act.
-        val imitation = have.split(ARTIST_SEPARATORS).any { name ->
+        val imitation = haveNames.any { name ->
             val words = creditWords(name)
             // What this name says beyond a requested artist it is built on:
             // "Cover Drive Cover Band" is "Cover Drive" plus "cover band".
@@ -901,10 +908,12 @@ object TrackMatcher {
      * "Atif Aslam, Tulsi Kumar". Single letters go — an initialled
      * "A. R. Rahman" and a plain "AR Rahman" are the same person.
      */
-    internal fun artistNames(value: String): Set<List<String>> = foldLatin(normalize(value))
+    internal fun artistNames(value: String): Set<List<String>> = normalize(value)
+        // Split before folding: an accented "Ánd" folds to "and", and split
+        // after it would be taken for a separator and lost.
         .split(ARTIST_SEPARATORS)
         .map { name ->
-            name.split(WORD_SPLIT)
+            foldLatin(name).split(WORD_SPLIT)
                 .map { it.replace(NON_ALNUM, "") }
                 .filter { it.length > 1 }
         }
