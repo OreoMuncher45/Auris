@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.components
 
+import androidx.compose.ui.semantics.Role
+import androidx.compose.foundation.selection.toggleable
 import com.music.bitchord.R
 
 import android.net.Uri
@@ -891,7 +893,14 @@ private fun SleepFadeOption(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(enabled = interactive) { onCheckedChange(!checked) }
+            // One control for TalkBack: the label, its state and the toggle
+            // together, the switch itself drawing only.
+            .toggleable(
+                value = checked,
+                enabled = interactive,
+                role = Role.Switch,
+                onValueChange = onCheckedChange,
+            )
             .padding(start = 22.dp, end = 16.dp, top = 11.dp, bottom = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -910,7 +919,7 @@ private fun SleepFadeOption(
         Spacer(Modifier.width(12.dp))
         Switch(
             checked = checked,
-            onCheckedChange = onCheckedChange,
+            onCheckedChange = null,
             enabled = interactive,
             colors = SwitchDefaults.colors(
                 checkedTrackColor = accent,
