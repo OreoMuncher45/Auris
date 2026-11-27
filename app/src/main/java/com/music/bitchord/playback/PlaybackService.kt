@@ -2269,6 +2269,7 @@ class PlaybackService : MediaLibraryService() {
                 }
             },
             analysisRunningFor = { item -> trackAnalyzer.isAnalysing(item.mediaId) },
+            analysisProvisionalFor = { item -> trackAnalyzer.isProvisional(item.mediaId) },
             // The standby is still the spare when this runs — it only becomes
             // the session player at the handoff — so the incoming track is
             // levelled on its own sink before it renders a frame, and the
