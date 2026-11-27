@@ -594,6 +594,11 @@ class PrecisionAudioSink(
         }
         if (exclusiveActive || !isPrecisionActive) return
         if (exclusiveAdoptionSuppressed) return
+        // Not mid-mix: once the crossing is audible (or the incoming side has
+        // started its handover), the flush adoption makes would cut the song
+        // back in over it. The controller retires the mix on bit-perfect
+        // within a tick; adoption follows on the first buffer after.
+        if (loopAudibleHere()) return
         val session = exclusiveUsb ?: return
         if (!isAudible()) return
         // A live session belongs to the other sink; do not feed two clocks
@@ -809,11 +814,18 @@ class PrecisionAudioSink(
         // meantime would feed the renderer a region it has already played.
         // One that never processed anything is not marked interrupted, so the
         // start-up flush still leaves it armed.
+        // A mix that failed after the takeover (its renderer closed under it)
+        // stays silent here until the controller retires it: the held song
+        // input carries a timestamp the mix has already played past, so
+        // resuming it would replay that stretch of the song.
+        if (armed.out != null && loopGenerating && port.interrupted) return false
         val outArm = armed.out?.takeIf { !port.interrupted }?.let { arm ->
             // Built for another rate than this sink now runs at (a reset and a
             // reconfigure since it was armed, or a sink that changed rate
             // before the arm landed): its frames and timestamps would be wrong.
-            if (configuredSampleRate > 0 && arm.sampleRate != configuredSampleRate) {
+            // Likewise a sink no longer stereo: the renderer writes two floats
+            // a frame, so every block would be refused without a word.
+            if ((configuredSampleRate > 0 && arm.sampleRate != configuredSampleRate) || audioBlock.channelCount != 2) {
                 port.interrupt(armed.generation)
                 loopGenerating = false
                 null
@@ -996,9 +1008,9 @@ class PrecisionAudioSink(
                 port.processedUs = blockTimeUs - port.streamOffsetUs +
                     Util.sampleCountToDurationUs(decodedFrames.toLong(), configuredSampleRate)
             }
-            // Committed against the arm this buffer read: a disarm since then
-            // refuses it, and the song plays on (the controller is settling).
-            if (tookOverHere && port.commitTakeover(armed.generation)) {
+            // Committed in [spliceLoop], at the first audible block, before
+            // anything was mixed in: this is the block the mix reaches frame 0.
+            if (tookOverHere) {
                 // From here the mix is what plays: the rest of the song's input
                 // stays where it is, and the renderer's blocks follow on.
                 loopGenerating = true
@@ -1076,7 +1088,12 @@ class PrecisionAudioSink(
         }
         val port = loop
         if (port.outArm != null || port.inArm != null) {
-            port.publishPosition(position - port.streamOffsetUs, System.nanoTime(), loopGenerationBefore)
+            port.publishPosition(
+                position - port.streamOffsetUs,
+                System.nanoTime(),
+                loopGenerationBefore,
+                steadyUs = shifts.steadyUs(delegatePosition),
+            )
         }
         return position
     }
@@ -1099,6 +1116,10 @@ class PrecisionAudioSink(
         port.resetStatus(generation)
         port.resetSplice()
     }
+
+    /** Whether the arm armed now is audible on this sink: crossing, generating, or the incoming side started. */
+    private fun loopAudibleHere(): Boolean =
+        loop.armed.generation == loopGeneration && (loopCrossing || loopGenerating || loopInStarted)
 
     /**
      * The outgoing side, block by block until the loop start: renders the mix
@@ -1124,13 +1145,19 @@ class PrecisionAudioSink(
             loop.interrupt(loopGeneration)
             return false
         }
-        if (!arm.renderer.render(start, loopScratch, 0, frames)) {
+        if (!arm.render.render(start, loopScratch, 0, frames)) {
             // Closed under the arm: no mix to cross into, so the song plays on.
             loop.interrupt(loopGeneration)
             return false
         }
         loopRendering = true
-        if (end > -handover) loopCrossing = true
+        if (end > -handover && !loopCrossing) {
+            // The first block anything of the mix is heard in: the takeover is
+            // decided here, against a disarm, before a sample is changed. A
+            // disarm that won leaves this block, and the song, untouched.
+            if (!loop.commitTakeover(loopGeneration)) return false
+            loopCrossing = true
+        }
         val samples = audioBlock.samples
         val port = loop
         val capture = LoopMixPort.SPLICE_CAPTURE
@@ -1180,7 +1207,7 @@ class PrecisionAudioSink(
         repeat(LOOP_MAX_GENERATED_BLOCKS) {
             val frames = minOf(LOOP_GENERATED_FRAMES, audioBlock.capacityFrames)
             audioBlock.reset(frames)
-            if (!arm.renderer.render(loopNextFrame, audioBlock.samples, 0, frames)) {
+            if (!arm.render.render(loopNextFrame, audioBlock.samples, 0, frames)) {
                 // Closed under the arm: silence, not a stale block, until the controller retires it.
                 audioBlock.samples.fill(0f, 0, frames * audioBlock.channelCount)
                 loop.interrupt(loopGeneration)

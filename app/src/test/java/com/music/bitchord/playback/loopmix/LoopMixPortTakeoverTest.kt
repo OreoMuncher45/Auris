@@ -48,4 +48,23 @@ class LoopMixPortTakeoverTest {
         port.resetStatus(a) // a late adoption of A
         assertTrue("arm B's takeover was wiped", port.tookOver)
     }
+
+    @Test
+    fun aDisarmReportsTheTakeoverOfTheArmItRemovesNotAnEarlierOnes() {
+        val port = armedPort()
+        // Arm A commits its takeover.
+        assertTrue(port.commitTakeover(port.armed.generation))
+        // Arm B replaces it and is disarmed before any sink adopts it.
+        port.armOutgoing(LoopMixPort.OutArm(LoopMixRenderer(48_000), takeoverUs = 0L, sampleRate = 48_000, firstFrame = 0L))
+        assertFalse("arm B reads as taken over", port.tookOver)
+        assertFalse("arm B never committed a takeover", port.disarm())
+    }
+
+    @Test
+    fun aNewArmStartsUninterrupted() {
+        val port = armedPort()
+        assertTrue(port.interrupt(port.armed.generation))
+        port.armOutgoing(LoopMixPort.OutArm(LoopMixRenderer(48_000), takeoverUs = 0L, sampleRate = 48_000, firstFrame = 0L))
+        assertFalse(port.interrupted)
+    }
 }
