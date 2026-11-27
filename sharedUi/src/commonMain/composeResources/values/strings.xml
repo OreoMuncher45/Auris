@@ -81,6 +81,8 @@
     <string name="clear">Clear</string>
     <string name="close_lyrics">Close lyrics</string>
     <string name="close_player">Close player</string>
+    <string name="convert_to_video">Convert to Video</string>
+    <string name="convert_to_video_description">Convert to Video. This prompt disappears in five seconds.</string>
     <string name="playing_from_label">Playing from</string>
     <string name="played_by_label">Played by</string>
     <string name="data_saver">Data-Saver</string>

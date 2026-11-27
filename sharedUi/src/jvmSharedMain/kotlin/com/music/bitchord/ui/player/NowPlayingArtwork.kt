@@ -291,6 +291,8 @@ internal fun BoxScope.PortraitSleeve(
     song: Song,
     spotifyChromeAlpha: () -> Float,
     onDismissBandTop: (Float) -> Unit,
+    /** The one-shot conversion offer, above the artwork's pinned stats. */
+    convertToVideo: @Composable (Modifier) -> Unit = {},
 ) {
     // The cover on its way out until it has gone, then the playing track's —
     // see [TrackChangeMotion.shownKey]. Read here rather than by the screen,
@@ -784,18 +786,24 @@ internal fun BoxScope.PortraitSleeve(
     ) {
         // Measured stats stay on the sleeve's bottom centre. They
         // fade away with Spotify's lower control deck rather than
-        // following the compact credits to the bottom edge.
+        // following the compact credits to the bottom edge. The
+        // temporary prompt stacks above them without moving them.
         WhileShown({ !collapsePastHalf() }) {
-            SleeveNerdStats(
-                song = song,
-                isPlaying = isPlaying,
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(horizontal = 10.dp, vertical = 8.dp)
                     .graphicsLayer {
                         alpha = (1f - p() * 2f) * spotifyChromeAlpha()
                     },
-            )
+            ) {
+                convertToVideo(Modifier.padding(bottom = CONVERT_PROMPT_INSET))
+                SleeveNerdStats(
+                    song = song,
+                    isPlaying = isPlaying,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                )
+            }
         }
     }
 
@@ -944,3 +952,6 @@ internal fun bannerDissolveRamp(startY: Float, endY: Float): Brush {
     }
     return Brush.verticalGradient(colorStops = colorStops, startY = startY, endY = endY)
 }
+
+/** The conversion prompt's gap above the foot of the artwork. */
+internal val CONVERT_PROMPT_INSET = 14.dp

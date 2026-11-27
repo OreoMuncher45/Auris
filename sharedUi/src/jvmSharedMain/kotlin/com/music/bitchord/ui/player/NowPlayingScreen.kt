@@ -1270,6 +1270,8 @@ fun NowPlayingScreen(
     /** A version switch (video vs audio-only), triggered from the player's
      * menu, is fetching and measuring the target cut. */
     audioVersionSwitching: Boolean,
+    /** Android's one-shot explicit conversion offer; null everywhere else. */
+    videoConversionPrompt: VideoConversionPrompt? = null,
     /** The player has just swapped this item to a higher-quality source. */
     qualityUpgraded: Boolean,
     queue: List<Song>,
@@ -2429,6 +2431,12 @@ fun NowPlayingScreen(
         density = density,
     )
 
+    val convertToVideo: @Composable (Modifier) -> Unit = { pillModifier ->
+        videoConversionPrompt?.let { prompt ->
+            ConvertToVideoPill(prompt = prompt, modifier = pillModifier)
+        }
+    }
+
     if (landscape) {
         PlayerColors(
             ink = playerInkState,
@@ -2515,6 +2523,7 @@ fun NowPlayingScreen(
                 sleeveLayer = sleeveLayer,
                 dockHost = dockHost,
                 modifier = modifier,
+                convertToVideo = convertToVideo,
             )
         }
         return
@@ -3197,6 +3206,7 @@ fun NowPlayingScreen(
                     song = song,
                     spotifyChromeAlpha = { spotifyChromeAlpha },
                     onDismissBandTop = { measures.dismissBandTop = it },
+                    convertToVideo = convertToVideo,
                 )
 
                 // ---- Title + menu ----
