@@ -162,9 +162,27 @@ object AutomixModels {
 
     private fun fileFor(model: Model): File? = filesDir?.let { File(it, model.fileName) }
 
+    /** Where an extracted model records the digest of the weights it was unpacked from. */
+    private fun digestFileOf(file: File): File = File(file.parentFile, "${file.name}.sha256")
+
+    /**
+     * Whether [file] is [model] as this build ships it. The size alone is not
+     * enough: an update can ship new weights of the same size, and the stale
+     * extracted file was kept. So the digest recorded beside it has to match
+     * the bundled model's too.
+     */
+    internal fun extractedIsCurrent(file: File, model: Model): Boolean {
+        if (file.length() != model.bytes) return false
+        val recorded = digestFileOf(file)
+        return recorded.isFile && runCatching { recorded.readText().trim() }.getOrNull() == model.sha256
+    }
+
     /** The bundled copy, unpacked once; a copy cut short by a crash is the wrong size and unpacked again. */
     private fun unpacked(model: Model, file: File): String {
-        if (file.length() != model.bytes) {
+        if (!extractedIsCurrent(file, model)) {
+            // Gone before the new file goes in: a kill part way leaves no
+            // record claiming the old file is current.
+            digestFileOf(file).delete()
             val source = assets ?: throw FileNotFoundException("AutomixModels.install was never called")
             // Unpacked aside and renamed into place, so a reader opening the
             // model while another call unpacks it sees the old whole file or
@@ -177,6 +195,7 @@ object AutomixModels {
                 if (!staging.renameTo(file) && file.length() != model.bytes) {
                     throw java.io.IOException("could not move ${model.fileName} into place")
                 }
+                digestFileOf(file).writeText(model.sha256)
             } finally {
                 staging.delete()
             }
