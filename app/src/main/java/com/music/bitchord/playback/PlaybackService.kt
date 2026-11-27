@@ -914,7 +914,6 @@ private enum class SearchProvider { SPOTIFY, YOUTUBE }
 
    private fun isHomeFresh(): Boolean =
         snapshotHome()?.let { isFresh(it.at, HOME_CACHE_TTL_MS) } ?: false
-        cachedHome?.let { (at, _) -> isFresh(at, HOME_CACHE_TTL_MS) } ?: false
 
     private data class YtScopedSongs(
         val cookie: String?,
@@ -11848,43 +11847,6 @@ if (locked()) {
                             }
                         }
                     }
-                        refreshFolderInBackground(session, parentId, params) {
-                            val refreshed = coroutineScope {
-                                val rDl = if (needRefreshDl) async { fetchFreshSpotifyDaylist() } else null
-                                val rSpHome = if (needRefreshSpHome) async { fetchFreshSpotifyHomeFeed() } else null
-                                val rRec = if (needRefreshRecents) async { fetchFreshRecentsSongs() } else null
-                                val rQuick = if (needRefreshQuick) async { fetchFreshQuickPicksSongs() } else null
-                                val rYtHome = if (needRefreshYtHome) async { fetchFreshHomeFeed() } else null
-                                SpotifyHubBundle(
-                                    daylist = rDl?.await(),
-                                    spHome = rSpHome?.await(),
-                                    recents = rRec?.await().orEmpty(),
-                                    quickPicks = rQuick?.await().orEmpty(),
-                                    ytHome = rYtHome?.await(),
-                                )
-                            }
-                            val updated = refreshed.daylist != null ||
-                                refreshed.spHome != null ||
-                                refreshed.recents.isNotEmpty() ||
-                                refreshed.quickPicks.isNotEmpty() ||
-                                refreshed.ytHome != null
-                            if (!updated) {
-                                null
-                            } else {
-                                val signedInNow = currentSpotifyToken() != null
-                                buildSpotifyHubItems(
-                                    spotifySignedIn = signedInNow,
-                                    daylist = if (signedInNow) snapshotSpotifyDaylist() else null,
-                                    spHome = if (signedInNow) snapshotSpotifyHome() else null,
-                                    recents = snapshotRecents(),
-                                    quickPicks = snapshotQuickPicks(),
-                                    ytHome = snapshotHome(),
-                                    updateCaches = false,
-                                ).size
-                            }
-                        }
-                    }
-
                     buildSpotifyHubItems(
                         spotifySignedIn = spotifySignedIn,
                         daylist = daylist,
@@ -13143,9 +13105,35 @@ return@withContext null
                                 }
                             }
                         }
-                        if (matchedFromSpotify.isNotEmpty()) {
+if (matchedFromSpotify.isNotEmpty()) {
                             resolved.addForSession(inputIndex, matchedFromSpotify)
-}
+                        } else {
+                            val cachedYt = autoSearchCache[searchQuery]
+                                ?.takeIf {
+                                    it.provider == SearchProvider.YOUTUBE &&
+                                        isSearchResponseValidForCurrentAccount(it)
+                                }
+                                ?.ytSongs
+                                ?: searchCache[searchQuery]?.first
+                            val rawSongs = if (!cachedYt.isNullOrEmpty()) {
+                                cachedYt
+                            } else {
+                                try {
+                                    withTimeoutOrNull(3_000L) {
+                                        com.music.bitchord.data.innertube.Innertube.asListener(bound) {
+                                            YtMusicRepository.search(searchQuery, SearchFilter.SONGS).getOrNull()
+                                                ?.mapNotNull { if (it is SearchResult.Track) it.song else null }
+                                        }
+                                    } ?: emptyList()
+                                } catch (_: Exception) {
+                                    emptyList()
+                                }
+                            }
+                            val songs = rawSongs.filterNot(AppSettings::isSongBlocked)
+                            cacheSongs(owner, songs)
+                            if (songs.isNotEmpty()) {
+                                resolved.addForSession(inputIndex, songs.map { it.toMediaItem() })
+                            }
                         }
                     }
                 }
@@ -13175,6 +13163,8 @@ return@withContext null
             )
         }
     }
+
+    private fun buildContentStyleBundle(browsableHint: Int, playableHint: Int): Bundle =
         Bundle().apply {
             putInt(EXTRA_CONTENT_STYLE_BROWSABLE_HINT, browsableHint)
             putInt(EXTRA_CONTENT_STYLE_PLAYABLE_HINT, playableHint)
@@ -13214,7 +13204,7 @@ return@withContext null
         return items.subList(from, to)
     }
 
-private fun spotifyPlaylistToGridItem(playlist: SpotifyPlaylist): MediaItem = 
+private fun createGridPlaylistItem(
         mediaId: String,
         title: String,
         subtitle: String? = null,
@@ -13327,7 +13317,135 @@ private fun spotifyPlaylistToGridItem(playlist: SpotifyPlaylist): MediaItem =
         }
         else -> null
     }
+private data class SpotifyHubBundle(
+        val daylist: SpotifyPlaylist?,
+        val spHome: SpotifyHomeFeed?,
+        val recents: List<Song>,
+        val quickPicks: List<Song>,
+        val ytHome: com.music.bitchord.data.model.HomeFeed?,
+    )
 
+    private fun buildSpotifyHubItems(
+        spotifySignedIn: Boolean,
+        daylist: SpotifyPlaylist?,
+        spHome: SpotifyHomeFeed?,
+        recents: List<Song>,
+        quickPicks: List<Song>,
+        ytHome: com.music.bitchord.data.model.HomeFeed?,
+        updateCaches: Boolean,
+        owner: ListenerStamp = listenerStamp(),
+    ): List<MediaItem> {
+        val appName = getString(R.string.app_name)
+        val out = mutableListOf<MediaItem>()
+        val seenIds = HashSet<String>()
+
+        if (!spotifySignedIn) {
+            out += createInfoItem(
+                "msg:spotify_login",
+                getString(R.string.auto_spotify_login_title),
+                getString(R.string.auto_spotify_login_subtitle, appName),
+            )
+        }
+
+        val madeForYouTitle = getString(R.string.auto_made_for_you)
+        daylist?.let { dl ->
+            if (seenIds.add("spotify_playlist:${dl.id}")) {
+                out += spotifyPlaylistToGridItem(dl).withGroupTitle(madeForYouTitle)
+            }
+        }
+
+        val jumpBackInTitle = getString(R.string.auto_jump_back_in)
+        spHome?.shortcuts.orEmpty().forEach { card ->
+            spotifyCardToMediaItem(card, updateCaches = updateCaches, owner = owner)?.let { mediaItem ->
+                if (seenIds.add(mediaItem.mediaId)) {
+                    out += mediaItem.withGroupTitle(jumpBackInTitle)
+                }
+            }
+        }
+        spHome?.shelves.orEmpty().forEach { shelf ->
+            val sectionTitle = shelf.title.ifBlank { madeForYouTitle }
+            shelf.cards.forEach { card ->
+                spotifyCardToMediaItem(card, updateCaches = updateCaches, owner = owner)?.let { mediaItem ->
+                    if (seenIds.add(mediaItem.mediaId)) {
+                        out += mediaItem.withGroupTitle(sectionTitle)
+                    }
+                }
+            }
+        }
+
+        val eligibleFlowSongs = com.music.bitchord.data.flow.FlowStore.readSnapshot()
+            ?.first
+            ?.filterNot(AppSettings::isSongBlocked)
+            .orEmpty()
+        val eligibleQuickPicks = quickPicks.filterNot(AppSettings::isSongBlocked)
+        val flowSongs = eligibleFlowSongs.ifEmpty { eligibleQuickPicks }
+        if (flowSongs.isNotEmpty() && seenIds.add(MEDIA_FLOW_PLAY_ID)) {
+            out += createFlowPlayItem(flowSongs).withGroupTitle(madeForYouTitle)
+        }
+
+        val recentsTitle = getString(R.string.auto_recents)
+        recents.filterNot(AppSettings::isSongBlocked).take(6).forEach { song ->
+            if (seenIds.add(song.videoId)) {
+                if (updateCaches) {
+                    cacheSongs(owner, listOf(song))
+                    clearAutoParent(song.videoId)
+                }
+                out += song.toMediaItem().withGroupTitle(recentsTitle)
+            }
+        }
+
+        val quickPicksTitle = getString(R.string.auto_quick_picks)
+        eligibleQuickPicks.take(8).forEach { song ->
+            if (seenIds.add(song.videoId)) {
+                if (updateCaches) {
+                    cacheSongs(owner, listOf(song))
+                    clearAutoParent(song.videoId)
+                }
+                out += song.toMediaItem().withGroupTitle(quickPicksTitle)
+            }
+        }
+
+        val recommendedTitle = getString(R.string.auto_recommended)
+        ytHome?.shelves.orEmpty().forEach { shelf ->
+            val sectionTitle = shelf.title.ifBlank { recommendedTitle }
+            shelf.items.forEach { shelfItem ->
+                val song = shelfItem.toSongOrNull()
+                val browseId = shelfItem.browseId
+                if (song != null && !AppSettings.isSongBlocked(song)) {
+                    if (seenIds.add(song.videoId)) {
+                        if (updateCaches) {
+                            cacheSongs(owner, listOf(song))
+                            clearAutoParent(song.videoId)
+                        }
+                        out += song.toMediaItem().withGroupTitle(sectionTitle)
+                    }
+                } else if (browseId != null) {
+                    val gridItem = shelfToGridPlaylistItem(shelfItem)
+                    if (seenIds.add(gridItem.mediaId)) {
+                        out += gridItem.withGroupTitle(sectionTitle)
+                    }
+                }
+            }
+        }
+
+        val hasContent = out.any { !it.mediaId.startsWith("msg:") }
+        if (!hasContent) {
+            val fallbackDownloads = Downloads.snapshotSongs()
+                .filterNot(AppSettings::isSongBlocked)
+            val fallbackTitle = getString(R.string.auto_recent_and_downloads)
+            fallbackDownloads.forEach { song ->
+                if (seenIds.add(song.videoId)) {
+                    if (updateCaches) {
+                        cacheSharedSongs(listOf(song))
+                        clearAutoParent(song.videoId)
+                    }
+                    out += song.toMediaItem().withGroupTitle(fallbackTitle)
+                }
+            }
+        }
+
+        return out
+    }
     private fun createFlowPlayItem(eligibleSongs: List<Song>? = null): MediaItem {
         val songs = eligibleSongs ?: (
             com.music.bitchord.data.flow.FlowStore.readSnapshot()
