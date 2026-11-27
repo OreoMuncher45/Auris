@@ -661,22 +661,24 @@ class PlaybackService : MediaLibraryService() {
         autoContinuationEpoch++
     }
 
-    /** The Auto queue handed to Media3 and not yet installed; see [PendingAutoInstall]. Main thread only. */
-    private var pendingAutoInstall: PendingAutoInstall? = null
+    /** The Auto queues handed to Media3 and not installed or refused yet; see [PendingAutoInstalls]. Main thread only. */
+    private val pendingAutoInstalls = PendingAutoInstalls()
 
     /**
-     * Whether [items] are the pending Auto queue and the session it was built
+     * Whether [items] are a pending Auto queue and the session it was built
      * for is no longer the one signed in: an account switch, even one away and
      * back, landed between the build and the install. That queue is not
      * installed, and its continuation stops, so a folder listed for one
-     * account never starts playing under another. Main thread only.
+     * account never starts playing under another. A queue of no account is
+     * never refused. Main thread only.
+     *
+     * Each queue is matched to its own record, so a second build landing
+     * before the first is installed can't leave the first unchecked.
      */
     private fun refusesStaleAutoInstall(items: List<MediaItem>): Boolean {
-        val pending = pendingAutoInstall ?: return false
-        val refuse = staleAutoInstall(pending, items.size, { items.getOrNull(it)?.queueEntryId }, listenerStamp())
-            ?: return false
-        if (!refuse) return false
-        pendingAutoInstall = null
+        val entryAt = { index: Int -> items.getOrNull(index)?.queueEntryId }
+        val pending = pendingAutoInstalls.refuses(items.size, entryAt, listenerStamp()) ?: return false
+        pendingAutoInstalls.refused(pending)
         Log.w("BitChord", "Auto queue not installed: the account changed after it was built")
         clearAutoContinuation()
         // The controller that asked for it hears why nothing started, as it
@@ -686,15 +688,13 @@ class PlaybackService : MediaLibraryService() {
     }
 
     /**
-     * After a session player installed [items]: when they are the pending
-     * Auto queue, its continuation learns the entries the folder was installed
-     * as (a later queue carrying the same source id mints its own). Main
-     * thread only.
+     * After a session player installed [items]: when they are a pending Auto
+     * queue, its continuation learns the entries the folder was installed as
+     * (a later queue carrying the same source id mints its own). Main thread
+     * only.
      */
     private fun onSessionQueueSet(items: List<MediaItem>) {
-        val pending = pendingAutoInstall ?: return
-        staleAutoInstall(pending, items.size, { items.getOrNull(it)?.queueEntryId }, pending.owner) ?: return
-        pendingAutoInstall = null
+        val pending = pendingAutoInstalls.installedOrNull(items.size) { items.getOrNull(it)?.queueEntryId } ?: return
         pending.installed.complete(items.mapNotNullTo(HashSet()) { it.queueEntryId }.takeIf { it.isNotEmpty() })
     }
 
@@ -10304,7 +10304,26 @@ class PlaybackService : MediaLibraryService() {
          */
         private fun locked(): Boolean = ListenTogether.state.value.controlsLocked
 
+        /**
+         * Set when a queue was just refused here (see [refusesQueue]), until
+         * the main thread's current task ends. Media3's legacy play-from-media-id
+         * carries on into prepare and play in that same task, and the queue it
+         * would have replaced must not start because the new one was refused.
+         */
+        private var refusedThisTask = false
+
+        private fun refuse() {
+            refusedThisTask = true
+            android.os.Handler(android.os.Looper.getMainLooper()).post { refusedThisTask = false }
+        }
+
+        override fun prepare() {
+            if (refusedThisTask) return
+            super.prepare()
+        }
+
         override fun play() {
+            if (refusedThisTask) return
             // Locked, this plays only here — the party carries on untouched and
             // this device rejoins it wherever it has got to. See
             // [PartySync.onLockedTransport], which owns that catch-up.
@@ -10372,6 +10391,7 @@ class PlaybackService : MediaLibraryService() {
         }
 
         override fun setPlayWhenReady(playWhenReady: Boolean) {
+            if (playWhenReady && refusedThisTask) return
             if (lockedTransport(playWhenReady)) return
             if (playWhenReady) onUserIntent() else onAutoMixInterruptingIntent()
             if (playWhenReady && deferPlayToParty()) return
@@ -10454,7 +10474,8 @@ class PlaybackService : MediaLibraryService() {
         }
 
         override fun setMediaItems(mediaItems: List<MediaItem>, resetPosition: Boolean) {
-            if (locked() || refusesQueue(mediaItems)) return
+            if (locked()) return
+            if (refusesQueue(mediaItems)) return refuse()
             onAutoMixInterruptingIntent()
             super.setMediaItems(mediaItems, resetPosition)
             onQueueSet(mediaItems)
@@ -10465,7 +10486,8 @@ class PlaybackService : MediaLibraryService() {
             startIndex: Int,
             startPositionMs: Long,
         ) {
-            if (locked() || refusesQueue(mediaItems)) return
+            if (locked()) return
+            if (refusesQueue(mediaItems)) return refuse()
             onAutoMixInterruptingIntent()
             super.setMediaItems(mediaItems, startIndex, startPositionMs)
             onQueueSet(mediaItems)
@@ -10780,10 +10802,11 @@ class PlaybackService : MediaLibraryService() {
             page: Int,
             pageSize: Int,
             params: LibraryParams?,
-        ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> = scope.future(Dispatchers.IO) {
-            // The session these rows are listed in: a listing cached for its
-            // listener is cached again under it, and nothing lands after a switch.
-            val owner = listenerStamp()
+        ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> = answered { owner ->
+            // [owner]: the session these rows are listed in. A listing cached
+            // for its listener is cached again under it, nothing lands after a
+            // switch, and an account's folder is handed over under it or not
+            // at all (see [answered]).
             val isGridFolder = parentId == MEDIA_ROOT_ID || parentId == MEDIA_PLAYLISTS_ID
             val items: List<MediaItem> = when (parentId) {
                 MEDIA_ROOT_ID -> listOf(
@@ -11046,23 +11069,78 @@ class PlaybackService : MediaLibraryService() {
                     CONTENT_STYLE_LIST_ITEM_HINT_VALUE,
                 ),
             ).build()
-            LibraryResult.ofItemList(ImmutableList.copyOf(paginate(items, page, pageSize)), returnParams)
+            SessionAnswer(
+                LibraryResult.ofItemList(ImmutableList.copyOf(paginate(items, page, pageSize)), returnParams),
+                // The root's own folders, Downloads and the device's music belong
+                // to no account; everything else was read for this one.
+                bound = parentId !in ACCOUNT_FREE_FOLDERS,
+                stale = LibraryResult.ofItemList(ImmutableList.of(), returnParams),
+            )
+        }
+
+        /**
+         * An Auto request answered from [read] on IO, for the session it was
+         * asked under: `owner`, taken here on the application thread before
+         * anything suspends. The answer goes back to Media3 on that thread, in
+         * a later task, inside that session's lock (see [deliver]). A folder,
+         * a search page, a track or a queue read for one account therefore
+         * reaches the browser, or is installed, before any switch or not at
+         * all; once the session has ended, the answer's stale form goes
+         * instead, or the request fails.
+         */
+        private fun <V> answered(read: suspend (owner: ListenerStamp) -> SessionAnswer<V>): ListenableFuture<V> {
+            val owner = listenerStamp()
+            val delivered = SettableFuture.create<V>()
+            val work = scope.launch(Dispatchers.IO) {
+                val answer = try {
+                    read(owner)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    delivered.setException(e)
+                    return@launch
+                }
+                withContext(Dispatchers.Main) {
+                    delivered.deliver(answer) { complete ->
+                        com.music.bitchord.data.innertube.Innertube.whileListener(innertubeStamp(owner), complete)
+                    }
+                }
+            }
+            // The worker cancelled (the service going away) before it handed
+            // anything over: the request ends instead of waiting forever.
+            work.invokeOnCompletion { if (!delivered.isDone) delivered.cancel(false) }
+            delivered.addListener({ if (delivered.isCancelled) work.cancel() }, MoreExecutors.directExecutor())
+            return delivered
         }
 
         override fun onGetItem(
             session: MediaLibrarySession,
             browser: MediaSession.ControllerInfo,
             mediaId: String,
-        ): ListenableFuture<LibraryResult<MediaItem>> = scope.future(Dispatchers.IO) {
+        ): ListenableFuture<LibraryResult<MediaItem>> = answered { owner ->
+            val unavailable = LibraryResult.ofItem(
+                createInfoItem(
+                    "msg:unavailable|$mediaId",
+                    getString(R.string.auto_unavailable_title),
+                    getString(R.string.auto_unavailable_subtitle),
+                ),
+                null,
+            )
             if (AutoBrowseContexts.isAutoBrowseId(mediaId)) {
-                val selection = autoBrowseContexts.select(mediaId, currentListener())
+                val selection = autoBrowseContexts.select(mediaId, owner.listener)
                 if (selection is AutoBrowseContexts.Selection.Found) {
-                    return@future LibraryResult.ofItem(
-                        selection.song.toMediaItem().buildUpon().setMediaId(mediaId).build(), null,
+                    // An account's row is handed over under the session it was
+                    // looked up in, or as unavailable.
+                    return@answered SessionAnswer(
+                        LibraryResult.ofItem(selection.song.toMediaItem().buildUpon().setMediaId(mediaId).build(), null),
+                        bound = selection.context.listener != null,
+                        stale = unavailable,
                     )
                 }
                 // Expired or from another account: answered as unavailable below.
             }
+            // A track found in the cache is the session's when it was read for it.
+            var fromSession = false
             val item = when (mediaId) {
                 MEDIA_ROOT_ID -> MediaItem.Builder()
                     .setMediaId(MEDIA_ROOT_ID)
@@ -11090,9 +11168,10 @@ class PlaybackService : MediaLibraryService() {
                             getString(R.string.auto_unavailable_subtitle),
                         )
                     } else {
-                        val cached = songCache[mediaId]
+                        val cached = songCache.entry(mediaId)
                         if (cached != null) {
-                            cached.toMediaItem()
+                            fromSession = !cached.shared
+                            cached.value.toMediaItem()
                         } else if (mediaId.startsWith("playlist:") || mediaId.startsWith("browse:")) {
                             createGridPlaylistItem(
                                 mediaId = mediaId,
@@ -11109,15 +11188,17 @@ class PlaybackService : MediaLibraryService() {
                     }
                 }
             }
-            LibraryResult.ofItem(item, null)
+            SessionAnswer(LibraryResult.ofItem(item, null), bound = fromSession, stale = unavailable)
         }
 
         override fun onPlaybackResumption(
             mediaSession: MediaSession,
             controller: MediaSession.ControllerInfo,
-        ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> = scope.future(Dispatchers.IO) {
-            // The session these rows are read for: a write that lands after a switch is dropped.
-            val owner = listenerStamp()
+        ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> = answered { owner ->
+            // [owner]: the session these rows are read for. A write that lands
+            // after a switch is dropped, and the home feed's rows are handed
+            // over under it or not at all.
+            val nothing = MediaSession.MediaItemsWithStartPosition(ImmutableList.of(), 0, 0L)
             // 1. If player currently holds items in its queue, resume from it.
             // The player is read on its own (main) thread; the rest of this
             // future stays on IO for the disk and network fallbacks. Reading
@@ -11132,16 +11213,15 @@ class PlaybackService : MediaLibraryService() {
                     activePlayer.currentPosition.coerceAtLeast(0L),
                 )
             }
-            if (fromPlayer != null) return@future fromPlayer
+            if (fromPlayer != null) return@answered SessionAnswer(fromPlayer, bound = false)
 
             // 2. Fallback to local downloaded songs (offline-ready)
             val downloaded = Downloads.getDownloadedSongs(this@PlaybackService)
             if (downloaded.isNotEmpty()) {
                 val items = downloaded.map { it.toMediaItem() }
-                return@future MediaSession.MediaItemsWithStartPosition(
-                    ImmutableList.copyOf(items),
-                    0,
-                    0L,
+                return@answered SessionAnswer(
+                    MediaSession.MediaItemsWithStartPosition(ImmutableList.copyOf(items), 0, 0L),
+                    bound = false,
                 )
             }
 
@@ -11149,10 +11229,9 @@ class PlaybackService : MediaLibraryService() {
             val localSongs = LocalMediaRepository.getLocalMusic(this@PlaybackService)
             if (localSongs.isNotEmpty()) {
                 val items = localSongs.map { it.toMediaItem() }
-                return@future MediaSession.MediaItemsWithStartPosition(
-                    ImmutableList.copyOf(items),
-                    0,
-                    0L,
+                return@answered SessionAnswer(
+                    MediaSession.MediaItemsWithStartPosition(ImmutableList.copyOf(items), 0, 0L),
+                    bound = false,
                 )
             }
 
@@ -11169,19 +11248,15 @@ class PlaybackService : MediaLibraryService() {
             }
 
             if (fallbackSongs.isNotEmpty()) {
-                return@future MediaSession.MediaItemsWithStartPosition(
-                    ImmutableList.copyOf(fallbackSongs),
-                    0,
-                    0L,
+                return@answered SessionAnswer(
+                    MediaSession.MediaItemsWithStartPosition(ImmutableList.copyOf(fallbackSongs), 0, 0L),
+                    bound = true,
+                    stale = nothing,
                 )
             }
 
             // Return empty instead of throwing an unhandled exception to prevent crash
-            MediaSession.MediaItemsWithStartPosition(
-                ImmutableList.of(),
-                0,
-                0L,
-            )
+            SessionAnswer(nothing, bound = false)
         }
 
         override fun onSearch(
@@ -11207,35 +11282,15 @@ class PlaybackService : MediaLibraryService() {
             page: Int,
             pageSize: Int,
             params: LibraryParams?,
-        ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> {
-            // The session these rows are read for: a write that lands after a switch is dropped.
-            val owner = listenerStamp()
-            val none = LibraryResult.ofItemList(ImmutableList.of<MediaItem>(), params)
-            val delivered = SettableFuture.create<LibraryResult<ImmutableList<MediaItem>>>()
-            val search = scope.launch(Dispatchers.IO) {
-                val rows = try {
-                    searchResultFor(owner, query, page, pageSize, params)
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (_: Exception) {
-                    none
-                }
-                // Media3 attached its delivery to [delivered] in the
-                // application-thread task that called this one, with a direct
-                // executor, for Media3 and MediaBrowserCompat browsers alike.
-                // Completed in a later task on that thread, inside the session
-                // lock, the rows go to the browser before any switch or not at
-                // all: a switch first answers none.
-                withContext(Dispatchers.Main) {
-                    delivered.completeWhile(
-                        { complete -> com.music.bitchord.data.innertube.Innertube.whileListener(innertubeStamp(owner), complete) },
-                        rows,
-                        none,
-                    )
-                }
-            }
-            delivered.addListener({ if (delivered.isCancelled) search.cancel() }, MoreExecutors.directExecutor())
-            return delivered
+        ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> = answered { owner ->
+            // [owner]: the session these rows are read for. A write that lands
+            // after a switch is dropped, and the rows reach the browser under
+            // it or not at all: a switch first answers none (see [answered]).
+            SessionAnswer(
+                searchResultFor(owner, query, page, pageSize, params),
+                bound = true,
+                stale = LibraryResult.ofItemList(ImmutableList.of(), params),
+            )
         }
 
         /** [query]'s results for [owner], or none once another session is current. */
@@ -11261,37 +11316,38 @@ class PlaybackService : MediaLibraryService() {
             mediaItems: List<MediaItem>,
             startIndex: Int,
             startPositionMs: Long,
-        ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> = scope.future(Dispatchers.IO) {
+        ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> = answered { owner ->
             // Android Auto hands over the tapped song, not the folder around
             // it. A row listed with an auto-browse id names the listing it
             // came from, so the queue is that folder in the order shown.
             val selected = AutoBrowseContexts.pickSelected(mediaItems, startIndex) { it.mediaId }
             if (AutoBrowseContexts.isAutoBrowseId(selected?.mediaId)) {
-                return@future playAutoBrowseSelection(mediaSession, controller, selected!!.mediaId, startPositionMs)
+                return@answered playAutoBrowseSelection(mediaSession, controller, selected!!.mediaId, startPositionMs, owner)
             }
             // Older rows (and controllers that keep extras) still carry the
             // parent folder: rebuild it so the queue follows the playlist's
             // own order and AutoPlay only starts after its last track.
-            expandPlaylistContext(mediaItems, startIndex)?.let { return@future it }
-            val (resolved, resolvedStart) = resolveMediaItemsFrom(mediaItems, startIndex)
-            val validIndex = resolvedStart.coerceIn(0, (resolved.size - 1).coerceAtLeast(0))
-            MediaSession.MediaItemsWithStartPosition(
-                ImmutableList.copyOf(resolved),
-                validIndex,
-                startPositionMs.coerceAtLeast(0L),
-            )
+            expandPlaylistContext(mediaItems, startIndex, owner)?.let { return@answered it }
+            // A queue whose rows were read for this session is installed under
+            // it, or without them; one with nothing left fails, so Media3
+            // neither installs nor plays anything for it.
+            resolveMediaItemsFrom(mediaItems, startIndex, owner).map { (resolved, resolvedStart) ->
+                val validIndex = resolvedStart.coerceIn(0, (resolved.size - 1).coerceAtLeast(0))
+                MediaSession.MediaItemsWithStartPosition(
+                    ImmutableList.copyOf(resolved),
+                    validIndex,
+                    startPositionMs.coerceAtLeast(0L),
+                )
+            }
         }
 
         override fun onAddMediaItems(
             mediaSession: MediaSession,
             controller: MediaSession.ControllerInfo,
             mediaItems: List<MediaItem>,
-        ): ListenableFuture<List<MediaItem>> = scope.future(Dispatchers.IO) {
-            resolveMediaItems(mediaItems)
+        ): ListenableFuture<List<MediaItem>> = answered { owner ->
+            resolveMediaItemsFrom(mediaItems, 0, owner).map { it.first }
         }
-
-        private suspend fun resolveMediaItems(mediaItems: List<MediaItem>): List<MediaItem> =
-            resolveMediaItemsFrom(mediaItems, 0).first
 
         /**
          * [mediaItems] resolved to tracks, and where the item at [startIndex]
@@ -11314,10 +11370,12 @@ class PlaybackService : MediaLibraryService() {
             controller: MediaSession.ControllerInfo,
             mediaId: String,
             startPositionMs: Long,
-        ): MediaSession.MediaItemsWithStartPosition {
-            // The session the row is selected under: the queue is built and
-            // installed under this one or not at all.
-            val selectedAt = listenerStamp()
+            selectedAt: ListenerStamp,
+        ): SessionAnswer<MediaSession.MediaItemsWithStartPosition> {
+            // [selectedAt]: the session the row is selected under. An account's
+            // queue is built and installed under this one or not at all; a
+            // folder of no account (downloads, music on the device) plays
+            // whoever is signed in.
             val selection = autoBrowseContexts.select(mediaId, selectedAt.listener)
             if (selection !is AutoBrowseContexts.Selection.Found) {
                 withContext(Dispatchers.Main) {
@@ -11334,11 +11392,15 @@ class PlaybackService : MediaLibraryService() {
                 throw IllegalArgumentException("Selected track is unavailable")
             }
             val index = (0 until selection.index).count { !context.songs[it].isUnresolvedSpotify }
-            cacheSongs(selectedAt, songs)
+            val accountOwned = context.listener != null
+            if (accountOwned) cacheSongs(selectedAt, songs) else cacheSharedSongs(songs)
+            var pending: PendingAutoInstall? = null
             val built = withContext(Dispatchers.Main) {
                 // The account can change between the IO-side select and here,
-                // even away and back: the generation says so.
-                if (!context.belongsTo(currentListener()) || listenerStamp() != selectedAt) {
+                // even away and back: the generation says so. Only for an
+                // account's own folder: a sign-in landing meanwhile leaves a
+                // Downloads row as playable as it was.
+                if (!context.belongsTo(currentListener()) || (accountOwned && listenerStamp() != selectedAt)) {
                     mediaSession.sendError(
                         controller,
                         SessionError(SessionError.ERROR_BAD_VALUE, getString(R.string.auto_unavailable_subtitle)),
@@ -11354,20 +11416,39 @@ class PlaybackService : MediaLibraryService() {
                     .also { built ->
                         val startEntryId = built.timeline.getOrNull(built.startIndex)?.queueEntryId
                         // Rechecked when Media3 installs it: see [refusesStaleAutoInstall].
-                        val pending = PendingAutoInstall(startEntryId, built.startIndex, built.timeline.size, selectedAt) {
+                        val record = PendingAutoInstall(
+                            startEntryId,
+                            built.startIndex,
+                            built.timeline.size,
+                            owner = selectedAt.takeIf { accountOwned },
+                        ) {
                             mediaSession.sendError(
                                 controller,
                                 SessionError(SessionError.ERROR_BAD_VALUE, getString(R.string.auto_unavailable_subtitle)),
                             )
                         }
-                        pendingAutoInstall = pending
-                        followAutoBrowseContinuation(context, pending.installed)
+                        pendingAutoInstalls.add(record)
+                        pending = record
+                        followAutoBrowseContinuation(context, record.installed)
                     }
             } ?: throw IllegalArgumentException("Auto browse row unusable: ${AutoBrowseContexts.Selection.AccountChanged}")
-            return MediaSession.MediaItemsWithStartPosition(
-                ImmutableList.copyOf(built.timeline.map { it.toMediaItem() }),
-                built.startIndex,
-                startPositionMs.coerceAtLeast(0L),
+            return SessionAnswer(
+                MediaSession.MediaItemsWithStartPosition(
+                    ImmutableList.copyOf(built.timeline.map { it.toMediaItem() }),
+                    built.startIndex,
+                    startPositionMs.coerceAtLeast(0L),
+                ),
+                bound = accountOwned,
+                // Handed over after a switch: the request fails, so Media3
+                // neither installs this queue nor plays the one it would have
+                // replaced, and the controller hears why.
+                onStale = {
+                    pending?.let { record ->
+                        pendingAutoInstalls.refused(record)
+                        clearAutoContinuation()
+                        record.onRefused()
+                    }
+                },
             )
         }
 
@@ -11387,7 +11468,8 @@ class PlaybackService : MediaLibraryService() {
         private suspend fun expandPlaylistContext(
             mediaItems: List<MediaItem>,
             startIndex: Int,
-        ): MediaSession.MediaItemsWithStartPosition? {
+            owner: ListenerStamp,
+        ): SessionAnswer<MediaSession.MediaItemsWithStartPosition>? {
             val parents = mediaItems
                 .mapNotNull { it.mediaMetadata.extras?.getString(EXTRA_AUTO_PARENT) }
                 .distinct()
@@ -11396,30 +11478,50 @@ class PlaybackService : MediaLibraryService() {
             val tapped = mediaItems
                 .getOrNull(startIndex.coerceIn(0, (mediaItems.size - 1).coerceAtLeast(0)))
                 ?.mediaId
-            val full = resolveMediaItems(listOf(MediaItem.Builder().setMediaId(parent).build()))
+            val answer = resolveMediaItemsFrom(listOf(MediaItem.Builder().setMediaId(parent).build()), 0, owner)
+            val full = answer.value.first
             if (full.size <= 1 || full.size < mediaItems.size) return null
             val index = full.indexOfFirst { it.mediaId == tapped }.takeIf { it >= 0 } ?: 0
-            return MediaSession.MediaItemsWithStartPosition(ImmutableList.copyOf(full), index, 0L)
+            // The folder was read for this session: installed under it, or the
+            // request fails rather than play a part of it under another.
+            return SessionAnswer(
+                MediaSession.MediaItemsWithStartPosition(ImmutableList.copyOf(full), index, 0L),
+                bound = answer.bound,
+            )
         }
 
+        /**
+         * [mediaItems] resolved to tracks for [owner], the session they were
+         * handed over under, and where the item at [startIndex] landed among
+         * them: a row before it can expand to several tracks or drop out (a
+         * stale Auto row), so its input index no longer names it.
+         *
+         * A later item can suspend on the network after one was read, and the
+         * account can change meanwhile, even away and back, or before the
+         * answer is handed over. So it is answered both ways (see
+         * [SessionRows.finish]): with every row while [owner] is current, and
+         * without the rows read for it once it has ended. Nothing left then
+         * fails the request.
+         */
         private suspend fun resolveMediaItemsFrom(
             mediaItems: List<MediaItem>,
             startIndex: Int,
-        ): Pair<List<MediaItem>, Int> {
-            // The session the rows read below belong to. A later item can
-            // suspend on the network after one was read, and the account can
-            // change meanwhile, even away and back: [SessionRows.finish] takes
-            // back every row read for this session once everything is resolved.
-            val owner = listenerStamp()
+            owner: ListenerStamp,
+        ): SessionAnswer<Pair<List<MediaItem>, Int>> {
             val bound = innertubeStamp(owner)
-            val resolved = SessionRows<MediaItem>(owner)
+            val resolved = SessionRows<MediaItem>()
             var resolvedStart = 0
+            /** A track the controller named by id: the cached copy, the session's when it was read for it. */
+            fun addCached(entry: ListenerScopedCache.Entry<Song>, otherwise: () -> MediaItem) {
+                val row = entry.value.toMediaItem()
+                if (entry.shared) resolved.add(row) else resolved.addForSession(row, otherwise())
+            }
             for ((itemIndex, item) in mediaItems.withIndex()) {
                 if (itemIndex == startIndex) resolvedStart = resolved.size
                 val id = item.mediaId
                 val searchQuery = item.requestMetadata.searchQuery
                 // Read once: a switch between a membership check and the read can't empty it in between.
-                val cachedById = songCache[id]
+                val cachedById = songCache.entry(id)
                 when {
                     // Adding one browsed row to the queue resolves it to its
                     // track without replacing the queue; a stale one is dropped.
@@ -11514,10 +11616,11 @@ class PlaybackService : MediaLibraryService() {
                         cacheSharedSongs(local)
                         resolved.addAll(local.map { it.toMediaItem() })
                     }
-                    // The track the controller named, with what is known of it:
-                    // the controller asked for this very id.
+                    // The track the controller named, with what is known of it.
+                    // Known from the session's own reads, those details are the
+                    // session's: after a switch the item goes as it was handed over.
                     cachedById != null -> {
-                        resolved.add(cachedById.toMediaItem())
+                        addCached(cachedById) { item.toSong().toMediaItem() }
                     }
                     item.localConfiguration != null -> {
                         resolved.add(item)
@@ -11526,40 +11629,39 @@ class PlaybackService : MediaLibraryService() {
                         val uri = item.requestMetadata.mediaUri!!
                         val videoId = uri.getQueryParameter("v") ?: uri.lastPathSegment.orEmpty()
                         if (videoId.isNotEmpty() && !videoId.startsWith("http")) {
-                            val cached = songCache[videoId]
-                            if (cached != null) {
-                                resolved.add(cached.toMediaItem())
-                            } else {
-                                resolved.add(Song(videoId = videoId, title = item.mediaMetadata.title?.toString() ?: "Track", artist = item.mediaMetadata.artist?.toString() ?: "Artist", thumbnailUrl = null).toMediaItem())
+                            val asHanded = {
+                                Song(videoId = videoId, title = item.mediaMetadata.title?.toString() ?: "Track", artist = item.mediaMetadata.artist?.toString() ?: "Artist", thumbnailUrl = null).toMediaItem()
                             }
+                            val cached = songCache.entry(videoId)
+                            if (cached != null) addCached(cached, asHanded) else resolved.add(asHanded())
                         } else {
                             resolved.add(item.buildUpon().setUri(uri).build())
                         }
                     }
                     else -> {
-                        val cached = songCache[id]
-                        if (cached != null) {
-                            resolved.add(cached.toMediaItem())
-                        } else {
-                            val song = item.toSong()
-                            resolved.add(song.toMediaItem())
-                        }
+                        // Not in the cache: [cachedById] was read for this very id.
+                        resolved.add(item.toSong().toMediaItem())
                     }
                 }
             }
             if (startIndex >= mediaItems.size) resolvedStart = resolved.size
-            // Checked again now that every item is resolved: rows read for a
-            // session that has since ended go, rows of no account stay.
-            val now = listenerStamp()
-            val (kept, keptStart) = resolved.finish(resolvedStart, now)
-            if (kept.isNotEmpty()) return kept to keptStart
-            // A stale browse row has no track behind it, and a request read
-            // for a session that has since ended is not this one's to play:
-            // neither goes back to the player as if it were a track.
-            val stale = resolved.staleRequests(now)
-            val fallback = mediaItems.withIndex()
-                .filterNot { AutoBrowseContexts.isAutoBrowseId(it.value.mediaId) || it.index in stale }
-            return fallback.map { it.value } to fallback.count { it.index < startIndex }
+            /** The queue for a session still [current] or ended since. */
+            fun forSession(current: Boolean): Pair<List<MediaItem>, Int> {
+                val (kept, keptStart) = resolved.finish(resolvedStart, current)
+                if (kept.isNotEmpty()) return kept to keptStart
+                // A stale browse row has no track behind it, and a request read
+                // for a session that has since ended is not this one's to play:
+                // neither goes back to the player as if it were a track.
+                val stale = resolved.staleRequests(current)
+                val fallback = mediaItems.withIndex()
+                    .filterNot { AutoBrowseContexts.isAutoBrowseId(it.value.mediaId) || it.index in stale }
+                return fallback.map { it.value } to fallback.count { it.index < startIndex }
+            }
+            return SessionAnswer(
+                forSession(current = true),
+                bound = resolved.anyBound,
+                stale = forSession(current = false).takeIf { it.first.isNotEmpty() },
+            )
         }
     }
 
@@ -11831,6 +11933,8 @@ class PlaybackService : MediaLibraryService() {
         const val FOREIGN_CACHE_KEEP_AHEAD = 3
         const val MEDIA_DOWNLOADS_ID = "downloads"
         const val MEDIA_LOCAL_MUSIC_ID = "local_music"
+        /** Auto folders that list nothing read for an account: handed over whoever is signed in. */
+        val ACCOUNT_FREE_FOLDERS = setOf(MEDIA_ROOT_ID, MEDIA_MORE_ID, MEDIA_DOWNLOADS_ID, MEDIA_LOCAL_MUSIC_ID)
         const val MAX_AUTO_PAGE_SIZE = 50
         /**
          * The most a client can ask for in one page. Far above what any

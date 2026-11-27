@@ -915,7 +915,12 @@ object YtMusicRepository {
      * nobody is watching — the library sync, an artist's back catalogue. For
      * anything a screen is waiting on, use [browseSongs] and [moreSongs].
      */
-    private suspend fun songsPaged(browseId: String, whole: Boolean = false): List<Song> {
+    private suspend fun songsPaged(
+        browseId: String,
+        whole: Boolean = false,
+        maxPages: Int = MAX_PAGES,
+        enough: Int = Int.MAX_VALUE,
+    ): List<Song> {
         var response = Innertube.browse(browseId)
         if (browseId.startsWith("MPREb")) {
             InnertubeParser.parseAlbumPlaylistId(response)?.let { playlistId ->
@@ -925,7 +930,7 @@ object YtMusicRepository {
         // Same shelf-scoping as pageOf: a playlist (Liked Music and the
         // Library Songs auto-playlist included) is read from its own shelf so
         // a trailing "Suggested tracks" shelf never joins in.
-        return collectSongListing(response, MAX_PAGES, whole) { token -> Innertube.browseContinuation(token) }
+        return collectSongListing(response, maxPages, whole, enough) { token -> Innertube.browseContinuation(token) }
     }
 
     /**
@@ -938,9 +943,22 @@ object YtMusicRepository {
      * the only way to notice one, and noticing one is the whole of what a
      * downloaded playlist needs. All or nothing, like [allSongs]: a list cut
      * short by a failed page is a failure, not the playlist.
+     *
+     * Not held to [MAX_PAGES]: it runs in the background, nobody waits on it,
+     * and a playlist longer than the foreground cap must still sync. A feed
+     * handing back a token already read fails it instead (see
+     * [collectSongListing]), so it can't spin.
      */
     suspend fun browseSongsPaged(browseId: String): Result<List<Song>> =
-        call("browsePaged:$browseId") { songsPaged(browseId, whole = true) }
+        call("browsePaged:$browseId") { songsPaged(browseId, whole = true, maxPages = Int.MAX_VALUE) }
+
+    /**
+     * The first [count] tracks behind a playlist or album, read only as far as
+     * needed. A later page that fails keeps what was read: for a caller that
+     * samples the list (Flow's mood pool) rather than acting on all of it.
+     */
+    suspend fun browseSongsHead(browseId: String, count: Int): Result<List<Song>> =
+        call("browseHead:$browseId:$count") { songsPaged(browseId, enough = count).take(count) }
 
     /**
      * Every saved library card behind a feed browse id, following continuations.
@@ -1240,6 +1258,15 @@ object YtMusicRepository {
                 // A candidate under validation has no shared session to refresh:
                 // its rejection is the validation's answer.
                 if (!rejected || Innertube.cookie == null || Innertube.inCandidate()) throw failure
+                // A request its caller bound to a session (a page's continuation,
+                // say) is the caller's to retry, under the stamp it bound. It
+                // refreshes nothing: clearing the shared scope here moves the
+                // generation even when the shell gives the same channel back,
+                // and that stamp would then be stale for the caller's retry.
+                if (Innertube.boundToSession()) {
+                    Log.w(TAG, "$label not retried: bound to the session it was asked under")
+                    throw failure
+                }
                 Log.w(TAG, "$label rejected; refreshing active session context once")
                 // Only for the session that was rejected: one that took over
                 // since keeps its scope, and gets no retry of another's request.
@@ -1254,13 +1281,6 @@ object YtMusicRepository {
                 // default, and a switch can land while it waits: a retry under
                 // another identity could send a rating or playlist edit to an
                 // account the listener did not pick, so it is not made.
-                // A request its caller bound to a session (a page's continuation,
-                // say) keeps that binding: the retry would go out under the
-                // refreshed session instead, so it is the caller's to make.
-                if (Innertube.boundToSession()) {
-                    Log.w(TAG, "$label not retried: bound to the session it was asked under")
-                    throw failure
-                }
                 if (refreshed.listener != owner.listener) {
                     Log.w(TAG, "$label not retried: the account changed during the refresh")
                     throw failure
