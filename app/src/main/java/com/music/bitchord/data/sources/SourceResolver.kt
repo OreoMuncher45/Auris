@@ -152,13 +152,14 @@ object SourceResolver {
      * @param uri a `bitchord://source?...` URI as built by [SourceRegistry.trackUri].
      * @return the stream, or null when nothing enabled could serve the track.
      */
-    suspend fun resolve(uri: Uri): SourceStream? {
+    suspend fun resolve(uri: Uri, request: StreamRequest = requestForNow()): SourceStream? {
         val configId = uri.getQueryParameter("s") ?: return null
         val trackId = uri.getQueryParameter("t") ?: return null
         return resolve(
             configId = configId,
             trackId = trackId,
             target = targetIn(uri),
+            request = request,
         )
     }
 
@@ -188,8 +189,8 @@ object SourceResolver {
         configId: String,
         trackId: String,
         target: TrackMatcher.Target,
+        request: StreamRequest = requestForNow(),
     ): SourceStream? {
-        val request = requestForNow()
         val active = SourceRegistry.activeForPlayback()
         // A pin identifies where the row originally came from; it does not
         // override the source switch. Looking the instance up directly used to
@@ -290,14 +291,16 @@ object SourceResolver {
      * runs with sound already playing and is where a slow source's better answer
      * gets its hearing.
      */
-    suspend fun substituteForYouTube(target: TrackMatcher.Target): SourceStream? {
+    suspend fun substituteForYouTube(
+        target: TrackMatcher.Target,
+        request: StreamRequest = requestForNow(),
+    ): SourceStream? {
         // Video rows always use YouTube's own stream unless the listener
         // explicitly converts the current item in the player. A module match
         // is another recording and can be a wrong song altogether.
         if (target.title.isBlank() || target.isVideo) return null
         val candidates = candidatesForYouTube(SourceRegistry.activeForPlayback())
         if (candidates.isEmpty()) return null
-        val request = requestForNow()
         // A substitution, and so held to the length: what plays in place of
         // the requested track has to be the same recording, and the runtime is
         // the one statement about a recording that cannot be argued with.

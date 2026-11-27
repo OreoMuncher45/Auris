@@ -257,16 +257,16 @@
     <string name="library_empty_segment">Nothing here yet</string>
     <string name="home_chip_all">All</string>
     <string name="best_part">Best Part</string>
-    <string name="best_part_description">Skip to the best part</string>
+    <string name="best_part_description">Pular para a melhor parte</string>
     <string name="queue_select">Selecionar</string>
     <string name="queue_select_all">Selecionar tudo</string>
     <string name="queue_selected_count">Selecionadas: %1$d</string>
     <string name="queue_close_selection">Fechar seleção</string>
     <string name="queue_selection_remove">Remover</string>
-    <string name="queue_selection_add_to_playlist">Add to playlist</string>
+    <string name="queue_selection_add_to_playlist">Adicionar à playlist</string>
     <string name="queue_download">Baixar</string>
-    <string name="queue_removed_song">Removed %1$s</string>
-    <string name="queue_removed_songs">Removed %1$d songs</string>
-    <string name="queue_undo_action">Undo</string>
-    <string name="queue_cleared">Next in queue cleared</string>
+    <string name="queue_removed_song">%1$s removida</string>
+    <string name="queue_removed_songs">%1$d músicas removidas</string>
+    <string name="queue_undo_action">Desfazer</string>
+    <string name="queue_cleared">“Próxima na fila” esvaziada</string>
 </resources>

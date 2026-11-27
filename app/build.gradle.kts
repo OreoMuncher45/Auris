@@ -225,7 +225,7 @@ android {
         // them from there) but are not packaged: the app downloads them on
         // first use, see AutomixModels. The rest is AGP's default pattern,
         // which setting this replaces. Ported from BitChord.
-        ignoreAssetsPattern = "!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~:!*.onnx"
+        ignoreAssetsPattern = "!.svn:!.git:!.ds_store:!*.scc:.*:<dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~:!*.onnx"
     }
     buildFeatures {
         compose = true

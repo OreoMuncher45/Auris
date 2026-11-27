@@ -72,17 +72,22 @@ object QueueEdits {
      * identity of the next row that is *not* being removed.
      */
     fun capture(timeline: List<Song>, indices: Collection<Int>): Removal {
-        val removed = indices.filter { it in timeline.indices }.toSortedSet()
-        val rows = removed.map { index ->
-            var next = index + 1
-            while (next in removed) next++
-            Removed(index, timeline[index], timeline.getOrNull(next)?.let(::identity))
+        val removed = indices.filter { it in timeline.indices }.toSortedSet().toList()
+        // Walked from the end, so each run's survivor is found once rather
+        // than walked to from every row of the run.
+        val anchors = arrayOfNulls<Int>(removed.size)
+        for (i in removed.indices.reversed()) {
+            val index = removed[i]
+            anchors[i] = if (i + 1 < removed.size && removed[i + 1] == index + 1) anchors[i + 1] else index + 1
+        }
+        val rows = removed.mapIndexed { i, index ->
+            Removed(index, timeline[index], anchors[i]?.let { timeline.getOrNull(it) }?.let(::identity))
         }
         return Removal(rows)
     }
 
     /**
-     * Contiguous runs of [indices], last run first, as half-open ranges — the
+     * Contiguous runs of [indices], last run first, as inclusive ranges — the
      * order to remove them in so the earlier indices stay valid, and one call
      * per run rather than one per row.
      */

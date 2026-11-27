@@ -487,9 +487,18 @@ object MediaTagger {
      * — what this saved before covers were asked for larger.
      */
     private fun fetchCover(url: String, logId: String): Artwork? {
-        return runCatching {
-            downloadCover(url) ?: youTubeThumbnailFallback(url)?.let(::downloadCover)
-        }.onFailure { Log.d(TAG, "no cover saved for $logId: ${it.message}") }.getOrNull()
+        // Each request on its own: a timeout on the large size is as good a
+        // reason to try hqdefault as a 404 is.
+        val primary = runCatching { downloadCover(url) }
+            .onFailure { Log.d(TAG, "cover for $logId failed at full size: ${it.message}") }
+            .getOrNull()
+        if (primary != null) return primary
+        val fallback = youTubeThumbnailFallback(url) ?: return null.also {
+            Log.d(TAG, "no cover saved for $logId")
+        }
+        return runCatching { downloadCover(fallback) }
+            .onFailure { Log.d(TAG, "no cover saved for $logId: ${it.message}") }
+            .getOrNull()
     }
 
     private fun downloadCover(url: String): Artwork? {

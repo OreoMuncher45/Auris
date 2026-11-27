@@ -56,7 +56,7 @@ class NewLyricsSourceTest {
         {"track_name":"Mockingbird (Mixed)","artist_name":"Eminem","duration":91,
          "isrc":"US23A9015852","timing_type":"none"},
         {"track_name":"Mockingbird","artist_name":"JULA","duration":247,"isrc":"QT6ET2622623",
-         "timing_type":"none"},
+         "timing_type":"line","lyricsUrl":"https://lrc.red/s/QT6ET2622623.ttml"},
         {"track_name":"Mockingbird (1950s Eminem)","artist_name":"The Speakeasy Rappers",
          "duration":160,"isrc":"USANG2475706","timing_type":"none"}]}
     """.trimIndent().replace("\n", "")
@@ -84,8 +84,14 @@ class NewLyricsSourceTest {
     fun `a binilyrics name-search hit without an isrc is still taken`() {
         val hit = BiniLyrics.Hit(trackName = "golden hour", artistName = "JVKE", duration = 209, isrc = null, lyricsUrl = "right")
         assertEquals("right", BiniLyrics.best(listOf(hit), "golden hour", "JVKE", 209_000)?.lyricsUrl)
-        // Without a document there is nothing to fetch.
+        // With neither a document nor an ISRC there is nothing to offer.
         assertNull(BiniLyrics.best(listOf(hit.copy(lyricsUrl = null)), "golden hour", "JVKE", 209_000))
+    }
+
+    @Test
+    fun `a matching hit with an isrc but no document still identifies the recording`() {
+        val hit = BiniLyrics.Hit(trackName = "golden hour", artistName = "JVKE", duration = 209, isrc = "GBKPL2204171", lyricsUrl = null)
+        assertEquals("GBKPL2204171", BiniLyrics.best(listOf(hit), "golden hour", "JVKE", 209_000)?.isrc)
     }
 
     @Test

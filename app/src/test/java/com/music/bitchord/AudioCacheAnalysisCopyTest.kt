@@ -41,13 +41,27 @@ class AudioCacheAnalysisCopyTest {
 
         val copy = AudioCache.analysisCopyAddress(row, "spotify:2vd2ouW2pbzXWUbzORtxOi")
 
-        // The row's own address, whole: the id, and the name the sources are
-        // asked to match on.
-        assertEquals(row, copy)
+        // The row's own address, whole (the id, and the name the sources are
+        // asked to match on), marked as the analyser's read so the sources
+        // answer it with a light copy rather than the listener's master.
+        assertEquals("$row&automix_read=1", copy)
+        assertTrue(copy.startsWith(row))
         assertTrue(copy.contains("n=Guillotines+for+Billionaires"))
         assertTrue(copy.contains("a=Matt+Elliott"))
         // And no YouTube-Opus marker: there is no YouTube copy of this row to
         // ask for, and asking is what it refused.
+        assertFalse(copy.contains("automix_opus"))
+    }
+
+    @Test
+    fun aRecordingOnlyASourceHoldsIsReadThroughItsOwnAddressMarkedLight() {
+        // No YouTube match to measure instead: the source's own audio is the
+        // copy, keyed by the source and its track, and asked for light.
+        val row = "bitchord://source?s=addon1&t=track9&n=Some+Song&a=Some+Artist&d=200"
+
+        val copy = AudioCache.analysisCopyAddress(row, "addon1|track9")
+
+        assertEquals("$row&automix_read=1", copy)
         assertFalse(copy.contains("automix_opus"))
     }
 }

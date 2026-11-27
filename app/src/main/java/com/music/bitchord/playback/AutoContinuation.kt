@@ -174,32 +174,23 @@ internal class SessionRows<T>(private val owner: ListenerStamp) {
 }
 
 /**
- * [this] future as the recipient sees it, checked again once its answer has
- * been handed over: when the session it was answered for, [owner], is no
- * longer [now] by then, [onStale] runs, so the recipient asks again and gets
- * the current session's answer.
+ * Completes [this] with [rows] while the session they were read for is still
+ * the current one, and with [none] otherwise, the check and the completion
+ * done as one step inside [whileOwner]: given the completion, it runs it only
+ * while that session is current, holding off every account switch until it
+ * returns (see [Innertube.whileListener][com.music.bitchord.data.innertube.Innertube.whileListener]),
+ * and answers null without running it when another session is current.
  *
- * An answer is checked before it is returned, but delivered after: a switch
- * can land in between. The returned future completes first, which runs the
- * recipient's own listeners (Media3's delivery), and only then is the session
- * checked, so a switch before or during the delivery is always followed by
- * [onStale]. Cancelling the returned future cancels [this].
+ * A recipient's listeners on [this] that run on a direct executor run inside
+ * that step: Media3 delivers a library result to its browser that way, so
+ * rows read for one session are either handed over before a switch or not at
+ * all, never after one. Media3 attaches them in the application-thread task
+ * that asked for the result, so complete [this] in a later one.
  */
-internal fun <V> com.google.common.util.concurrent.ListenableFuture<V>.recheckedFor(
-    owner: ListenerStamp,
-    now: () -> ListenerStamp,
-    onStale: () -> Unit,
-): com.google.common.util.concurrent.ListenableFuture<V> {
-    val direct = com.google.common.util.concurrent.MoreExecutors.directExecutor()
-    val delivered = com.google.common.util.concurrent.SettableFuture.create<V>()
-    addListener(
-        {
-            // Already done: this completes [delivered] and runs its listeners
-            // now. False when the recipient cancelled it: nothing was delivered.
-            if (delivered.setFuture(this) && now() != owner) onStale()
-        },
-        direct,
-    )
-    delivered.addListener({ if (delivered.isCancelled) cancel(false) }, direct)
-    return delivered
+internal fun <V> com.google.common.util.concurrent.SettableFuture<V>.completeWhile(
+    whileOwner: (complete: () -> Boolean) -> Boolean?,
+    rows: V,
+    none: V,
+) {
+    whileOwner { set(rows) } ?: set(none)
 }
