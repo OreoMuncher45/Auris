@@ -517,8 +517,16 @@ object Innertube {
      * the coroutine context so [requestCredentials] can check it in the same
      * locked read that takes the credentials.
      */
-    private class ExpectedListener(val stamp: ListenerStamp, val recoverable: Boolean = false) :
+    private class ExpectedListener(stamp: ListenerStamp, val recoverable: Boolean = false) :
         kotlin.coroutines.AbstractCoroutineContextElement(Key) {
+        /**
+         * The session requests here must go out as. A recoverable binding
+         * moves it to a refreshed session of the same listener (see
+         * [adoptRefreshedBinding]); a strict one never moves.
+         */
+        @Volatile
+        var stamp: ListenerStamp = stamp
+
         companion object Key : kotlin.coroutines.CoroutineContext.Key<ExpectedListener>
     }
 
@@ -563,6 +571,20 @@ object Innertube {
      */
     suspend fun <T> asListenerRecoverably(stamp: ListenerStamp, block: suspend () -> T): T =
         kotlinx.coroutines.withContext(ExpectedListener(stamp, recoverable = true)) { block() }
+
+    /**
+     * Moves the caller's recoverable binding to [refreshed]: a refresh of the
+     * session it was bound to, already checked as the same listener with no
+     * account transition in between. Every later request in the binding (the
+     * write after a recovered lookup, the next batch of an add) then goes out
+     * under it, rather than being refused for a generation the refresh moved.
+     * Does nothing for a strict binding, or none.
+     */
+    suspend fun adoptRefreshedBinding(refreshed: ListenerStamp) {
+        val binding = kotlinx.coroutines.currentCoroutineContext()[ExpectedListener] ?: return
+        if (!binding.recoverable || binding.stamp.listener != refreshed.listener) return
+        binding.stamp = refreshed
+    }
 
     /**
      * A signed-in session under validation, kept apart from the shared one.
