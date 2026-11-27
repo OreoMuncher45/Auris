@@ -62,20 +62,32 @@ internal suspend fun collectPlaylistEntries(
  *
  * A row that could not be parsed (an unavailable track, with no video id) is
  * left out either way: it names nothing a caller could queue or match.
+ *
+ * A token handed back a second time is the feed looping back: a [whole] read
+ * fails on it (it can't be known complete), any other stops there. A read
+ * that is not [whole] also stops once it holds [enough] tracks, for a caller
+ * that only wants the list's head.
  */
 internal suspend fun collectSongListing(
     first: JsonElement,
     maxPages: Int,
     whole: Boolean,
+    enough: Int = Int.MAX_VALUE,
     next: suspend (token: String) -> JsonElement,
 ): List<Song> {
+    require(enough > 0)
     val out = LinkedHashMap<String, Song>()
+    val seen = HashSet<String>()
     var response = first
     var page = 1
     while (true) {
         val (songs, token) = listingPage(response, page, whole)
         songs.forEach { out[it.videoId] = it }
         if (token == null) break
+        if (!whole && out.size >= enough) break
+        if (!seen.add(token)) {
+            if (whole) error("list loops back to a page already read") else break
+        }
         if (page++ >= maxPages) {
             if (whole) error("list longer than $maxPages pages") else break
         }
@@ -102,7 +114,12 @@ private fun listingPage(response: JsonElement, page: Int, whole: Boolean): Pair<
     // An appended page with an episode among its rows: its own items, the
     // general way, so its next-page token keeps the list going.
     shelf.unreadItems?.let { items ->
-        return InnertubeParser.collectSongsDeep(items).distinctBy { it.videoId } to InnertubeParser.continuationToken(items)
+        val songs = InnertubeParser.collectSongsDeep(items).distinctBy { it.videoId }
+        val token = InnertubeParser.continuationToken(items)
+        // Nothing readable among them, and no way on: not a page the list is
+        // known to end on, as for [generalPage].
+        if (whole && page > 1 && songs.isEmpty() && token == null) error("page $page of the list could not be read")
+        return songs to token
     }
     // A later page whose own rows weren't found at all is not the list's end.
     if (whole && page > 1 && shelf.kind == InnertubeParser.PlaylistShelfPage.Kind.UNREADABLE && shelf.complete) {
