@@ -89,6 +89,8 @@ class PrecisionAudioSink(
      * buffer instead of waiting for the next configure.
      */
     private val bitPerfect: () -> Boolean = { false },
+    /** The sleep timer's fade, applied to the samples under bit-perfect only: see [SleepFadeLevel]. */
+    private val sleepFade: () -> Float = { SleepFadeLevel.gain },
     /**
      * The mixer-free output the service has picked for bit-perfect playback
      * right now: the userspace usbdevfs session when the listener has granted
@@ -646,9 +648,12 @@ class PrecisionAudioSink(
         // sound still gets quieter.
         val exclusiveLevel = AppSettings.playerVolume.value.coerceIn(0f, 1f)
         if (AppSettings.bitPerfect.value) {
-            if (exclusiveLevel != exclusiveLevelApplied) {
-                exclusiveLevelApplied = exclusiveLevel
-                runCatching { session.setListenerLevel(exclusiveLevel) }
+            // The sleep timer's fade rides on the session's level, as the
+            // listener's does; the saved level is never written.
+            val sessionLevel = exclusiveLevel * SleepFadeLevel.sampleGain(true, sleepFade())
+            if (sessionLevel != exclusiveLevelApplied) {
+                exclusiveLevelApplied = sessionLevel
+                runCatching { session.setListenerLevel(sessionLevel) }
             }
         }
         // The session applies the level either in the DAC's own control or
@@ -765,11 +770,14 @@ class PrecisionAudioSink(
         // The curve is the same one the exclusive USB route and the DAC's own
         // control use, so the slider means the same thing on every path.
         val mixerOutOfPath = skipDsp && mixerBypassed()
-        val userGain = if (mixerOutOfPath) {
+        val listenerGain = if (mixerOutOfPath) {
             ListenerVolumePolicy.perceptualGain(AppSettings.playerVolume.value)
         } else {
             1f
         }
+        // The sleep timer's fade, which the player's volume can't carry here
+        // (held at unity under bit-perfect): on the samples, for that fade only.
+        val userGain = listenerGain * SleepFadeLevel.sampleGain(skipDsp, sleepFade())
         // The readout says where the level is applied: the system mixer when
         // it is in the path, and the app's own gain when it is not.
         publishVolumeApplication(
@@ -778,7 +786,7 @@ class PrecisionAudioSink(
             } else {
                 VolumeApplication.SYSTEM_MIXER
             },
-            userGain,
+            listenerGain,
             if (mixerOutOfPath) {
                 ListenerVolumePolicy.offsetDb(AppSettings.playerVolume.value)
             } else {
