@@ -403,6 +403,14 @@ object AudioCache {
         wipe.start()
     }
 
+    /**
+     * The key analysis admission files [mediaId]'s round under: the video id
+     * for a YouTube row, `<source>|<track>` for a source-backed one (see
+     * [sourceBaseKey]).
+     */
+    internal fun admissionKeyOf(mediaId: String): String =
+        SourceRegistry.parseTrackKey(mediaId)?.let { (config, track) -> "$config|$track" } ?: mediaId
+
     /** For tests: called as each [clear]'s wipe starts waiting for the writers it covers. */
     internal var wipeWaiting: (() -> Unit)? = null
 
@@ -600,7 +608,11 @@ object AudioCache {
                     rendition != null -> "$videoId#$rendition"
                     lent != null -> lent
                     SourceResolver.canSubstituteForYouTube() ->
-                        "$videoId$ALT_SUFFIX${atmosKeySuffix()}".let { if (reopen) it else completeSibling(videoId, it) ?: it }
+                        // Under the rendition too: the race can file YouTube's own
+                        // answer here when the source above it has nothing, and a
+                        // complete ordinary copy would then serve a Premium request
+                        // without ever resolving Premium.
+                        altKeyOf(videoId, atmosKeySuffix()).let { if (reopen) it else completeSibling(videoId, it) ?: it }
                     // YouTube's own copy, under the rendition the resolver
                     // serves now: Premium's higher rung is another encoding,
                     // and filling one entry from both splices two files.
@@ -818,7 +830,17 @@ object AudioCache {
      * its own audio.
      */
     internal fun siblingKeysOf(videoId: String): List<String> =
-        listOf(AutomixAnalysisSource.playbackKey(videoId), "$videoId$ALT_SUFFIX", "$videoId$ALT_SUFFIX-noatmos")
+        listOf(AutomixAnalysisSource.playbackKey(videoId), altKeyOf(videoId, ""), altKeyOf(videoId, "-noatmos"))
+
+    /**
+     * The substitution-capable bucket for [videoId] under the current
+     * rendition: `<id>#alt2` (or `-noatmos`) for the ordinary one, and
+     * `<id>#<rendition>#alt2` otherwise, so a rendition never reads a YouTube
+     * winner filed under another. The suffix stays last, so [isAltKey] still
+     * reads it as a substitute bucket.
+     */
+    internal fun altKeyOf(videoId: String, atmosSuffix: String): String =
+        "${AutomixAnalysisSource.playbackKey(videoId)}$ALT_SUFFIX$atmosSuffix"
 
     /** Whether every byte of the entry [key] is on disk, contiguously from 0. */
     private fun isComplete(key: String): Boolean = runCatching {
@@ -1201,11 +1223,16 @@ object AudioCache {
         // The track is reserved in the same step as the round is read, so a
         // track with no round yet cannot be given one while this runs: no
         // request is admitted for it until the bytes are gone.
+        // The analysis round's own key for this track: a source-backed row is
+        // admitted under `<source>|<track>`, not the `src:` id the menu passes,
+        // and looked up under that id the running round was never found,
+        // cancelled or kept out.
+        val admission = admissionKeyOf(mediaId)
         val round = synchronized(analysisAdmission) {
             // Counted: two removals of one track share the reservation, and it
             // holds until the last of them is done deleting.
-            removing[mediaId] = (removing[mediaId] ?: 0) + 1
-            analysisJobs[mediaId]
+            removing[admission] = (removing[admission] ?: 0) + 1
+            analysisJobs[admission]
         }
         var removed = 0
         // Finished even if the caller is cancelled meanwhile: stopping half way
@@ -1215,12 +1242,13 @@ object AudioCache {
             // The same per-track bookkeeping [clear] drops for every track, and
             // for the same reason: it describes bytes that are about to be gone.
             synchronized(analysisAdmission) {
-                analysisHeads.remove(mediaId)
-                analysisHeadRounds.remove(mediaId)
-                analysisHeadWant.remove(mediaId)
-                analysisHeadFailures.remove(mediaId)
-                analysisHeadRetryAt.remove(mediaId)
+                analysisHeads.remove(admission)
+                analysisHeadRounds.remove(admission)
+                analysisHeadWant.remove(admission)
+                analysisHeadFailures.remove(admission)
+                analysisHeadRetryAt.remove(admission)
             }
+            AnalysisReadPins.forget(admission)
             renditionKeys.remove(mediaId)
             keysOf(mediaId).forEach { key ->
                 runCatching { cache.removeResource(key) }
@@ -1229,8 +1257,8 @@ object AudioCache {
             }
         } } finally {
             synchronized(analysisAdmission) {
-                val left = (removing[mediaId] ?: 1) - 1
-                if (left > 0) removing[mediaId] = left else removing.remove(mediaId)
+                val left = (removing[admission] ?: 1) - 1
+                if (left > 0) removing[admission] = left else removing.remove(admission)
             }
         }
         TrackLog.d(TAG, "removed $removed cache entries at the listener's request", about = mediaId)
@@ -2533,8 +2561,8 @@ object AudioCache {
      * opens, carrying the title and artist the sources are asked to match on.
      * The read-ahead already learned this — see [SPOTIFY_ROW_PREFIX].
      */
-    internal fun analysisCopyFor(uri: Uri, videoId: String): Uri =
-        Uri.parse(analysisCopyAddress(uri.toString(), videoId))
+    internal fun analysisCopyFor(uri: Uri, videoId: String, rendition: String? = AutomixAnalysisSource.rendition()): Uri =
+        Uri.parse(analysisCopyAddress(uri.toString(), videoId, rendition))
 
     /**
      * The address of the copy the analyser reads, for a row.
@@ -2543,12 +2571,16 @@ object AudioCache {
      * platform's [Uri]: what it has to get right is *which* address the
      * analyser asks, and a query parameter is all that is at stake.
      */
-    internal fun analysisCopyAddress(uri: String, videoId: String): String =
+    internal fun analysisCopyAddress(
+        uri: String,
+        videoId: String,
+        rendition: String? = AutomixAnalysisSource.rendition(),
+    ): String =
         if (isCatalogueRow(videoId)) {
             // Marked as the analyser's read: see [AutomixAnalysisSource.analysisRead].
             AutomixAnalysisSource.analysisRead(uri)
         } else {
-            AutomixAnalysisSource.opusUri(videoId)
+            AutomixAnalysisSource.opusUri(videoId, rendition)
         }
 
     /**
@@ -2863,14 +2895,18 @@ object AudioCache {
         // row that is YouTube's own Opus encoding; for a catalogue row it is
         // the row's own address, which carries the name the sources are
         // asked to match on.
-        val copy = analysisCopyFor(uri, videoId)
+        // The rendition captured once for the whole round: its copy's address,
+        // its key and its substitute's key all name it, so a switch part way
+        // cannot pair one rendition's key with another's bytes.
+        val rendition = AutomixAnalysisSource.rendition()
+        val copy = analysisCopyFor(uri, videoId, rendition)
         // One round per track per session, and it is sized correctly up front
         // rather than grown into. See [analysisHeadSize] for why growing it was
         // the wrong shape.
         // The analyser's own key. Not the player's: the two used to be the
         // same file, and a file two writers write holds two encodings — see
         // [analysisKeyOfVideo] for the whole of it.
-        val key = analysisKeyOfVideo(videoId)
+        val key = AutomixAnalysisSource.analysisCacheKey(videoId, rendition)
         // A background round is a whole recording, up to
         // [MAX_ANALYSIS_TRACK_BYTES], so it follows the same metered-work
         // policy as the whole-track read-ahead: not on a metered connection
@@ -3013,7 +3049,7 @@ object AudioCache {
                         // the canonical entry with the canonical numbers, and the
                         // short-round retry takes it from there.
                         clearPartialHead(key, want)
-                        val substitute = analysisSubstituteKeyOfVideo(videoId)
+                        val substitute = AutomixAnalysisSource.analysisSubstituteKey(videoId, rendition)
                         val substituteUri = Uri.parse("bitchord://watch?v=$videoId")
                         val substituteLength = measureUpstream(substituteUri)
                         val substituteTarget = if (substituteLength > 0L) analysisHeadSize(substituteLength) else want
@@ -3139,7 +3175,17 @@ object AudioCache {
             analysisJobs[videoId] = round
         }
         // A round cancelled before its body ran never reaches the finally above.
-        round.invokeOnCompletion { analysisJobs.remove(videoId, round) }
+        // A round cancelled before its body ran never reaches the finally
+        // above: its head-round marker and claim are given back here, while it
+        // still owns the job entry, or the track stayed refused for the session.
+        round.invokeOnCompletion {
+            synchronized(analysisAdmission) {
+                if (analysisJobs.remove(videoId, round)) {
+                    endHeadRound(videoId)
+                    analysisHeads.remove(videoId)
+                }
+            }
+        }
         // A wipe can cancel the lazy round before it starts; that is not a
         // round started, and must not cost a waiter one of its attempts.
         if (!round.start()) return false

@@ -210,12 +210,18 @@ internal class PlaybackStreamResolver(
                     }
                 }
             } catch (e: TimeoutCancellationException) {
-                throw java.io.IOException("Source resolution timed out for an analysis read", e)
-            } ?: throw java.io.IOException("No enabled source could serve an analysis read")
-            return dataSpec.buildUpon()
-                .setUri(Uri.parse(light.url))
-                .setHttpRequestHeaders(light.headers)
-                .build()
+                null
+            }
+            // Nothing at the capped rate (a source that only offers lossless,
+            // or a slow one): the read falls through to the player's own pin and
+            // playback-quality resolve below, as it did before the light read,
+            // rather than leaving the analyser with no copy to measure.
+            if (light != null) {
+                return dataSpec.buildUpon()
+                    .setUri(Uri.parse(light.url))
+                    .setHttpRequestHeaders(light.headers)
+                    .build()
+            }
         }
         if (!directYouTube) {
             // An upgraded item carries a marker and its stream has
@@ -383,6 +389,16 @@ internal class PlaybackStreamResolver(
 
     /** YouTube's Opus for Automix analysis; never what the listener hears. */
     private fun serveAutomixOpus(dataSpec: DataSpec, videoId: String, about: CoroutineContext): DataSpec {
+        // Asked under a rendition that is no longer current (Premium switched
+        // since the round took its key): refused rather than served, so the
+        // round's entry never takes the new rendition's bytes. The round ends
+        // short, and its retry is keyed and asked under the current one.
+        if (!AutomixAnalysisSource.renditionIsCurrent(
+                dataSpec.uri.getQueryParameter(AutomixAnalysisSource.RENDITION_PARAMETER),
+            )
+        ) {
+            throw java.io.IOException("analysis read for $videoId asked under a rendition no longer served")
+        }
         // Analysis reads YouTube's own Opus encoding, and it reads it
         // under a marker that playback never sends: this URI is built
         // only by [AutomixAnalysisSource.opusUri], and the queue never
@@ -597,7 +613,7 @@ internal class PlaybackStreamResolver(
         // panel is waiting on. The pin is what the class exists for:
         // one server fills this track's entry, so the second writer
         // reads the same bytes rather than a second answer.
-        val pinned = if (lightRead) null else StreamChoice.of(videoId)?.takeIf { serving ->
+        val playbackPin = StreamChoice.of(videoId)?.takeIf { serving ->
             // A source turned off after the pin was made does not get
             // to keep serving: "Off" has to mean off for a row queued
             // earlier too.
@@ -605,6 +621,7 @@ internal class PlaybackStreamResolver(
                 SourceRegistry.activeForPlayback().any { it.configId == id }
             } ?: true
         }
+        val pinned = if (lightRead) null else playbackPin
         if (pinned != null) {
             return dataSpec.buildUpon()
                 .setUri(Uri.parse(pinned.url))
@@ -682,10 +699,21 @@ internal class PlaybackStreamResolver(
                         SourceStream(url, headers = StreamResolver.mediaHeadersFor(url))
                     }
             }
-        } ?: throw java.io.IOException(
-            "no enabled source could serve '${target.title}'",
-            fallbackFailure,
-        )
+        } ?: run {
+            // A light read that found nothing at the capped rate still has the
+            // player's own copy, which is what it read before the light read:
+            // measured at the playback tier rather than not at all.
+            if (lightRead && playbackPin != null) {
+                return dataSpec.buildUpon()
+                    .setUri(Uri.parse(playbackPin.url))
+                    .setHttpRequestHeaders(playbackPin.headers)
+                    .build()
+            }
+            throw java.io.IOException(
+                "no enabled source could serve '${target.title}'",
+                fallbackFailure,
+            )
+        }
         if (lightRead) {
             AnalysisReadPins.put(videoId, resolved)
             return dataSpec.buildUpon()
