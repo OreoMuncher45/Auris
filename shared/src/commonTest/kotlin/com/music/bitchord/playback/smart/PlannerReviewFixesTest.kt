@@ -199,4 +199,62 @@ class PlannerReviewFixesTest {
         val point = incomingMixInPoint(next)
         assertTrue(point != null && point > 0.0, "mix-in point $point")
     }
+
+    @Test
+    fun aFixedPhraseNeverEndsPastTheOutgoingSongsContentEnd() {
+        // 120 BPM with a bar line that drifted early (98.3 s, not 98.5): the one
+        // before the 100.4 s content end is out of reach, the phrase starts on a
+        // boundary between bar lines (84.0 s), and the snap lands it on the bar
+        // line at 100.5 s, eight bars from 84.5 s but past the content end.
+        val bars = generateSequence(0.5) { it + 2.0 }.takeWhile { it < 98.0 }.toList() +
+            listOf(98.3) + generateSequence(100.5) { it + 2.0 }.takeWhile { it < 110.0 }.toList()
+        val outgoing = track(120.0, duration = 112.0).copy(
+            downbeats = bars,
+            phraseBoundaries = listOf(84.0),
+            contentEndTime = 100.4,
+        )
+        val p = planTransition(
+            analysis = outgoing,
+            nextAnalysis = track(120.0),
+            currentTime = 60.0,
+            duration = outgoing.duration,
+            mode = CrossfadeMode.SMART,
+            advanced = true,
+            phraseBars = PHRASE_BARS_SHORT,
+        )
+        assertTrue(p.transitionEnd <= 100.4 + 0.05, "ends at ${p.transitionEnd}: ${p.reason}")
+    }
+
+    private fun onOpeningGrid(grid: List<Double>, t: Double) = grid.any { kotlin.math.abs(it - t) < 1e-6 }
+
+    private fun openingGridTrack(headDownbeats: List<Double>): TrackAnalysis {
+        // Whole-track bar lines at 0.5 + 2k s, barely trusted; the opening's own
+        // at 1.0 + 2k s, trusted: the pair is admitted on the opening's.
+        val base = track(120.0).copy(beatConfidence = 0.1, mixInTime = 8.5,
+            mixInCandidates = listOf(MixCandidate(8.5, 1.0, "drop")))
+        return base.copy(headBeats = BeatSide(
+            beats = headDownbeats.flatMap { listOf(it, it + 0.5, it + 1.0, it + 1.5) },
+            downbeats = headDownbeats,
+            bpm = 120.0,
+            confidence = 0.9,
+        ))
+    }
+
+    @Test
+    fun aBeatmatchedBlendIsPhasedOnTheOpeningGridThatAdmittedIt() {
+        val head = generateSequence(1.0) { it + 2.0 }.takeWhile { it < 60.0 }.toList()
+        val next = openingGridTrack(head)
+        val planned = planWsolaTransition(track(120.0), next, 200.0, 200.0, advanced = true)
+        assertTrue(planned is WsolaPlanResult.Planned, "planned $planned")
+        assertTrue(onOpeningGrid(head, planned.incomingDropTime), "drop ${planned.incomingDropTime}")
+        assertTrue(onOpeningGrid(head, planned.incomingCueTime), "cue ${planned.incomingCueTime}")
+    }
+
+    @Test
+    fun aDropWithNoOpeningBarLineNearItGetsNoBeatmatchedBlend() {
+        // The opening grid stops at 5 s: nothing of it near the 8.5 s drop.
+        val next = openingGridTrack(listOf(1.0, 3.0, 5.0))
+        val planned = planWsolaTransition(track(120.0), next, 200.0, 200.0, advanced = true)
+        assertEquals(WsolaPlanResult.Refused("incoming-head-grid"), planned)
+    }
 }

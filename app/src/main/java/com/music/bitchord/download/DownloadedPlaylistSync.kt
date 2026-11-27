@@ -312,7 +312,10 @@ object DownloadedPlaylistSync {
         val firstFill = liked && id !in Downloads.collections.value
         val keepLiked = { liked && AppSettings.downloadLikedSongs.value }
         // Switched off, or the download deleted, while this pass was reading.
-        val stillWanted = keepLiked() || Downloads.collections.value[id]?.autoDownload == true
+        // For Liked Music the setting is the listener's word: [setKeepLiked]
+        // turns it off first and reconciles the record's switch later, so a
+        // pass reading the record in between must not take it for On.
+        val stillWanted = if (liked) keepLiked() else Downloads.collections.value[id]?.autoDownload == true
         if (!stillWanted) return
         if (missing.isEmpty() && unrecorded.isEmpty() && !firstFill) return
         var refused = emptySet<String>()
@@ -330,7 +333,12 @@ object DownloadedPlaylistSync {
         // still sees it as missing.
         Downloads.rememberCollection(
             target,
-            (if (firstFill) remote else missing + unrecorded).filter { it.videoId !in refused },
+            recordOrder(
+                remote = remote,
+                recorded = Downloads.collections.value[id]?.videoIds.orEmpty(),
+                added = if (firstFill) remote else missing + unrecorded,
+                refused = refused,
+            ),
             // Grow the record only if it is still there; the first fill is
             // what creates it, with the switch the setting has right now.
             keepSwitch = !firstFill,
@@ -380,6 +388,24 @@ object DownloadedPlaylistSync {
  * Split out as plain arguments so the rules can be tested without a device, a
  * network or a playlist: they are the whole of what makes this correct.
  */
+/**
+ * What a pass hands the record: the tracks it adds ([added], less [refused]),
+ * set in the playlist's own order among those already [recorded]. The record
+ * puts the list it is given first, so handing it only the new tracks filed a
+ * song refused on the first fill and admitted later ahead of the rest.
+ */
+internal fun recordOrder(
+    remote: List<Song>,
+    recorded: List<String>,
+    added: List<Song>,
+    refused: Set<String>,
+): List<Song> {
+    val adding = added.mapTo(HashSet()) { it.videoId } - refused
+    if (adding.isEmpty()) return emptyList()
+    val keep = recorded.toHashSet() + adding
+    return remote.filter { it.videoId in keep }.distinctBy { it.videoId }
+}
+
 /**
  * The tracks of [remote] that are on the device but missing from the release's
  * record ([alreadyRecorded]): filed without being fetched. The same exclusions
