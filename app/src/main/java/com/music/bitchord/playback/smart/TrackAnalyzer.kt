@@ -230,8 +230,15 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             restoreAttempted.remove(trackId)
             provisional.remove(trackId)
             measuredCopies.remove(trackId)
+            // An evicted head result gives its prefix claim back (only that
+            // exact claim), or the unchanged prefix that produced it would have
+            // to grow before the head pass may rebuild it.
+            headClaims.release(trackId, headAttempts)
         }
     }
+
+    /** The head claim each published head result was measured under. */
+    private val headClaims = HeadClaims()
     private val running = ConcurrentHashMap.newKeySet<String>()
     private val sourceAnalysisUris = ConcurrentHashMap<String, Uri>()
     private val sourceResolutions = ConcurrentHashMap.newKeySet<String>()
@@ -624,6 +631,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                     if (whole != null && released) return@execute
                     if (whole != null) {
                         if (measuredOn != null) measuredCopies[trackId] = measuredOn
+                        headClaims.drop(trackId)
                         remember(trackId, whole)
                         provisional.remove(trackId)
                         shortDecodes.remove(trackId)
@@ -663,6 +671,8 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                     if (head != null) {
                         provisional.add(trackId)
                         measuredCopies[trackId] = headRendition.key
+                        // Its claim, so an eviction can hand it back: see [forget].
+                        headClaims.record(trackId, headRendition.key, headRendition.cachedPrefix)
                         remember(trackId, head.copy(measuredOn = headRendition.key))
                     } else if (stopped) {
                         // Given up for the player (or a party), not failed: the
@@ -2055,6 +2065,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         headAttempts.clear()
         headSkipLogged.clear()
         provisional.clear()
+        headClaims.clear()
         restoreAttempted.clear()
         shortDecodes.clear()
         badRenditions.clear()
@@ -2266,4 +2277,29 @@ internal fun loopDeckCopy(measured: String?, playing: String, plannedOn: String?
         return LoopDeckCopy(null, "planned on $plannedOn, now measured on $measured")
     }
     return LoopDeckCopy(measured, null)
+}
+
+/**
+ * The prefix claim each published head result was measured under, so an
+ * eviction can hand it back: a claim left held after its result is gone keeps
+ * the head pass from rebuilding it until the prefix grows.
+ */
+internal class HeadClaims {
+    private val claims = ConcurrentHashMap<String, Pair<String, Long>>()
+
+    fun record(trackId: String, copyKey: String, prefix: Long) {
+        claims[trackId] = copyKey to prefix
+    }
+
+    /** Gives [trackId]'s claim back to [headAttempts]: only that exact claim, never a newer one. */
+    fun release(trackId: String, headAttempts: MutableMap<String, Long>) {
+        claims.remove(trackId)?.let { (key, prefix) -> headAttempts.remove(key, prefix) }
+    }
+
+    /** A result that superseded the head: nothing to give back. */
+    fun drop(trackId: String) {
+        claims.remove(trackId)
+    }
+
+    fun clear() = claims.clear()
 }
