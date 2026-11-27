@@ -192,7 +192,10 @@ object BestPart {
      */
     fun chorusMs(lines: List<LyricLine>, durationMs: Long): Long? {
         if (durationMs in 1 until MIN_SONG_MS) return null
-        val timed = lines.filter { it.timeMs >= 0 && !it.isGap && it.text.isNotBlank() }
+        // Where each kept line sat among [lines], so the walk back below can
+        // see a break between two of them.
+        val kept = lines.indices.filter { lines[it].timeMs >= 0 && !lines[it].isGap && lines[it].text.isNotBlank() }
+        val timed = kept.map { lines[it] }
         if (timed.size < 4) return null
         val keys = timed.map { normalize(it.text) }
         val counts = keys.filter { it.length >= 4 }.groupingBy { it }.eachCount()
@@ -209,6 +212,10 @@ object BestPart {
             val count = counts[keys[start - 1]] ?: 0
             if (count < 2 || count < most - 1) break
             if (timed[start - 1].timeMs < SKIP_HEAD_MS || first - start >= 4) break
+            // A break between the two (a gap or a blank line) ends the block:
+            // the lines before it are another section, however often they recur.
+            val boundary = (kept[start - 1] + 1 until kept[start]).any { lines[it].isGap || lines[it].text.isBlank() }
+            if (boundary) break
             start--
         }
         return timed[start].timeMs

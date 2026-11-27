@@ -30,4 +30,16 @@ class TrackMatcherAccentsTest {
         // Hindi vowel signs are combining marks; they tell these two words apart.
         assertTrue(TrackMatcher.foldLatin("दिल") != TrackMatcher.foldLatin("दल"))
     }
+
+    @Test
+    fun aCjkTitleFoldsItsLatinToo() {
+        assertTrue(TrackMatcher.parseTitle("Café 東京").core == TrackMatcher.parseTitle("Cafe 東京").core)
+    }
+
+    @Test
+    fun anAccentedNameIsNotSplitAsASeparator() {
+        // "Ánd" folds to "and"; split after folding, the credit was lost.
+        assertTrue(TrackMatcher.artistNames("Ánd").isNotEmpty())
+        assertTrue(TrackMatcher.artistNames("Ánd, Tarkan").size == 2)
+    }
 }
