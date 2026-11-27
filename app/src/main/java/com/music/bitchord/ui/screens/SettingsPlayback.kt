@@ -137,7 +137,9 @@ internal fun PlaybackSettings(
         val miniArtTransitionTitle = stringResource(R.string.automix_mini_art_transition)
         row(
             automixTitle, "crossfade", "smart fade", "mix",
-            artTransitionTitle.takeIf { smartFade }, miniArtTransitionTitle.takeIf { smartFade },
+            // Searchable with Automix off too: a search for them finds the
+            // row whose switch reveals them.
+            artTransitionTitle, miniArtTransitionTitle,
         ) {
             SettingsRow(
                 icon = Icons.Rounded.AutoAwesome,
