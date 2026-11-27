@@ -3830,6 +3830,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (isAccountPrivateSearchKey(key)) Innertube.listenerStamp() else null
 
     private fun onSearchListenerChanged() {
+        // The typeahead's cards were answered for the account that left.
+        _typeaheadResults.value = emptyList()
         searchCache.snapshot().keys
             .filter(::isAccountPrivateSearchKey)
             .forEach { searchCache.remove(it) }
@@ -4178,9 +4180,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     _typeaheadResults.value = emptyList()
                     return@collectLatest
                 }
+                val credentials = Innertube.listenerGeneration
                 val result = YtMusicRepository.searchTypeahead(input).getOrNull()
-                // If the field moved on, drop the result silently.
-                if (_query.value != input) {
+                // If the field moved on, or the listener did, drop the result
+                // silently: these cards are answered for the account asking.
+                if (_query.value != input || credentials != Innertube.listenerGeneration) {
                     _typeaheadResults.value = emptyList()
                     return@collectLatest
                 }

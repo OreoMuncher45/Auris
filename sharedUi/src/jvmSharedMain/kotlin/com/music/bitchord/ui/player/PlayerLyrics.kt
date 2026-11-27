@@ -2465,7 +2465,13 @@ private fun PanelVoice(
     // colour with the provider rather than with the artwork. One source, one
     // colour.
     val ink = LocalPlayerLyrics.current ?: LocalPlayerInk.current.value
-    if (line.isWordSynced && !browsing) {
+    if (line.isWordSynced) {
+        // One branch whether browsing or not, so entering or leaving browsing
+        // keeps this composition (and the tail animation and text layout)
+        // rather than swapping to an identical copy. Browsing: the sweep
+        // stays so sung lines stay fully lit and unsung ones dim; the active
+        // line keeps its glow and feather; only the unfocused-row blur, done
+        // by the caller, is removed there.
         // Every word-synced line goes through the sweep, not just the playing
         // one — a line that has already been sung is fully revealed and one
         // still to come is not, which falls out of the same arithmetic.
@@ -2475,30 +2481,6 @@ private fun PanelVoice(
         // disagreed about the brightness of the words: the tail of the line
         // popped up to meet the rest of it in a single frame. Animating the
         // tail instead lets a finished line close up as it dims away.
-        val tail by animateFloatAsState(
-            targetValue = if (sung) 1f else UNSUNG_ALPHA,
-            label = "lyricTail",
-        )
-        SweptLyricLine(
-            line = line,
-            clock = clock,
-            style = style,
-            dimAlpha = tail,
-            ink = ink,
-            modifier = modifier,
-            glowAlpha = glowAlpha,
-            glowRoom = room,
-            feather = isActive,
-            rise = rise,
-            alignEnd = alignEnd,
-            translationProgress = translationProgress,
-        )
-    } else if (line.isWordSynced) {
-        // Browsing: keep the sweep so sung lines stay fully lit and unsung
-        // ones stay dim. The active line keeps its glow and feather while
-        // browsing or picking lines to share; only the unfocused-row blur is
-        // removed there. Non-active lines get the same dim tail as when not
-        // browsing.
         val tail by animateFloatAsState(
             targetValue = if (sung) 1f else UNSUNG_ALPHA,
             label = "lyricTail",

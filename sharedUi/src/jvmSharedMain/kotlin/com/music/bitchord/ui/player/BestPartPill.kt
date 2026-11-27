@@ -1,3 +1,5 @@
+@file:OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+
 package com.music.bitchord.ui.player
 
 import androidx.compose.animation.AnimatedVisibility
@@ -49,6 +51,7 @@ import com.music.bitchord.ui.icons.BitChordIcons
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.mapLatest
 import org.jetbrains.compose.resources.stringResource
 
 /**
@@ -103,8 +106,10 @@ internal fun BestPartPill(
         // Playback first: the lookup is a page from youtube.com, and a track
         // that is still starting has better uses for the connection. A quick
         // skip past this track cancels the lookup before it is made.
-        snapshotFlow { loading }.first { !it }
-        delay(LOOKUP_DELAY_MS)
+        // Ready for the whole delay: buffering again restarts the wait.
+        snapshotFlow { loading }
+            .mapLatest { stillLoading -> if (stillLoading) false else { delay(LOOKUP_DELAY_MS); true } }
+            .first { it }
         value = song.videoId to try {
             PlayerPlatform.host.bestPartMs(song, duration) {
                 // The words the player is loading anyway, once they have
@@ -225,17 +230,18 @@ private var heardBestPartOf by mutableStateOf<String?>(null)
 /** The track the player was last on, as [bestPartTrackChanged] saw it. */
 private var bestPartTrack: String? = null
 
-/**
- * Tells the pill the player is on [videoId]. Called from the now-playing screen,
- * which stays composed for every track where the pill itself does not.
- */
 internal fun isBestPartHeard(videoId: String): Boolean = heardBestPartOf == videoId
 
 internal fun markBestPartHeard(videoId: String) {
     heardBestPartOf = videoId
 }
 
-internal fun bestPartTrackChanged(videoId: String) {
+/**
+ * Tells the pill the player is on [videoId]. Called from the now-playing screen,
+ * which stays composed for every track where the pill itself does not, and from
+ * the app's root, so a change made while the player is closed counts too.
+ */
+fun bestPartTrackChanged(videoId: String) {
     if (videoId == bestPartTrack) return
     bestPartTrack = videoId
     if (heardBestPartOf != videoId) heardBestPartOf = null

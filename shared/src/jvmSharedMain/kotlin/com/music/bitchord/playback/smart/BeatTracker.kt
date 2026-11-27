@@ -370,7 +370,16 @@ class BeatTracker(
             val regular = gaps.count { abs(it - interval) <= interval * 0.1 }.toDouble() / gaps.size
             // Logits are unbounded; a median around 2 is a decisive peak, around 0 is not.
             val strength = 1 / (1 + exp(-(median(peakLogits) - 0.5)))
-            return max(0.0, min(0.95, 0.35 + 0.4 * regular + 0.25 * strength))
+            // Intentionally differs from upstream BitChord, which returns the sum
+            // below as is: there, a grid with no regular spacing at all but
+            // decisive peaks scored 0.6, above MIN_BEATMATCH_CONFIDENCE (0.55),
+            // and was phase-locked. Peaks that land nowhere near a steady beat
+            // are not a grid to beatmatch on, so the score is scaled by the
+            // square of the regularity: a fully regular grid scores exactly as
+            // upstream, a quarter of the gaps off puts any grid under the bar,
+            // and an irregular one gets a plain crossfade.
+            val score = (0.35 + 0.4 * regular + 0.25 * strength) * regular * regular
+            return max(0.0, min(0.95, score))
         }
     }
 }

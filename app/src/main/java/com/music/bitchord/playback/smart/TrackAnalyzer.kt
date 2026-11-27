@@ -232,8 +232,22 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             // A model-less result was never stored, so nothing restores it;
             // its record goes with it rather than pinning its curves in memory.
             modelless.release(trackId, headAttempts) { results[it] }
+            // A head result measured with the models gives its prefix claim
+            // back too, so the same prefix can rebuild it.
+            headClaims.remove(trackId)?.let { (key, prefix) -> headAttempts.remove(key, prefix) }
         }
     }
+
+    /** The head claim each published head result was measured under: (copy key, prefix). */
+    private val headClaims = ConcurrentHashMap<String, Pair<String, Long>>()
+
+    /**
+     * This result as planning should see one measured without the models: its
+     * grid is a DSP estimate, and AutoMix without its models plays plain
+     * crossfades, so it never clears the beat-match bar.
+     */
+    private fun TrackAnalysis.withoutBeatMatch(): TrackAnalysis =
+        if (beatConfidence < MODELLESS_CONFIDENCE) this else copy(beatConfidence = MODELLESS_CONFIDENCE)
     private val running = ConcurrentHashMap.newKeySet<String>()
     private val sourceAnalysisUris = ConcurrentHashMap<String, Uri>()
     private val sourceResolutions = ConcurrentHashMap.newKeySet<String>()
@@ -308,6 +322,16 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      * right for the other.
      */
     private val wrongLength = ConcurrentHashMap.newKeySet<String>()
+
+    /**
+     * Whether [rendition] holds everything a whole-track pass reads: all of
+     * it, or, for a track past [MAX_WHOLE_TRACK_SECONDS] (measured on its head
+     * and tail windows alone), both ends of a copy too long to fetch whole.
+     * See [AudioCache.coversHeadAndTail].
+     */
+    private fun wholeEnough(rendition: AudioCache.Rendition, durationSeconds: Double): Boolean =
+        rendition.isComplete ||
+            (durationSeconds > MAX_WHOLE_TRACK_SECONDS && cache.coversHeadAndTail(rendition))
 
     /** Whether [key] is not to be read for [trackId]. */
     private fun rejected(trackId: String, key: String): Boolean =
@@ -530,7 +554,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         } else {
             cache.renditionsOf(analysisUri)
                 .filter { readable(analysisUri, it.key, durationSeconds) }
-                .filter { it.isComplete && !rejected(trackId, it.key) }
+                .filter { wholeEnough(it, durationSeconds) && !rejected(trackId, it.key) }
         }
         val usableComplete = local || complete.isNotEmpty()
 
@@ -627,9 +651,11 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                     // new grid with the old copy's key or the other way round.
                     val whole = outcome.analysis?.let { keepHeadGrid(trackId, it, measuredOn) }
                         ?.copy(measuredOn = measuredOn)
+                        ?.let { if (outcome.withoutModels) it.withoutBeatMatch() else it }
                     if (whole != null && released) return@execute
                     if (whole != null) {
                         if (measuredOn != null) measuredCopies[trackId] = measuredOn
+                        headClaims.remove(trackId)
                         remember(trackId, whole)
                         provisional.remove(trackId)
                         shortDecodes.remove(trackId)
@@ -673,6 +699,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                     // without the beat model is a DSP estimate that must give
                     // way to a model pass on the same bytes once they arrive.
                     val modelsBefore = modelsReady()
+                    val headGeneration = AutomixModels.generation
                     val head = analyzeHead(trackId, analysisUri, durationSeconds, headRendition!!)
                     if (head != null && released) return@execute
                     if (head != null) {
@@ -680,9 +707,13 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                         measuredCopies[trackId] = headRendition.key
                         // The very object published, so the model-less record's
                         // identity check matches what the cache holds.
+                        val withModels = modelsBefore && modelsReady() && AutomixModels.generation == headGeneration
                         val published = head.copy(measuredOn = headRendition.key)
+                            .let { if (withModels) it else it.withoutBeatMatch() }
+                        // Its claim, so an eviction can hand it back: see [forget].
+                        headClaims[trackId] = headRendition.key to headRendition.cachedPrefix
                         remember(trackId, published)
-                        if (modelsBefore && modelsReady()) {
+                        if (withModels) {
                             modelless.forget(trackId)
                         } else {
                             modelless.recordHead(trackId, published, headRendition.key, headRendition.cachedPrefix)
@@ -1012,7 +1043,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
     ): AudioCache.Rendition? {
         val complete = cache.renditionsOf(uri)
             .filter { readable(uri, it.key, durationSeconds) }
-            .filter { it.isComplete && !rejected(trackId, it.key) }
+            .filter { wholeEnough(it, durationSeconds) && !rejected(trackId, it.key) }
             // A canonical copy before the analysis round's substitute, however
             // light the substitute is; the sort is stable, so size order holds
             // within each.
@@ -1134,6 +1165,12 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      * same title/artist/runtime matching hints as a YouTube item. Resolve that
      * identity once, then keep playback on its original URI while analysis
      * fills and reads the separately pinned YouTube Opus entry.
+     *
+     * A recording with no YouTube match is measured on its own audio, read
+     * through the analyser's own light copy of it (see
+     * [AudioCache.requestAnalysisHead]), rather than left unmeasured for the
+     * session: every track is analysed. So is one whose search keeps failing,
+     * after [SOURCE_SEARCH_ATTEMPTS] tries.
      */
     private fun analysisUriFor(trackId: String, playbackUri: Uri): Uri? {
         if (playbackUri.getQueryParameter("v") != null || playbackUri.authority != "source") return playbackUri
@@ -1165,7 +1202,8 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                     sourceAnalysisUris[trackId] = Uri.parse(AutomixAnalysisSource.opusUri(match.videoId))
                     Log.d(TAG, "Automix analysis for $trackId will use YouTube Opus ${match.videoId}")
                 } else {
-                    Log.d(TAG, "No YouTube match for Automix analysis of $trackId")
+                    sourceAnalysisUris[trackId] = playbackUri
+                    Log.d(TAG, "No YouTube match for $trackId; analysing its own audio")
                 }
             } catch (error: Throwable) {
                 if (error is CancellationException) throw error
@@ -1177,6 +1215,10 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                     sourceResolutionRetryAt.remove(trackId)
                 } else {
                     val failures = sourceResolutionFailures.merge(trackId, 1, Int::plus)!!
+                    if (failures >= SOURCE_SEARCH_ATTEMPTS) {
+                        // Still asked for later; measured on its own audio meanwhile.
+                        sourceAnalysisUris.putIfAbsent(trackId, playbackUri)
+                    }
                     val delayMs = (SOURCE_RETRY_BASE_MS shl (failures - 1).coerceAtMost(5))
                     sourceResolutionRetryAt[trackId] = SystemClock.elapsedRealtime() + delayMs
                 }
@@ -1450,6 +1492,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // Read before and after the windows: models that arrive or go mid-pass
         // leave some windows without them.
         val modelsBefore = modelsReady()
+        val generationBefore = AutomixModels.generation
         val regions = ArrayList<Region>()
         // Latched, like Pass 1's: [stopped] clears again once the player has the
         // codec back, so read afterwards it can say "not stopped" about a window
@@ -1465,7 +1508,9 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             region(openSource, from, to, features, abort = abort::poll)?.let(regions::add)
         }
         if (abort.poll()) return interrupted()
-        val withoutModels = !(modelsBefore && modelsReady())
+        // A delete and a fresh download inside the pass read as ready on both
+        // sides; the generation says the windows between ran without them.
+        val withoutModels = !(modelsBefore && modelsReady() && AutomixModels.generation == generationBefore)
 
         val beats = seamBeats(regions)
         val headSide = beatSide(beats, 0.0, headEnd)
@@ -1984,7 +2029,12 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      * gets the blend too, since nothing can show which copy it came from.
      */
     private fun loopCopy(trackId: String, uri: Uri, durationSeconds: Double, plannedOn: String?): Copy? {
-        if (LocalAudioSource.isLocal(uri)) return copyToRead(trackId, uri, durationSeconds)
+        if (LocalAudioSource.isLocal(uri)) {
+            // A local file is its own copy, keyed by its address; a plan made
+            // on another address is not cut from this one.
+            if (plannedOn != null && plannedOn != uri.toString()) return null
+            return copyToRead(trackId, uri, durationSeconds)
+        }
         // Read off the published result itself, so the key is the one that
         // came with the grid rather than one written beside it.
         val decision = loopDeckCopy(
@@ -2024,6 +2074,9 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         bins: Int,
     ): MixWaveform.Bands? {
         val trackId = scoped(track)
+        // Read once: the address and the copy have to come from the same
+        // result, and a publish between two reads could pair them across two.
+        val published = results[trackId]
         // Not [analysisUriFor]: that starts a catalogue search, and this only
         // wants whatever analysis already settled on.
         val analysisUri = if (uri.getQueryParameter("v") != null || uri.authority != "source") {
@@ -2032,7 +2085,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             // A result restored after a restart arrives before any catalogue
             // match: the copy it names is the matched YouTube copy.
             sourceAnalysisUris[trackId]
-                ?: results[trackId]?.measuredOn
+                ?: published?.measuredOn
                     // A bare video id is the canonical copy too; a source key
                     // (`source|track`) names no YouTube copy.
                     ?.let { key -> AutomixAnalysisSource.videoIdOfAnalysisKey(key) ?: key.takeIf(BARE_VIDEO_ID::matches) }
@@ -2044,7 +2097,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // later canonical copy can sit on a different timeline from the
         // substitute the grid came from. Gone, the waveform is left out rather
         // than drawn from another copy.
-        val measured = results[trackId]?.measuredOn?.takeUnless { LocalAudioSource.isLocal(analysisUri) }
+        val measured = published?.measuredOn?.takeUnless { LocalAudioSource.isLocal(analysisUri) }
         val copy = runCatching {
             if (measured != null) {
                 measuredCopy(trackId, analysisUri, measured)
@@ -2088,6 +2141,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         triedRenditions.clear()
         discarded.clear()
         modelless.clear()
+        headClaims.clear()
         tracker.release()
         vocals.release()
     }
@@ -2100,6 +2154,12 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
 
         /** First wait before a failed catalogue search is retried; doubles per failure, to 16 minutes. */
         const val SOURCE_RETRY_BASE_MS = 30_000L
+
+        /** Failed searches after which a source track is measured on its own audio. */
+        const val SOURCE_SEARCH_ATTEMPTS = 3
+
+        /** Where a model-less result's confidence is capped: under [MIN_BEATMATCH_CONFIDENCE]. */
+        const val MODELLESS_CONFIDENCE = MIN_BEATMATCH_CONFIDENCE - 0.05
 
         /**
          * What an unmeasured instant reads as. Below the policy's VOCAL_ACTIVE_THRESHOLD by

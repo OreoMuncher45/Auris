@@ -106,4 +106,21 @@ object AutomixAnalysisSource {
     fun opusUri(videoId: String): String = "bitchord://watch?v=$videoId&$OPUS_QUERY_PARAMETER=1"
 
     fun requestsYouTubeOpus(marker: String?): Boolean = marker == "1"
+
+    /**
+     * Marks an address as the analyser's read rather than the player's: the
+     * resolver answers it at [ANALYSIS_KBPS], never the lossless or immersive
+     * file the listener's quality setting would fetch for playback. The
+     * analyser measures tempo and structure, which a lossy copy carries as
+     * well as a master does, and reading a master for it cost the full file.
+     */
+    const val ANALYSIS_READ_PARAMETER = "automix_read"
+
+    /** The highest bitrate an analysis read asks a source for. */
+    const val ANALYSIS_KBPS = 192
+
+    fun analysisRead(uri: String): String =
+        if ("$ANALYSIS_READ_PARAMETER=1" in uri) uri else uri + (if ('?' in uri) "&" else "?") + "$ANALYSIS_READ_PARAMETER=1"
+
+    fun isAnalysisRead(marker: String?): Boolean = marker == "1"
 }

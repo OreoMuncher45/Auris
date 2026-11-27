@@ -75,29 +75,57 @@ internal class QueueSelectionState {
         private set
     val keys = mutableStateSetOf<String>()
 
+    /**
+     * Where each ticked row without an entry id stood when it was ticked. Such
+     * a row is keyed by its song and how many copies come before it, so when
+     * an earlier copy leaves, the key moves on to the next copy: the tick must
+     * go with the row, not pass to a copy the listener did not tick. Plain,
+     * not state: only [retain] reads it.
+     */
+    private val pinned = HashMap<String, Int>()
+
     fun start() {
         keys.clear()
+        pinned.clear()
         active = true
     }
 
     fun clear() {
         active = false
         keys.clear()
+        pinned.clear()
     }
 
-    fun toggle(key: String) {
-        if (!keys.remove(key)) keys.add(key)
+    fun toggle(row: QueueTrack) {
+        if (keys.remove(row.key)) {
+            pinned.remove(row.key)
+        } else {
+            keys.add(row.key)
+            pin(row)
+        }
     }
 
     fun selectAll(rows: List<QueueTrack>) {
-        rows.forEach { keys.add(it.key) }
+        rows.forEach { keys.add(it.key); pin(it) }
     }
 
-    /** Drops keys whose rows have left the queue. */
+    private fun pin(row: QueueTrack) {
+        if (row.song.queueEntryId == null) pinned[row.key] = row.timelineIndex
+    }
+
+    /**
+     * Drops keys whose rows have left the queue, and an entry-less row's key
+     * that now names a different copy than the one ticked.
+     */
     fun retain(rows: List<QueueTrack>) {
         if (keys.isEmpty()) return
-        val live = rows.mapTo(HashSet()) { it.key }
-        keys.retainAll(live)
+        val live = rows.associateBy { it.key }
+        val gone = keys.filterTo(HashSet()) { key ->
+            val row = live[key] ?: return@filterTo true
+            pinned[key]?.let { it != row.timelineIndex } ?: false
+        }
+        if (gone.isNotEmpty()) keys.removeAll(gone)
+        pinned.keys.retainAll(keys)
     }
 
     fun selected(rows: List<QueueTrack>): List<QueueTrack> = rows.filter { it.key in keys }
