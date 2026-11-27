@@ -227,6 +227,44 @@ class SessionRetryTest {
     }
 
     @Test
+    fun `rows added in bulk carry the entry id this playlist gave them, never the source's`() {
+        val fromAnotherPlaylist = com.music.bitchord.data.model.Song(
+            videoId = "aaaaaaaaaaa", title = "A", artist = "", thumbnailUrl = null, setVideoId = "SOURCE-ROW",
+        )
+        val noIdGiven = fromAnotherPlaylist.copy(videoId = "bbbbbbbbbbb")
+        val notAdded = fromAnotherPlaylist.copy(videoId = "ccccccccccc")
+        val result = YtMusicRepository.AddedTracks(
+            added = mapOf("aaaaaaaaaaa" to "DEST-ROW", "bbbbbbbbbbb" to ""),
+            alreadyThere = false,
+            failed = false,
+        )
+        val rows = result.rowsOf(listOf(fromAnotherPlaylist, noIdGiven, notAdded))
+        assertEquals(listOf("aaaaaaaaaaa" to "DEST-ROW", "bbbbbbbbbbb" to null), rows.map { it.videoId to it.setVideoId })
+    }
+
+    @Test
+    fun `a page's continuation refused once goes on under the refreshed session of the same listener`() = runBlocking {
+        Innertube.cookie = "SID=A"
+        // The first continuation is refused for stale credentials; the shell
+        // names a dataSyncId, so the refresh moves the generation.
+        answer(shell = { shellFor(dataSyncId = "sync-A") }, lookup = { index -> if (index == 0) 401 else 200 }) { 200 }
+        Innertube.ensureSessionScope()
+        val opening = Innertube.listenerStamp()
+        val (first, second, adopted) = Innertube.asListenerRecoverably(opening) {
+            val first = YtMusicRepository.moreSongs("TOKEN-2")
+            val adopted = Innertube.boundStamp()
+            Triple(first, YtMusicRepository.moreSongs("TOKEN-3"), adopted)
+        }
+        // Retried once and then the next page sent: three requests, none refused as another session.
+        assertEquals(3, lookups.size)
+        kotlin.test.assertFalse(first.exceptionOrNull() is Innertube.ListenerChangedException)
+        kotlin.test.assertFalse(second.exceptionOrNull() is Innertube.ListenerChangedException)
+        assertEquals(opening.listener, adopted?.listener)
+        assertTrue(adopted != opening, "the binding did not move to the refreshed session")
+        assertEquals(Innertube.listenerStamp(), adopted)
+    }
+
+    @Test
     fun `a recoverable add is never retried as another account`() = runBlocking {
         Innertube.cookie = "SID=A"
         var shells = 0
