@@ -600,7 +600,10 @@ private fun phraseBarPlan(
     }
     if (abs(measuredEnd - transitionStart - requestedOverlap) > beatSeconds / 2) return null
     val transitionEnd = measuredEnd
-    if (transitionEnd > length + 0.05) return null
+    // The snap can land the end on the bar line past the anchor (the content
+    // end or the mix-out), exactly the asked-for bars on: a phrase that runs
+    // past it plays into the outro it was meant to leave before.
+    if (transitionEnd > anchor + 0.05 || transitionEnd > length + 0.05) return null
     val overlapSeconds = transitionEnd - transitionStart
     if (overlapSeconds <= 0) return null
 
@@ -942,7 +945,17 @@ sealed interface WsolaPlanResult {
  * Where the incoming track takes over: the best-ranked mix-in candidate no
  * later than [latest], snapped to a downbeat.
  */
-fun incomingMixInPoint(analysis: TrackAnalysis, latest: Double = Double.POSITIVE_INFINITY): Double? {
+/**
+ * Where the incoming track's arrangement arrives, snapped to a bar line of
+ * [grid] (the whole track's by default). With [strict], a drop that has no bar
+ * line of [grid] near it is no answer, rather than kept at its own time.
+ */
+fun incomingMixInPoint(
+    analysis: TrackAnalysis,
+    latest: Double = Double.POSITIVE_INFINITY,
+    grid: List<Double> = analysis.downbeats,
+    strict: Boolean = false,
+): Double? {
     val beatSeconds = analysis.beatInterval.orZero().takeIf { it > 0 }
         ?: if (analysis.bpm.orZero() > 0) 60 / analysis.bpm else 0.0
     val tolerance = max(0.5, beatSeconds * 2)
@@ -955,7 +968,8 @@ fun incomingMixInPoint(analysis: TrackAnalysis, latest: Double = Double.POSITIVE
         .firstOrNull { it.isFinite() && it > 0 && it <= latest }
         ?: return null
     // A downbeat at 0 s is no drop to fade over: keep the candidate's own time then.
-    return nearestValue(analysis.downbeats, target, tolerance)?.takeIf { it > 0 && it <= latest } ?: target
+    val snapped = nearestValue(grid, target, tolerance)?.takeIf { it > 0 && it <= latest }
+    return snapped ?: target.takeIf { !strict }
 }
 
 /** Where the incoming track first makes sound. */
@@ -985,7 +999,16 @@ fun planWsolaTransition(
     val incomingBeatSeconds = 60 / incomingBpm
     val outgoingBeatSeconds = 60 / outgoingBpm
 
-    val incomingDropTime = incomingMixInPoint(nextAnalysis, latestIncomingCue(incomingLength))
+    // Phased on the grid the policy trusted the pair on: the opening's own,
+    // where the model measured one. A drop with no bar line of it near is not
+    // one this blend can lock to, and the adaptive plan takes the pair.
+    val headGrid = nextAnalysis.headBeats?.downbeats
+    val incomingDropTime = if (headGrid != null) {
+        incomingMixInPoint(nextAnalysis, latestIncomingCue(incomingLength), grid = headGrid, strict = true)
+            ?: return WsolaPlanResult.Refused("incoming-head-grid")
+    } else {
+        incomingMixInPoint(nextAnalysis, latestIncomingCue(incomingLength))
+    }
     if (incomingDropTime == null || !incomingDropTime.isFinite() || incomingDropTime < 0) {
         return WsolaPlanResult.Refused("incoming-mix-in")
     }
