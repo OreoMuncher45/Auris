@@ -90,7 +90,18 @@ object BestParts {
             ?: heat?.durationMs
             ?: 0L
         val lines = if (lyrics != null) {
-            withTimeoutOrNull(LYRICS_TIMEOUT_MS) { lyrics() }?.takeIf(EmbeddedLyrics::isSynced)
+            // A failing lookup is no words, not a failed pick: the curve or
+            // the fallback still answers.
+            withTimeoutOrNull(LYRICS_TIMEOUT_MS) {
+                try {
+                    lyrics()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.d(TAG, "no lyrics for ${song.videoId}: ${e.message}")
+                    null
+                }
+            }?.takeIf(EmbeddedLyrics::isSynced)
         } else {
             syncedLines(context, song, length)
         }.orEmpty()
@@ -191,7 +202,6 @@ object BestParts {
     private suspend fun ensureLoaded(context: Context) = lock.withLock {
         if (file != null) return@withLock
         val target = File(context.applicationContext.filesDir, FILE_NAME)
-        file = target
         withContext(Dispatchers.IO) {
             if (!target.exists()) return@withContext
             runCatching { json.decodeFromString(Stored.serializer(), target.readText()) }
@@ -201,6 +211,10 @@ object BestParts {
                     target.delete()
                 }
         }
+        // Marked loaded only once the read is over: a first load cancelled
+        // mid-read is tried again, rather than leaving the cache empty for the
+        // process and the next save overwriting the file with that.
+        file = target
     }
 
     private suspend fun save() = lock.withLock {
