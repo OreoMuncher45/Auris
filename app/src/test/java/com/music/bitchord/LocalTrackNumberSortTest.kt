@@ -72,4 +72,15 @@ class LocalTrackNumberSortTest {
             songs.sortedForLibrary(LocalMusicSort.TRACK_NUMBER).map { it.videoId },
         )
     }
+
+    @Test
+    fun twoReleasesSharingANameDoNotInterleave() {
+        fun at(id: String, folder: String, track: Int) =
+            song(id, id, album = "Greatest Hits", track = track).copy(localPath = "/music/$folder/$id.mp3")
+        val songs = listOf(at("a1", "A", 1), at("b1", "B", 1), at("a2", "A", 2), at("b2", "B", 2))
+        assertEquals(
+            listOf("a1", "a2", "b1", "b2"),
+            songs.sortedForLibrary(LocalMusicSort.TRACK_NUMBER).map { it.videoId },
+        )
+    }
 }
