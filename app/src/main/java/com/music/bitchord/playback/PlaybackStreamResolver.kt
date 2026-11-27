@@ -18,6 +18,7 @@ import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
+import com.music.bitchord.data.sources.StreamRequest
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.data.sources.mornye.SflxSegments
 import com.music.bitchord.playback.smart.AutomixAnalysisSource
@@ -516,6 +517,17 @@ internal class PlaybackStreamResolver(
 
     /** A row that exists only in Spotify's catalogue, served by whichever source holds it. */
     private fun resolveSpotifyRow(dataSpec: DataSpec, videoId: String, about: CoroutineContext): DataSpec {
+        // The analyser's read of a row the listener plays lossless or
+        // immersive is answered with a capped lossy copy instead, and kept
+        // apart from the player's pin both ways: it neither reads the
+        // master the pin holds nor pins its lighter copy for playback. See
+        // [AutomixAnalysisSource.analysisRead]. At a lossy playback tier the
+        // pin is already a lossy copy, and the read shares it as before.
+        val playbackRequest = SourceResolver.requestForNow()
+        val lightRead = AutomixAnalysisSource.isAnalysisRead(
+            dataSpec.uri.getQueryParameter(AutomixAnalysisSource.ANALYSIS_READ_PARAMETER),
+        ) && (playbackRequest.wantsLossless || playbackRequest.wantsAtmos)
+        val request = if (lightRead) StreamRequest.Capped(AutomixAnalysisSource.ANALYSIS_KBPS) else playbackRequest
         // The pin: the copy already chosen for this row.
         //
         // Every writer for a catalogue row — the player's own open,
@@ -525,7 +537,7 @@ internal class PlaybackStreamResolver(
         // panel is waiting on. The pin is what the class exists for:
         // one server fills this track's entry, so the second writer
         // reads the same bytes rather than a second answer.
-        val pinned = StreamChoice.of(videoId)?.takeIf { serving ->
+        val pinned = if (lightRead) null else StreamChoice.of(videoId)?.takeIf { serving ->
             // A source turned off after the pin was made does not get
             // to keep serving: "Off" has to mean off for a row queued
             // earlier too.
@@ -553,7 +565,7 @@ internal class PlaybackStreamResolver(
         var fallbackFailure: Throwable? = null
         val resolved = runBlocking(about) {
             val fromSources = withTimeoutOrNull(SUBSTITUTE_TIMEOUT_MS) {
-                SourceResolver.substituteForYouTube(target)
+                SourceResolver.substituteForYouTube(target, request)
             }
             if (fromSources != null) return@runBlocking fromSources
             // Nobody holds this recording, but YouTube is still switched
@@ -614,6 +626,12 @@ internal class PlaybackStreamResolver(
             "no enabled source could serve '${target.title}'",
             fallbackFailure,
         )
+        if (lightRead) {
+            return dataSpec.buildUpon()
+                .setUri(Uri.parse(resolved.url))
+                .setHttpRequestHeaders(resolved.headers)
+                .build()
+        }
         val serving = pinOrPinned(videoId, resolved, substituted = !viaYouTube)
         val sourceName = serving.sourceConfigId
             ?.let { SourceRegistry.config(it)?.displayName }

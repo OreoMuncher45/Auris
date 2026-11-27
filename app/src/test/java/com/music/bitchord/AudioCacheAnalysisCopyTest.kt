@@ -41,9 +41,11 @@ class AudioCacheAnalysisCopyTest {
 
         val copy = AudioCache.analysisCopyAddress(row, "spotify:2vd2ouW2pbzXWUbzORtxOi")
 
-        // The row's own address, whole: the id, and the name the sources are
-        // asked to match on.
-        assertEquals(row, copy)
+        // The row's own address, whole (the id, and the name the sources are
+        // asked to match on), marked as the analyser's read so the sources
+        // answer it with a light copy rather than the listener's master.
+        assertEquals("$row&automix_read=1", copy)
+        assertTrue(copy.startsWith(row))
         assertTrue(copy.contains("n=Guillotines+for+Billionaires"))
         assertTrue(copy.contains("a=Matt+Elliott"))
         // And no YouTube-Opus marker: there is no YouTube copy of this row to
