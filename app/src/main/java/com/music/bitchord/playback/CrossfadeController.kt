@@ -17,6 +17,7 @@ import com.music.bitchord.data.settings.MixTransitionView
 import com.music.bitchord.data.settings.SmartAnalysis
 import com.music.bitchord.data.settings.SmartTrackFacts
 import com.music.bitchord.data.settings.TrackAnalysisState
+import com.music.bitchord.playback.smart.TrackAnalysisStates
 import com.music.bitchord.data.settings.TransitionWindow
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.model.QueueEntryIdentity
@@ -172,6 +173,11 @@ class CrossfadeController(
      * Only feeds the stats line — nothing about a transition waits on it.
      */
     private val analysisRunningFor: (MediaItem) -> Boolean = { false },
+    /**
+     * Whether a media item's result is a head-only one still waiting on the
+     * whole-track pass (which may be waiting on bytes, not running).
+     */
+    private val analysisProvisionalFor: (MediaItem) -> Boolean = { false },
     /**
      * The track about to be loaded onto the standby player, announced at the
      * moment [begin] arms rather than at the handoff.
@@ -1541,9 +1547,14 @@ class CrossfadeController(
         val nextItem = player.nextItemOrNull()
         val currentAnalysis = currentItem?.let { analysisFor(it) }
         val nextAnalysis = nextItem?.let { analysisFor(it) }
-        val currentState = currentItem?.let { stateOf(it, currentAnalysis ?: TrackAnalysis()) }
-            ?: TrackAnalysisState.WAITING
-        val nextState = nextItem?.let { stateOf(it, nextAnalysis ?: TrackAnalysis()) }
+        // Only the outgoing side counts a head-only result as unfinished: it
+        // has no content end, outro or mix-out anchor, which is where the
+        // window sits. The incoming side's head pass measures all a mix asks
+        // of it (see the marker's guard in [considerSmartTransition]).
+        val currentState = currentItem?.let {
+            stateOf(it, currentAnalysis ?: TrackAnalysis(), provisional = analysisProvisionalFor(it))
+        } ?: TrackAnalysisState.WAITING
+        val nextState = nextItem?.let { stateOf(it, nextAnalysis ?: TrackAnalysis(), provisional = false) }
             ?: TrackAnalysisState.WAITING
         // The plan's own size and style, and only while it is the plan for
         // this pair: a blocked plan has no overlap to describe.
@@ -1601,26 +1612,13 @@ class CrossfadeController(
      * result is already on record, and the work in progress is the more useful
      * thing to say about it.
      */
-    private fun stateOf(item: MediaItem, analysis: TrackAnalysis): TrackAnalysisState = when {
-        // Usable first, and a pass in flight *second*. The other order was
-        // right up to the point a head-only result started arriving before the
-        // whole-track one: a track measured off its opening reads as analysed,
-        // then finishes caching, then has the full pass run over it to replace
-        // the provisional numbers — and reported "analysing" again throughout.
-        // Going backwards from analysed reads as something having broken, when
-        // what is happening is a better answer being computed. Confidence on one
-        // such track went 0.39 to 0.94 and its cue moved from 0.1s to 9.5s.
-        analysis.isUsable ->
-            if (analysisRunningFor(item)) TrackAnalysisState.REFINING else TrackAnalysisState.ANALYSED
-        analysisRunningFor(item) -> TrackAnalysisState.ANALYSING
-        // A recorded-but-unusable result is the analyzer's way of saying it
-        // tried and got nothing, and that it will not try again — it writes a
-        // ready-but-empty entry precisely so the track stops being retried. A
-        // track nothing has looked at yet has no status at all, which is the
-        // only case that is still merely waiting.
-        analysis.status == TrackAnalysis.STATUS_READY -> TrackAnalysisState.FAILED
-        else -> TrackAnalysisState.WAITING
-    }
+    private fun stateOf(item: MediaItem, analysis: TrackAnalysis, provisional: Boolean): TrackAnalysisState =
+        TrackAnalysisStates.of(
+            usable = analysis.isUsable,
+            ready = analysis.status == TrackAnalysis.STATUS_READY,
+            running = analysisRunningFor(item),
+            provisional = provisional,
+        )
 
     /**
      * The next queue item's own duration.
