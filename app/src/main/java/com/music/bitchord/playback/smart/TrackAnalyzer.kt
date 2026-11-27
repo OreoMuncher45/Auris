@@ -232,8 +232,22 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             // A model-less result was never stored, so nothing restores it;
             // its record goes with it rather than pinning its curves in memory.
             modelless.release(trackId, headAttempts) { results[it] }
+            // A head result measured with the models gives its prefix claim
+            // back too, so the same prefix can rebuild it.
+            headClaims.remove(trackId)?.let { (key, prefix) -> headAttempts.remove(key, prefix) }
         }
     }
+
+    /** The head claim each published head result was measured under: (copy key, prefix). */
+    private val headClaims = ConcurrentHashMap<String, Pair<String, Long>>()
+
+    /**
+     * This result as planning should see one measured without the models: its
+     * grid is a DSP estimate, and AutoMix without its models plays plain
+     * crossfades, so it never clears the beat-match bar.
+     */
+    private fun TrackAnalysis.withoutBeatMatch(): TrackAnalysis =
+        if (beatConfidence < MODELLESS_CONFIDENCE) this else copy(beatConfidence = MODELLESS_CONFIDENCE)
     private val running = ConcurrentHashMap.newKeySet<String>()
     private val sourceAnalysisUris = ConcurrentHashMap<String, Uri>()
     private val sourceResolutions = ConcurrentHashMap.newKeySet<String>()
@@ -634,9 +648,11 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                     // new grid with the old copy's key or the other way round.
                     val whole = outcome.analysis?.let { keepHeadGrid(trackId, it, measuredOn) }
                         ?.copy(measuredOn = measuredOn)
+                        ?.let { if (outcome.withoutModels) it.withoutBeatMatch() else it }
                     if (whole != null && released) return@execute
                     if (whole != null) {
                         if (measuredOn != null) measuredCopies[trackId] = measuredOn
+                        headClaims.remove(trackId)
                         remember(trackId, whole)
                         provisional.remove(trackId)
                         shortDecodes.remove(trackId)
@@ -680,6 +696,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                     // without the beat model is a DSP estimate that must give
                     // way to a model pass on the same bytes once they arrive.
                     val modelsBefore = modelsReady()
+                    val headGeneration = AutomixModels.generation
                     val head = analyzeHead(trackId, analysisUri, durationSeconds, headRendition!!)
                     if (head != null && released) return@execute
                     if (head != null) {
@@ -687,9 +704,13 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                         measuredCopies[trackId] = headRendition.key
                         // The very object published, so the model-less record's
                         // identity check matches what the cache holds.
+                        val withModels = modelsBefore && modelsReady() && AutomixModels.generation == headGeneration
                         val published = head.copy(measuredOn = headRendition.key)
+                            .let { if (withModels) it else it.withoutBeatMatch() }
+                        // Its claim, so an eviction can hand it back: see [forget].
+                        headClaims[trackId] = headRendition.key to headRendition.cachedPrefix
                         remember(trackId, published)
-                        if (modelsBefore && modelsReady()) {
+                        if (withModels) {
                             modelless.forget(trackId)
                         } else {
                             modelless.recordHead(trackId, published, headRendition.key, headRendition.cachedPrefix)
@@ -1468,6 +1489,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // Read before and after the windows: models that arrive or go mid-pass
         // leave some windows without them.
         val modelsBefore = modelsReady()
+        val generationBefore = AutomixModels.generation
         val regions = ArrayList<Region>()
         // Latched, like Pass 1's: [stopped] clears again once the player has the
         // codec back, so read afterwards it can say "not stopped" about a window
@@ -1483,7 +1505,9 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             region(openSource, from, to, features, abort = abort::poll)?.let(regions::add)
         }
         if (abort.poll()) return interrupted()
-        val withoutModels = !(modelsBefore && modelsReady())
+        // A delete and a fresh download inside the pass read as ready on both
+        // sides; the generation says the windows between ran without them.
+        val withoutModels = !(modelsBefore && modelsReady() && AutomixModels.generation == generationBefore)
 
         val beats = seamBeats(regions)
         val headSide = beatSide(beats, 0.0, headEnd)
@@ -2114,6 +2138,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         triedRenditions.clear()
         discarded.clear()
         modelless.clear()
+        headClaims.clear()
         tracker.release()
         vocals.release()
     }
@@ -2129,6 +2154,9 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
 
         /** Failed searches after which a source track is measured on its own audio. */
         const val SOURCE_SEARCH_ATTEMPTS = 3
+
+        /** Where a model-less result's confidence is capped: under [MIN_BEATMATCH_CONFIDENCE]. */
+        const val MODELLESS_CONFIDENCE = MIN_BEATMATCH_CONFIDENCE - 0.05
 
         /**
          * What an unmeasured instant reads as. Below the policy's VOCAL_ACTIVE_THRESHOLD by
