@@ -381,7 +381,7 @@ fun LibraryScreen(
                 }
             }
             when (state) {
-                is UiState.Loading -> librarySkeleton()
+                is UiState.Loading -> if (showsLibrarySkeleton(signedIn, state)) librarySkeleton()
                 is UiState.Error -> item {
                     MessageState(state.message, actionLabel = stringResource(Res.string.retry), onAction = onRetry)
                 }
@@ -932,3 +932,12 @@ private const val SUBSCRIPTIONS = "Subscriptions"
 
 /** The saved podcasts shelf of the library feed. */
 private const val PODCASTS = "Podcasts"
+
+/**
+ * Whether the library's loading skeleton belongs on the page. Signed out, the
+ * account's library is never fetched, so the state stays Loading for good: a
+ * skeleton there would sweep its shimmer on every frame for a page that is
+ * never coming.
+ */
+internal fun showsLibrarySkeleton(signedIn: Boolean, state: UiState<*>): Boolean =
+    signedIn && state is UiState.Loading
