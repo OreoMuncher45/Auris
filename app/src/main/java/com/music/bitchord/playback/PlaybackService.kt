@@ -13143,7 +13143,6 @@ return@withContext null
                                 resolved.addForSession(inputIndex, songs.map { it.toMediaItem() })
                             }
                         }
-            )
 }
         }
         return SessionAnswer(resolved.toList(), resolvedStart)
