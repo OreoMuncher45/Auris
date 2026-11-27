@@ -88,6 +88,9 @@ object LrcLib {
      * otherwise the line would blink out between two sung phrases. A stamp
      * with nothing after it closes the final line, so it always survives.
      */
+    /** Whether [lrc] holds line stamps at all: an LRC, even one [parseLrc] finds nothing sung in. */
+    fun isStamped(lrc: String): Boolean = STAMP.containsMatchIn(lrc)
+
     fun parseLrc(lrc: String): List<LyricLine> {
         val all = lrc.lineSequence().flatMap { line ->
             // `[00:12.00][00:45.00]Chorus` is one line sung at each stamp: the
@@ -125,6 +128,10 @@ object LrcLib {
                 )
             }
         }.sortedBy { it.timeMs }.toList()
+        // Stamps with nothing sung at any of them are no lyrics, only breaks:
+        // nothing, so the caller tries the next source rather than offering a
+        // screen of gaps that outranks plain lyrics found elsewhere.
+        if (all.none { !it.isGap }) return emptyList()
 
         val kept = all.filterIndexed { index, line ->
             if (!line.isGap) return@filterIndexed true
