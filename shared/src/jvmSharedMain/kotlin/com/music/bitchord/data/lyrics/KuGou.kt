@@ -141,7 +141,7 @@ object KuGou {
      */
     fun String.isInstrumentalNotice(): Boolean {
         val lines = lineSequence().map { it.replace(STAMP, "").trim() }.filter { it.isNotEmpty() }.toList()
-        return lines.isNotEmpty() && lines.all { INSTRUMENTAL.containsMatchIn(it) }
+        return lines.isNotEmpty() && lines.all { INSTRUMENTAL.matches(it) }
     }
 
     /**
@@ -151,11 +151,16 @@ object KuGou {
      */
     fun isInstrumentalNotice(lines: List<LyricLine>): Boolean {
         val sung = lines.map { it.text.trim() }.filter { it.isNotEmpty() }
-        return sung.isNotEmpty() && sung.all { INSTRUMENTAL.containsMatchIn(it) }
+        return sung.isNotEmpty() && sung.all { INSTRUMENTAL.matches(it) }
     }
 
     private val STAMP = Regex("""\[\d{2}:\d{2}\.\d{2,3}]""")
-    private val INSTRUMENTAL = Regex("""纯音乐.*欣赏""")
+    /**
+     * The whole line is the notice: it ends at "欣赏" (punctuation aside) and
+     * does not deny itself, so a sung line such as "这不是纯音乐，请欣赏我的歌声"
+     * ("this is not pure music, enjoy my singing") is kept.
+     */
+    private val INSTRUMENTAL = Regex("""^[^不]*纯音乐[，,、\s]*请?[您你]?欣赏[。．.!！~～\s]*$""")
     private val STAMPED = Regex("""\[\d{2}:\d{2}\.\d{2,3}].*""")
     private val CREDIT = Regex(""".+][^\[]+[:：].+""")
 
