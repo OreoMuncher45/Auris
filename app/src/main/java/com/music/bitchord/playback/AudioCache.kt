@@ -41,6 +41,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -379,9 +380,16 @@ object AudioCache {
         null
     }
 
-    /** Cancels the background work [init] and the cleanups started, so a test can release the cache after it. */
+    /**
+     * Cancels the background work [init] and the cleanups started, and waits
+     * for it to end, so a test can release the cache after it: a cleanup
+     * already walking the cache has no suspension point, and cancelling alone
+     * would leave it running. [scope] itself stays usable for a later [init].
+     */
     @androidx.annotation.VisibleForTesting
-    internal fun cancelBackgroundWorkForTest() = scope.coroutineContext.job.children.forEach { it.cancel() }
+    internal suspend fun cancelBackgroundWorkForTest() {
+        scope.coroutineContext.job.children.toList().forEach { it.cancelAndJoin() }
+    }
 
     /**
      * Moves a cache left in `cacheDir` by an older build to [dir], keeping
@@ -1317,10 +1325,13 @@ object AudioCache {
      */
     fun dropForeignEntries(keep: Set<String>): Job? {
         if (!::cache.isInitialized) return null
-        return scope.launch { whileOpen("drop addon and analysis-only entries") { dropForeign(keep) } }
+        // The cache this cleanup is for: one installed by a later [init]
+        // meanwhile is never touched by it.
+        val target = cache
+        return scope.launch { whileOpen("drop addon and analysis-only entries") { dropForeign(target, keep) } }
     }
 
-    private fun dropForeign(keep: Set<String>) {
+    private fun dropForeign(cache: SimpleCache, keep: Set<String>) {
         var dropped = 0
         cache.keys.toList().forEach { key ->
             val meta = runCatching { cache.getContentMetadata(key) }.getOrNull() ?: return@forEach

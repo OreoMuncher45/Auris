@@ -369,11 +369,7 @@ object Innertube {
     fun selectChannel(pageId: String?, dataSyncId: String?, authUser: String? = null) {
         synchronized(identityLock) {
             accountTransitions++
-            channelOverride = if (pageId == null && dataSyncId == null) {
-                null
-            } else {
-                ChannelSelection(pageId, dataSyncId, authUser)
-            }
+            channelOverride = channelSelection(pageId, dataSyncId, authUser)
             refreshListener()
         }
         Log.d(
@@ -381,6 +377,18 @@ object Innertube {
             "acting as channel pageId=${pageId ?: "none"} authUser=${authUser ?: "as-is"} " +
                 "(override=${channelOverride != null})",
         )
+    }
+
+    /**
+     * What a choice of channel overrides: nothing when it names no channel and
+     * no account other than the default one, so the shell's own answer
+     * stands. A personal account picked by its index alone (the second Google
+     * account in the jar, with no brand page) is still a choice: a refresh
+     * that reads the shell's default index must not sign as another account.
+     */
+    private fun channelSelection(pageId: String?, dataSyncId: String?, authUser: String?): ChannelSelection? {
+        val index = authUser?.takeIf { it.isNotBlank() && it != "0" }
+        return if (pageId == null && dataSyncId == null && index == null) null else ChannelSelection(pageId, dataSyncId, authUser)
     }
 
     /**
@@ -600,11 +608,7 @@ object Innertube {
                 clientVersion = candidate.clientVersion,
                 loggedIn = true,
             )
-            channelOverride = if (candidate.pageId == null && candidate.dataSyncId == null) {
-                null
-            } else {
-                ChannelSelection(candidate.pageId, candidate.dataSyncId, candidate.authUser)
-            }
+            channelOverride = channelSelection(candidate.pageId, candidate.dataSyncId, candidate.authUser)
             // The candidate's own visitor id, or none: a profile sharing the
             // cookie must not inherit the previous one's session-bound id.
             visitorData = candidate.visitorData?.takeIf { it.isNotBlank() }

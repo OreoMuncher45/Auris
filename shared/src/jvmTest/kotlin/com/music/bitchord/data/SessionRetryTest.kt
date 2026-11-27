@@ -82,6 +82,44 @@ class SessionRetryTest {
         assertTrue(result.isSuccess, "${result.exceptionOrNull()}")
         assertEquals(listOf("SID=A", "SID=A"), writes.map { it.cookie })
         assertEquals(listOf("0", "0"), writes.map { it.authUser })
+        // The scope read, the rejected edit, one refresh of the shell, then the retry.
+        assertEquals(listOf("shell", "edit", "shell", "edit"), order())
+    }
+
+    /** What went out, in order: a shell read or a playlist edit. */
+    private fun order() = synchronized(sent) {
+        sent.mapNotNull {
+            when {
+                it.method == "GET" && it.path == "/" -> "shell"
+                it.method == "POST" && it.path.endsWith("browse/edit_playlist") -> "edit"
+                else -> null
+            }
+        }
+    }
+
+    @Test
+    fun `a personal account picked by its index keeps it through a refresh that reads the shell's default`() = runBlocking {
+        Innertube.installSession(
+            Innertube.CandidateSession("SID=A", pageId = null, dataSyncId = null, authUser = "1", visitorData = null, clientVersion = null),
+        )
+        // The shell names the jar's default account, index 0.
+        answer(shell = { shellFor(index = "0") }) { index -> if (index == 0) 401 else 200 }
+        assertTrue(YtMusicRepository.renamePlaylist("PL1", "new name").isSuccess)
+        assertTrue(YtMusicRepository.renamePlaylist("PL1", "newer name").isSuccess)
+        assertEquals(listOf("1", "1", "1"), writes.map { it.authUser })
+    }
+
+    @Test
+    fun `a rejected request bound to its session refreshes nothing, so the caller's stamp stays current`() = runBlocking {
+        Innertube.cookie = "SID=A"
+        answer { 401 }
+        Innertube.ensureSessionScope()
+        val a = Innertube.listenerStamp()
+        val shellsBefore = order().size
+        val result = Innertube.asListener(a) { YtMusicRepository.renamePlaylist("PL1", "new name") }
+        assertTrue(result.isFailure)
+        assertEquals(listOf("edit"), order().drop(shellsBefore))
+        assertEquals(a, Innertube.listenerStamp())
     }
 
     @Test
