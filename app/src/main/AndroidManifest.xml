@@ -266,6 +266,17 @@
                     android:scheme="https"
                     android:host="bitchord.kushagrasingh.in"
                     android:pathPattern="/invite/......" />
+                <!-- Before Android 12, pathPattern is case-sensitive and has no
+                     character classes, so the capitalisations a link is
+                     actually written in are listed one by one. A wildcard
+                     segment would also take the site's other six-letter pages. -->
+                <data android:pathPattern="/INVITE/......" />
+                <data android:pathPattern="/Invite/......" />
+                <!-- Any capitalisation of /invite/, as the parser accepts.
+                     Android 12+; older versions ignore it and keep the lines above. -->
+                <data
+                    android:pathAdvancedPattern="/[iI][nN][vV][iI][tT][eE]/[A-Za-z0-9]{6}"
+                    tools:targetApi="31" />
             </intent-filter>
 
             <!-- Custom scheme for Listen Together invites on custom server deployments. -->

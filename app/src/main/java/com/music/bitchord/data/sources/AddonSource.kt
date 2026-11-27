@@ -192,6 +192,7 @@ class AddonSource(
         limit: Int,
         waitForAll: Boolean,
         request: StreamRequest?,
+        target: TrackMatcher.Target?,
     ): List<Song> =
         withContext(Dispatchers.IO) {
             if (query.isBlank()) return@withContext emptyList()
@@ -202,7 +203,14 @@ class AddonSource(
             // its own row offers it as a row or not at all, and a search that
             // did not ask would never bring it back to be preferred.
             val wantsAtmos = request != null && atmosWanted(request)
-            val tracks = client.search(query, tier, wantsAtmos).getOrElse { failure ->
+            val tracks = client.search(
+                query,
+                tier,
+                wantsAtmos,
+                // The track's own metadata, not the query's folded words.
+                title = target?.title.orEmpty(),
+                artist = target?.artist.orEmpty(),
+            ).getOrElse { failure ->
                 TrackLog.w(TAG, "${config.displayName}: search failed — ${failure.message}")
                 return@withContext emptyList()
             }

@@ -4,6 +4,7 @@ import android.content.Context
 import com.music.bitchord.R
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.artworkAt
+import com.music.bitchord.data.model.youTubeThumbnailFallback
 import com.my.kizzy.rpc.KizzyRPC
 import com.my.kizzy.rpc.RpcImage
 import java.util.Locale
@@ -122,7 +123,11 @@ class DiscordRPC(
             // artwork Discord can't reach, which is anything that isn't an http
             // URL — gets our own white-only mark instead.
             largeImage = RpcImage.ExternalImage(
-                song.artworkAt(ART_PX)?.takeIf { it.startsWith("http") } ?: FALLBACK_ART_URL,
+                // Discord fetches it with no fallback, so a YouTube cover goes at
+                // the size every video has rather than one an old upload 404s on.
+                song.artworkAt(ART_PX)?.takeIf { it.startsWith("http") }
+                    ?.let { youTubeThumbnailFallback(it) ?: it }
+                    ?: FALLBACK_ART_URL,
             ),
             // The small image is the app icon as Discord shows it next to the
             // sleeve, and left empty it is the icon of the registered Discord

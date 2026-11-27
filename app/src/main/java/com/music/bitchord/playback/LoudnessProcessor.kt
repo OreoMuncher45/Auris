@@ -101,6 +101,15 @@ class LoudnessProcessor {
         snap = true
     }
 
+    /**
+     * Keeps the limiter running while normalization has nothing to correct.
+     * Set by the DSP chain while a stage ahead of this one can push the signal
+     * past full scale and leaves its overs in place for this limiter to catch:
+     * parked, they would go to the sink unlimited and clip.
+     */
+    @Volatile
+    var holdLimiter = false
+
     fun configure(sampleRate: Int, channelCount: Int) {
         this.sampleRate = sampleRate
         this.channelCount = channelCount
@@ -127,7 +136,7 @@ class LoudnessProcessor {
      * Read on the audio thread by the DSP chain's bypass probe.
      */
     fun isParked(): Boolean {
-        if (targetGain() != 1f || trimTarget < 1f) return false
+        if (holdLimiter || targetGain() != 1f || trimTarget < 1f) return false
         if (snap) return reduction >= 1f - SETTLED
         return abs(currentGain - 1f) < SETTLED &&
             currentTrim >= 1f - SETTLED &&
@@ -149,7 +158,7 @@ class LoudnessProcessor {
         // Parked: nothing to scale and nothing that could clip. Returning before
         // touching a sample keeps the chain bit-exact while normalization is off
         // or the track happens to need no correction.
-        if (targetGain == 1f && targetTrim >= 1f &&
+        if (!holdLimiter && targetGain == 1f && targetTrim >= 1f &&
             abs(currentGain - 1f) < SETTLED && currentTrim >= 1f - SETTLED && reduction >= 1f - SETTLED
         ) {
             currentGain = 1f
@@ -174,7 +183,15 @@ class LoudnessProcessor {
             }
             peak *= scale
             val wanted = if (peak > LIMIT) LIMIT / peak else 1f
-            gr = if (wanted < gr) wanted else gr + (wanted - gr) * releaseCoef
+            gr = if (wanted < gr) {
+                wanted
+            } else {
+                // Near the end of a release the step rounds away in Float and
+                // gr would stall just short of unity, where the limiter can
+                // never park again: snap the last bit instead.
+                val released = gr + (wanted - gr) * releaseCoef
+                if (released == gr) wanted else released
+            }
             val applied = scale * gr
             for (channel in 0 until channels) {
                 samples[index + channel] *= applied

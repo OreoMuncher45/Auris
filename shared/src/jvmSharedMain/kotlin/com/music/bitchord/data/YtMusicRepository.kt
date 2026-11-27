@@ -27,10 +27,15 @@ import com.music.bitchord.data.model.SongMenu
 import com.music.bitchord.data.model.UserPlaylist
 import com.music.bitchord.data.sources.TrackMatcher
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import java.util.Locale
@@ -347,23 +352,102 @@ object YtMusicRepository {
      */
     suspend fun searchSuggestions(input: String): Result<List<String>> =
         call("suggest") {
-            InnertubeParser.parseSearchSuggestions(Innertube.searchSuggestions(input))
+            InnertubeParser.parseSearchSuggestions(rawSuggestions(input))
         }
 
     /**
-     * Live media results for the typeahead phase — a lightweight search that
-     * returns tracks, artists, and albums so the dropdown can show playable
-     * cards alongside text completions. Uses the ALL filter to get mixed
-     * results quickly; callers may want to limit how many they display.
+     * One `get_search_suggestions` answer per typed input, shared by the
+     * dropdown's text completions ([searchSuggestions]) and its live cards
+     * ([searchTypeahead]): both read the same response, so a keystroke asks
+     * YouTube once rather than twice. Only the latest input is kept — the
+     * field never goes back to an older one without it being typed again.
+     * Run on its own scope so one reader moving on doesn't cancel the other's
+     * answer; a failure isn't kept, so the next ask tries again. The answer is
+     * signed-in and ranked by the account, so it is reused only while
+     * [Innertube.listenerGeneration] is the one it was asked under: comparing
+     * the listener itself would miss a switch away and back while it was out.
+     */
+    private suspend fun rawSuggestions(input: String): JsonObject {
+        val generation = Innertube.listenerGeneration
+        val pending = synchronized(suggestionsLock) {
+            // A reader from an older account must neither reuse, replace nor
+            // cancel the current account's answer.
+            if (Innertube.listenerGeneration != generation) {
+                throw IllegalStateException("account changed before suggestions were asked for")
+            }
+            val last = lastSuggestions
+            last?.takeIf { it.input == input && it.generation == generation && !it.answer.isCancelled }?.answer
+                ?: suggestionsScope.async { Innertube.searchSuggestions(input) }
+                    .also {
+                        // A superseded input is never read again, so its request
+                        // stops rather than competing with the newest one over a
+                        // slow connection: at most one is ever in flight.
+                        last?.answer?.cancel()
+                        lastSuggestions = PendingSuggestions(input, generation, it)
+                    }
+        }
+        return try {
+            pending.await().also {
+                // The request reads the account again when it is built, so a
+                // switch while it was out leaves its account unknown: neither
+                // kept nor handed back as the new account's completions.
+                if (Innertube.listenerGeneration != generation) {
+                    synchronized(suggestionsLock) {
+                        if (lastSuggestions?.answer === pending) lastSuggestions = null
+                    }
+                    throw IllegalStateException("account changed while suggestions were loading")
+                }
+            }
+        } catch (failure: Throwable) {
+            if (failure !is CancellationException || pending.isCancelled) {
+                synchronized(suggestionsLock) {
+                    if (lastSuggestions?.answer === pending) lastSuggestions = null
+                }
+            }
+            // Cancelled because a newer input replaced it, not because this
+            // caller was: an ordinary failure, not a cancellation it never had.
+            if (failure is CancellationException && pending.isCancelled && currentCoroutineContext().isActive) {
+                throw IllegalStateException("suggestions superseded by a newer input")
+            }
+            throw failure
+        }
+    }
+
+    private class PendingSuggestions(val input: String, val generation: Long, val answer: Deferred<JsonObject>)
+
+    private val suggestionsLock = Any()
+    private var lastSuggestions: PendingSuggestions? = null
+    private val suggestionsScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * Live media results for the typeahead phase: tracks, artists and albums
+     * so the dropdown can show playable cards alongside text completions.
      *
-     * Deliberately unauthenticated: [Innertube.searchTypeahead] strips the
-     * session cookie so YouTube Music does not log each debounced keystroke
-     * to the account's server-side search history. Confirmed searches (Enter /
-     * IME Search / tapping a suggestion) still use the normal authenticated
-     * [searchPage] path and are recorded properly.
+     * Read from the suggestions endpoint first, signed in, the way YouTube
+     * Music's own search box does it. That is the only way to get cards
+     * ranked by the account's listening without filing every debounced
+     * keystroke in its search history: a signed-in `search` records the
+     * query, and an anonymous one answers with what is popular rather than
+     * what this listener plays — which is how the cards came to be full of
+     * songs the user never listens to.
+     *
+     * Only when the suggestions carry no cards (some short or odd prefixes),
+     * or could not be fetched, does it fall back to [Innertube.searchTypeahead],
+     * the anonymous search, so the dropdown still has something to play.
      */
     suspend fun searchTypeahead(input: String): Result<SearchPage> =
         call("typeahead:$input") {
+            val suggestions = try {
+                rawSuggestions(input)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            }
+            val cards = suggestions?.let(InnertubeParser::parseSearchSuggestionEntities).orEmpty()
+                .distinctBy { it.identityKey() }
+                .withoutRepeatedRecordings()
+            if (cards.isNotEmpty()) return@call SearchPage(cards, continuation = null)
             InnertubeParser.parseSearchPage(
                 Innertube.searchTypeahead(input),
                 includeVideos = false,
@@ -490,8 +574,12 @@ object YtMusicRepository {
      * every saved collection has its own browse id. They're fetched in
      * parallel and a feed that fails or is simply empty (a fresh account has
      * no saved albums) is dropped rather than failing the whole page.
+     *
+     * [seedLikes] seeds [LikeState] with the first page of Liked Music. A
+     * caller that must first check whose credentials answered passes false
+     * and seeds from [LibraryPage.likedSongs] itself once it has.
      */
-    suspend fun library(): Result<LibraryPage> = call("library") {
+    suspend fun library(seedLikes: Boolean = true): Result<LibraryPage> = call("library") {
         coroutineScope {
             // Liked Music is read one page at a time. The first page is what
             // the Library tab needs to fill and is published straight away;
@@ -518,7 +606,7 @@ object YtMusicRepository {
             val likedPage = liked.await()
             val likedSongs = likedPage?.songs.orEmpty()
             val likedIds = likedSongs.mapTo(HashSet()) { it.videoId }
-            LikeState.seedLiked(likedIds)
+            if (seedLikes) LikeState.seedLiked(likedIds)
             LibraryPage(
                 likedSongs = likedSongs,
                 // Thumbs-up'd tracks are also in the library feed; only what
@@ -726,13 +814,27 @@ object YtMusicRepository {
         // tracks" never read as songs the user added — see
         // parsePlaylistShelf. Anything else (album, library, history) has no
         // such shelf, and falls back to the layout-agnostic walk.
-        InnertubeParser.parsePlaylistShelf(response)?.let { shelf ->
-            return SongPage(shelf.songs, shelf.continuation, shelf.suggested, library, header = header)
-        }
         // A podcast page's episodes don't name their own show — the header
         // does, once. Carry it down so every episode is credited to the show
         // it belongs to instead of to nobody.
         val show = InnertubeParser.podcastShow(response)
+        InnertubeParser.parsePlaylistShelf(response)?.let { shelf ->
+            // An appended page whose rows the playlist reading couldn't take
+            // (an episode among them) is read the general way — its own items
+            // only, so its Suggestions stay suggestions and its next-page token
+            // keeps the playlist going.
+            val unread = shelf.unreadItems
+            if (unread != null) {
+                return SongPage(
+                    songs = InnertubeParser.collectSongsDeep(unread, show).distinctBy { it.videoId },
+                    continuation = InnertubeParser.continuationToken(unread),
+                    suggested = shelf.suggested,
+                    library = library,
+                    header = header,
+                )
+            }
+            return SongPage(shelf.songs, shelf.continuation, shelf.suggested, library, header = header)
+        }
         return SongPage(
             // One response can name the same track twice — an album page that
             // also carries a "you might also like" shelf, say. Collecting into a
@@ -757,7 +859,7 @@ object YtMusicRepository {
      * Takes as long as the list is long — see [songsPaged].
      */
     suspend fun allSongs(browseId: String): Result<List<Song>> = call("all:$browseId") {
-        songsPaged(browseId).ifEmpty { error("No tracks here") }
+        songsPaged(browseId, whole = true).ifEmpty { error("No tracks here") }
     }
 
     /**
@@ -765,34 +867,30 @@ object YtMusicRepository {
      *
      * A playlist page returns its first ~100 rows and a token for the rest, so
      * a long list otherwise arrives silently truncated. Capped at
-     * [MAX_PAGES] so a runaway feed can't hold the UI open forever, and a
-     * failed page keeps whatever was already collected.
+     * [MAX_PAGES] so a runaway feed can't hold the UI open forever. A [whole]
+     * read fails rather than stop short (see [collectSongListing]); any other
+     * keeps whatever was already collected.
      *
      * Holds its caller until the last page lands, so it belongs behind things
      * nobody is watching — the library sync, an artist's back catalogue. For
      * anything a screen is waiting on, use [browseSongs] and [moreSongs].
      */
-    private suspend fun songsPaged(browseId: String): List<Song> {
-        val out = LinkedHashMap<String, Song>()
+    private suspend fun songsPaged(
+        browseId: String,
+        whole: Boolean = false,
+        maxPages: Int = MAX_PAGES,
+        enough: Int = Int.MAX_VALUE,
+    ): List<Song> {
         var response = Innertube.browse(browseId)
         if (browseId.startsWith("MPREb")) {
             InnertubeParser.parseAlbumPlaylistId(response)?.let { playlistId ->
                 response = Innertube.browse("VL${playlistId.removePrefix("VL")}")
             }
         }
-        var page = 1
-        while (true) {
-            // Same shelf-scoping as pageOf: a playlist (Liked Music and the
-            // Library Songs auto-playlist included) is read from its own
-            // shelf so a trailing "Suggested tracks" shelf never joins in.
-            val shelf = InnertubeParser.parsePlaylistContinuation(response)
-                ?: InnertubeParser.parsePlaylistShelf(response)
-            (shelf?.songs ?: InnertubeParser.collectSongsDeep(response)).forEach { out[it.videoId] = it }
-            val token = shelf?.continuation ?: InnertubeParser.continuationToken(response)
-            if (token == null || page++ >= MAX_PAGES) break
-            response = runCatching { Innertube.browseContinuation(token) }.getOrNull() ?: break
-        }
-        return out.values.toList()
+        // Same shelf-scoping as pageOf: a playlist (Liked Music and the
+        // Library Songs auto-playlist included) is read from its own shelf so
+        // a trailing "Suggested tracks" shelf never joins in.
+        return collectSongListing(response, maxPages, whole, enough) { token -> Innertube.browseContinuation(token) }
     }
 
     /**
@@ -803,10 +901,24 @@ object YtMusicRepository {
      * is *appended* to it, so the first page — which is all [browseSongs]
      * reads — is exactly where a new song is not. Reading the whole page is
      * the only way to notice one, and noticing one is the whole of what a
-     * downloaded playlist needs.
+     * downloaded playlist needs. All or nothing, like [allSongs]: a list cut
+     * short by a failed page is a failure, not the playlist.
+     *
+     * Not held to [MAX_PAGES]: it runs in the background, nobody waits on it,
+     * and a playlist longer than the foreground cap must still sync. A feed
+     * handing back a token already read fails it instead (see
+     * [collectSongListing]), so it can't spin.
      */
     suspend fun browseSongsPaged(browseId: String): Result<List<Song>> =
-        call("browsePaged:$browseId") { songsPaged(browseId) }
+        call("browsePaged:$browseId") { songsPaged(browseId, whole = true, maxPages = Int.MAX_VALUE) }
+
+    /**
+     * The first [count] tracks behind a playlist or album, read only as far as
+     * needed. A later page that fails keeps what was read: for a caller that
+     * samples the list (Flow's mood pool) rather than acting on all of it.
+     */
+    suspend fun browseSongsHead(browseId: String, count: Int): Result<List<Song>> =
+        call("browseHead:$browseId:$count") { songsPaged(browseId, enough = count).take(count) }
 
     /**
      * Every saved library card behind a feed browse id, following continuations.
@@ -1003,6 +1115,63 @@ object YtMusicRepository {
     ): Result<Map<String, String>> =
         call("playlist:add") { Innertube.addToPlaylist(playlistId, videoIds) }
 
+    /** What [addMissingTracks] did to one playlist. */
+    class AddedTracks(
+        /** The tracks added, each with the entry id the playlist gave it (see [Song.setVideoId]). */
+        val added: Map<String, String>,
+        /** Whether every track asked for was already in the playlist, so nothing was sent. */
+        val alreadyThere: Boolean,
+        /** Whether a batch was refused; the tracks in [added] went in regardless. */
+        val failed: Boolean,
+    ) {
+        /**
+         * The rows of [songs] that went in, once each, as the playlist now
+         * holds them: with the entry id it gave each one, or none where the
+         * answer named none. Never a source entry id, which names a row of
+         * another playlist and would make removing it a no-op or wrong.
+         */
+        fun rowsOf(songs: List<Song>): List<Song> =
+            songs.filter { it.videoId in added }.distinctBy { it.videoId }.map { song ->
+                song.copy(setVideoId = added[song.videoId]?.takeIf { it.isNotEmpty() })
+            }
+    }
+
+    /**
+     * Adds those of [videoIds] that playlist [playlistId] (browsed as
+     * [browseId]) does not already list, in batches of [batchSize].
+     *
+     * The playlist is read whole first (see [allSongs]): a partial list never
+     * says a track is absent. When it can't be read, the tracks are added
+     * anyway, since duplicate prevention is best effort and a failed lookup
+     * must not lose the add asked for. One batch at a time, each its own
+     * request: a refused batch is not resent, and a later one still goes.
+     *
+     * Every request here goes out as the session the caller bound. Run the
+     * whole operation, every playlist of it, inside one
+     * [Innertube.asListenerRecoverably] block: a refresh that one request
+     * recovers from then carries on to the requests after it.
+     */
+    suspend fun addMissingTracks(
+        browseId: String,
+        playlistId: String,
+        videoIds: List<String>,
+        batchSize: Int,
+    ): AddedTracks {
+        val wanted = videoIds.distinct()
+        if (wanted.isEmpty()) return AddedTracks(emptyMap(), alreadyThere = true, failed = false)
+        val listed = allSongs(browseId).getOrNull()?.mapTo(HashSet()) { it.videoId }
+        val ids = wanted.filter { listed == null || it !in listed }
+        if (ids.isEmpty()) return AddedTracks(emptyMap(), alreadyThere = true, failed = false)
+        val added = LinkedHashMap<String, String>()
+        var failed = false
+        ids.chunked(batchSize).forEach { batch ->
+            addToPlaylist(playlistId, batch)
+                .onSuccess { entries -> batch.forEach { id -> added[id] = entries[id].orEmpty() } }
+                .onFailure { failed = true }
+        }
+        return AddedTracks(added, alreadyThere = false, failed = failed)
+    }
+
     /** [entries] are (setVideoId, videoId) pairs — see [Song.setVideoId]. */
     suspend fun removeFromPlaylist(
         playlistId: String,
@@ -1023,22 +1192,9 @@ object YtMusicRepository {
      * name, rather than offering to reorder something it can't.
      */
     suspend fun playlistEntries(browseId: String): Result<List<Song>> = call("entries:$browseId") {
-        val out = LinkedHashMap<String, Song>()
-        var response = Innertube.browse(browseId)
-        var page = 1
-        while (true) {
-            val shelf = InnertubeParser.parsePlaylistShelf(response) ?: break
-            shelf.songs.forEach { song ->
-                val setVideoId = song.setVideoId ?: error("playlist entry without an id")
-                out.putIfAbsent(setVideoId, song)
-            }
-            val token = shelf.continuation ?: break
-            // Same cap as [songsPaged] — a playlist past it can't be listed
-            // whole, and a partial list can't be reordered safely.
-            if (page++ >= MAX_PAGES) error("playlist too long to reorder")
-            response = Innertube.browseContinuation(token)
-        }
-        out.values.toList()
+        // Same cap as [songsPaged]; a later page it can't read fails the read
+        // rather than cutting the list short — see [collectPlaylistEntries].
+        collectPlaylistEntries(Innertube.browse(browseId), MAX_PAGES) { token -> Innertube.browseContinuation(token) }
     }
 
     /**
@@ -1104,16 +1260,60 @@ object YtMusicRepository {
 
     private suspend fun <T> call(label: String, block: suspend () -> T): Result<T> =
         withContext(Dispatchers.IO) {
-            runCatching { block() }.recoverCatching { failure ->
+            // The session the request was actually signed under — recorded where
+            // its credentials were taken, after any scope setup that moved the
+            // generation — owns the refresh and the retry.
+            val before = Innertube.listenerStamp()
+            var signed: Innertube.SignedStamp? = null
+            runCatching { Innertube.recordingSignedStamp { signed = it; block() } }.recoverCatching { failure ->
+                val owner = signed?.stamp ?: before
                 // Context cookies can rotate while a process is alive. Refresh
                 // once and retry; never loop or silently sign the listener out.
                 val rejected = failure.message?.contains("401") == true ||
                     failure.message?.contains("403") == true ||
                     failure.message?.contains("rejected", true) == true
-                if (!rejected || Innertube.cookie == null) throw failure
+                // A candidate under validation has no shared session to refresh:
+                // its rejection is the validation's answer.
+                if (!rejected || Innertube.cookie == null || Innertube.inCandidate()) throw failure
+                // A request its caller bound to a session (a page's continuation,
+                // say) is the caller's to retry, under the stamp it bound. It
+                // refreshes nothing: clearing the shared scope here moves the
+                // generation even when the shell gives the same channel back,
+                // and that stamp would then be stale for the caller's retry.
+                if (Innertube.boundToSession()) {
+                    Log.w(TAG, "$label not retried: bound to the session it was asked under")
+                    throw failure
+                }
                 Log.w(TAG, "$label rejected; refreshing active session context once")
-                Innertube.refreshSessionScope()
-                block()
+                // Only for the session that was rejected: one that took over
+                // since keeps its scope, and gets no retry of another's request.
+                // Null when another session took over before the refresh, or an
+                // account transition landed during it (even A, B, then A again):
+                // the retry belongs to the original session and nothing since.
+                val refreshed = Innertube.refreshSessionScope(owner) ?: run {
+                    Log.w(TAG, "$label not retried: the account changed around the refresh")
+                    throw failure
+                }
+                // The refresh drops an adopted profile and reads the shell's
+                // default, and a switch can land while it waits: a retry under
+                // another identity could send a rating or playlist edit to an
+                // account the listener did not pick, so it is not made.
+                if (refreshed.listener != owner.listener) {
+                    Log.w(TAG, "$label not retried: the account changed during the refresh")
+                    throw failure
+                }
+                // A recoverable binding goes on under the refreshed session of
+                // the same listener: the requests after this one belong to it.
+                Innertube.adoptRefreshedBinding(refreshed)
+                // Bound to the refreshed session, checked where the retry's
+                // credentials are taken, under the same lock: a switch after the
+                // line above, even away and back, can't slip in.
+                try {
+                    Innertube.asListener(refreshed) { block() }
+                } catch (_: Innertube.ListenerChangedException) {
+                    Log.w(TAG, "$label not retried: the account changed before it was sent")
+                    throw failure
+                }
             }
                 // runCatching catches Throwable, cancellation included, which
                 // would turn "the user typed another letter" into a failed

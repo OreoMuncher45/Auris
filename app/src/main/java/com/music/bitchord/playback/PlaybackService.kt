@@ -52,6 +52,7 @@ import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.Renderer
 import androidx.media3.exoplayer.RendererCapabilities
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.ShuffleOrder
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.audio.AudioRendererEventListener
 import androidx.media3.exoplayer.audio.AudioSink
@@ -74,6 +75,7 @@ import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
 import androidx.media3.session.CommandButton
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.LibraryResult
+import androidx.media3.session.MediaConstants
 import androidx.media3.session.MediaLibraryService
 import androidx.media3.session.MediaLibraryService.MediaLibrarySession
 import androidx.media3.session.MediaLibraryService.LibraryParams
@@ -85,6 +87,8 @@ import androidx.media3.session.SessionResult
 import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
+import com.google.common.util.concurrent.SettableFuture
+import com.google.common.util.concurrent.MoreExecutors
 import kotlinx.coroutines.guava.future
 import com.music.bitchord.playback.audio.ContainerBitrate
 import com.music.bitchord.playback.audio.BitPerfectMixer
@@ -124,12 +128,16 @@ import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.lyrics.EmbeddedLyrics
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsRepository
+import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.model.NOTIFICATION_ART_PX
+import com.music.bitchord.data.model.youTubeThumbnailFallback
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.BrowseItem
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.artworkAt
+import com.music.bitchord.data.model.PlaybackSourceType
+import com.music.bitchord.data.model.isUnresolvedSpotify
 import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
@@ -178,6 +186,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -333,9 +342,30 @@ private fun Song.canStartStation(): Boolean =
 class PlaybackService : MediaLibraryService() {
 
     private var mediaSession: MediaLibrarySession? = null
-    private val searchResults = ConcurrentHashMap<String, List<Song>>()
-    private val searchBrowseResults = ConcurrentHashMap<String, List<BrowseItem>>()
-    private val songCache = ConcurrentHashMap<String, Song>()
+    /**
+     * Android Auto's search results, by query, for the session they were read
+     * for: a search that lands after a switch, even away and back, is neither
+     * kept nor served to the session that took over.
+     */
+    private val searchCache = ListenerScopedCache<ListenerStamp, Pair<List<Song>, List<BrowseItem>>>(
+        MAX_AUTO_SEARCH_CACHE_ENTRIES,
+    ) { listenerStamp() }
+    /**
+     * Songs listed to Android Auto, by video id, for resolving a row it hands
+     * back. Scoped to the listener they were listed for: an account switch
+     * drops the previous account's rows.
+     */
+    private val songCache = ListenerScopedCache<ListenerStamp, Song> { listenerStamp() }
+
+    /** Caches [songs] read for [session]; dropped when that is no longer the current session. */
+    private fun cacheSongs(session: ListenerStamp, songs: Iterable<Song>) = songCache.putAll(session, songs) { it.videoId }
+
+    /** [stamp] as the session layer names it, to bind a request to it. */
+    private fun innertubeStamp(stamp: ListenerStamp) =
+        com.music.bitchord.data.innertube.Innertube.ListenerStamp(stamp.listener, stamp.generation)
+
+    /** Caches [songs] that belong to no account: files on the device, downloads. */
+    private fun cacheSharedSongs(songs: Iterable<Song>) = songCache.putShared(songs) { it.videoId }
 
     /**
      * [YtMusicRepository.home] cached briefly for Android Auto's browse tree.
@@ -349,16 +379,46 @@ class PlaybackService : MediaLibraryService() {
      * never has to wait this long for it.
      */
     /**
+     * One account-bound Auto folder as it was fetched: when, its songs, the
+     * token for its next page, and the [Innertube.listener] it was read for.
+     * Kept as one object so a folder's rows, its continuation and the account
+     * they are checked against all come from the same fetch, and a listing
+     * read for one account or profile is never shown or played under another.
+     */
+    private class AutoListing(
+        val at: Long,
+        val songs: List<Song>,
+        val listener: String?,
+        val continuation: String? = null,
+    )
+
+    private fun currentListener(): String? = com.music.bitchord.data.innertube.Innertube.listener
+
+    /** Who is listening now, and how many account switches it took to get here. */
+    private fun listenerStamp(): ListenerStamp {
+        // Generation first: a switch landing between the two reads then reads
+        // as stale, never as current.
+        val generation = com.music.bitchord.data.innertube.Innertube.listenerGeneration
+        return ListenerStamp(currentListener(), generation)
+    }
+
+    /** [listing] when it was read for the listener now, and holds something. */
+    private fun AutoListing?.forCurrentListener(): AutoListing? =
+        this?.takeIf { it.songs.isNotEmpty() && it.listener == currentListener() }
+
+    /**
      * [YtMusicRepository.recents] cached for Android Auto's browse tree.
      */
-    private var cachedRecents: Pair<Long, List<Song>>? = null
+    private var cachedRecents: AutoListing? = null
     private val recentsMutex = Mutex()
     private val RECENTS_CACHE_TTL_MS = 30_000L
 
-    private suspend fun cachedRecentsSongs(): List<Song> = recentsMutex.withLock {
-        cachedRecents?.let { (at, songs) ->
-            if (SystemClock.elapsedRealtime() - at < RECENTS_CACHE_TTL_MS && songs.isNotEmpty()) return songs
-        }
+    private suspend fun cachedRecentsSongs(): List<Song> = cachedRecentsListing()?.songs.orEmpty()
+
+    private suspend fun cachedRecentsListing(): AutoListing? = recentsMutex.withLock {
+        cachedRecents.forCurrentListener()?.let { if (isFresh(it.at, RECENTS_CACHE_TTL_MS)) return it }
+        val stamp = listenerStamp()
+        val listener = stamp.listener
         val songs = try {
             withTimeoutOrNull(4000L) {
                 YtMusicRepository.recents().getOrNull()
@@ -366,26 +426,29 @@ class PlaybackService : MediaLibraryService() {
         } catch (_: Exception) {
             emptyList()
         }
-        if (songs.isNotEmpty()) {
-            cachedRecents = SystemClock.elapsedRealtime() to songs
-            songs.forEach { songCache[it.videoId] = it }
-        }
-        songs
+        if (songs.isEmpty()) return null
+        // Read for an account that is no longer the one listening, or across
+        // a switch away and back, which can hand back the other account's rows.
+        if (stamp != listenerStamp()) return null
+        cacheSongs(stamp, songs)
+        AutoListing(SystemClock.elapsedRealtime(), songs, listener).also { cachedRecents = it }
     }
 
     /**
      * [YtMusicRepository.quickPicks] cached for Android Auto's browse tree.
      * Excludes listening history songs to guarantee strictly unique data.
      */
-    private var cachedQuickPicks: Pair<Long, List<Song>>? = null
+    private var cachedQuickPicks: AutoListing? = null
     private val quickPicksMutex = Mutex()
     private val QUICK_PICKS_CACHE_TTL_MS = 60_000L
 
-    private suspend fun cachedQuickPicksSongs(): List<Song> = quickPicksMutex.withLock {
-        cachedQuickPicks?.let { (at, songs) ->
-            if (SystemClock.elapsedRealtime() - at < QUICK_PICKS_CACHE_TTL_MS && songs.isNotEmpty()) return songs
-        }
-        val recentsIds = cachedRecents?.second?.mapTo(HashSet()) { it.videoId } ?: emptySet()
+    private suspend fun cachedQuickPicksSongs(): List<Song> = cachedQuickPicksListing()?.songs.orEmpty()
+
+    private suspend fun cachedQuickPicksListing(): AutoListing? = quickPicksMutex.withLock {
+        cachedQuickPicks.forCurrentListener()?.let { if (isFresh(it.at, QUICK_PICKS_CACHE_TTL_MS)) return it }
+        val stamp = listenerStamp()
+        val listener = stamp.listener
+        val recentsIds = cachedRecents.forCurrentListener()?.songs?.mapTo(HashSet()) { it.videoId } ?: emptySet()
         val songs = try {
             withTimeoutOrNull(4000L) {
                 YtMusicRepository.quickPicks(excludeSongIds = recentsIds).getOrNull()
@@ -393,38 +456,36 @@ class PlaybackService : MediaLibraryService() {
         } catch (_: Exception) {
             emptyList()
         }
-        if (songs.isNotEmpty()) {
-            cachedQuickPicks = SystemClock.elapsedRealtime() to songs
-            songs.forEach { songCache[it.videoId] = it }
-        }
-        songs
+        if (songs.isEmpty()) return null
+        // Read for an account that is no longer the one listening, or across
+        // a switch away and back, which can hand back the other account's rows.
+        if (stamp != listenerStamp()) return null
+        cacheSongs(stamp, songs)
+        AutoListing(SystemClock.elapsedRealtime(), songs, listener).also { cachedQuickPicks = it }
     }
 
     /**
-     * [YtMusicRepository.browseSongs] for Liked Music cached for Android Auto's browse tree.
+     * [YtMusicRepository.browseSongs] for Liked Music cached for Android Auto's
+     * browse tree, with the token for the page after its songs.
      */
-    private var cachedLiked: Pair<Long, List<Song>>? = null
-    private var cachedLikedCookie: String? = null
+    private var cachedLiked: AutoListing? = null
     private val likedMutex = Mutex()
     private val LIKED_CACHE_TTL_MS = 60_000L
 
-    private suspend fun cachedLikedSongs(): List<Song> = likedMutex.withLock {
-        val cookie = com.music.bitchord.data.innertube.Innertube.cookie
-        if (cookie == null) {
+    private suspend fun cachedLikedSongs(): List<Song> = cachedLikedListing()?.songs.orEmpty()
+
+    private suspend fun cachedLikedListing(): AutoListing? = likedMutex.withLock {
+        val stamp = listenerStamp()
+        val listener = stamp.listener
+        if (listener == null) {
             cachedLiked = null
-            cachedLikedCookie = null
-            return emptyList()
+            return null
         }
-        if (cachedLikedCookie != null && cachedLikedCookie != cookie) {
-            cachedLiked = null
-        }
-        cachedLiked?.let { (at, songs) ->
-            if (SystemClock.elapsedRealtime() - at < LIKED_CACHE_TTL_MS && songs.isNotEmpty()) return songs
-        }
-        val songs = try {
+        cachedLiked.forCurrentListener()?.let { if (isFresh(it.at, LIKED_CACHE_TTL_MS)) return it }
+        val page = try {
             withTimeoutOrNull(4000L) {
-                YtMusicRepository.browseSongs(YtMusicRepository.LIKED_MUSIC).getOrNull()?.songs?.ifEmpty { null }
-                    ?: YtMusicRepository.browseSongs("LM").getOrNull()?.songs?.ifEmpty { null }
+                YtMusicRepository.browseSongs(YtMusicRepository.LIKED_MUSIC).getOrNull()?.takeIf { it.songs.isNotEmpty() }
+                    ?: YtMusicRepository.browseSongs("LM").getOrNull()?.takeIf { it.songs.isNotEmpty() }
                     ?: run {
                         val libPlaylists = YtMusicRepository.libraryPlaylists().getOrNull()
                         val likedCard = libPlaylists?.firstOrNull {
@@ -432,31 +493,48 @@ class PlaybackService : MediaLibraryService() {
                         }
                         val likedBrowseId = likedCard?.browseId
                         if (likedBrowseId != null) {
-                            YtMusicRepository.browseSongs(likedBrowseId).getOrNull()?.songs
+                            YtMusicRepository.browseSongs(likedBrowseId).getOrNull()?.takeIf { it.songs.isNotEmpty() }
                         } else null
                     }
-                    ?: YtMusicRepository.browseSongs("FEmusic_liked_videos").getOrNull()?.songs
-            } ?: emptyList()
+                    ?: YtMusicRepository.browseSongs("FEmusic_liked_videos").getOrNull()
+            }
         } catch (_: Exception) {
-            emptyList()
+            null
         }
-        if (songs.isNotEmpty()) {
-            cachedLiked = SystemClock.elapsedRealtime() to songs
-            cachedLikedCookie = cookie
-            songs.forEach { songCache[it.videoId] = it }
-            LikeState.seedLiked(songs.mapTo(HashSet()) { it.videoId })
+        val songs = page?.songs.orEmpty()
+        if (songs.isEmpty()) return null
+        // Read for an account that is no longer the one listening, across a
+        // switch away and back, or while a candidate account was being
+        // validated (its credentials are installed before it is accepted): not
+        // this listener's likes. Checked and seeded in one step on the main
+        // thread, where a candidate is installed and restored, so a rejection
+        // can't land between the check and the seed.
+        val ours = withContext(Dispatchers.Main.immediate) {
+            (stamp == listenerStamp() && !com.music.bitchord.ui.CandidateValidation.session.active).also { current ->
+                if (current) LikeState.seedLiked(songs.mapTo(HashSet()) { it.videoId })
+            }
         }
-        songs
+        if (!ours) return null
+        cacheSongs(stamp, songs)
+        AutoListing(SystemClock.elapsedRealtime(), songs, listener, page?.continuation).also { cachedLiked = it }
     }
 
-    private var cachedHome: Pair<Long, com.music.bitchord.data.model.HomeFeed>? = null
+    /**
+     * The home feed, when it was read and the [Innertube.listener] it was read
+     * for, published as one record so a reader never pairs one account's feed
+     * with another's listener.
+     */
+    private class CachedHome(val at: Long, val feed: com.music.bitchord.data.model.HomeFeed, val listener: String?)
+    private var cachedHome: CachedHome? = null
     private val homeMutex = Mutex()
     private val HOME_CACHE_TTL_MS = 60_000L
     private val HOME_NETWORK_TIMEOUT_MS = 2_500L
 
     private suspend fun cachedHomeFeed(): com.music.bitchord.data.model.HomeFeed? = homeMutex.withLock {
-        cachedHome?.let { (at, feed) ->
-            if (SystemClock.elapsedRealtime() - at < HOME_CACHE_TTL_MS) return feed
+        val stamp = listenerStamp()
+        val listener = stamp.listener
+        cachedHome?.takeIf { it.listener == listener }?.let {
+            if (SystemClock.elapsedRealtime() - it.at < HOME_CACHE_TTL_MS) return it.feed
         }
         val feed = try {
             withTimeoutOrNull(HOME_NETWORK_TIMEOUT_MS) {
@@ -465,12 +543,18 @@ class PlaybackService : MediaLibraryService() {
         } catch (_: Exception) {
             null
         } ?: return null
-        cachedHome = SystemClock.elapsedRealtime() to feed
+        if (stamp != listenerStamp()) return null
+        cachedHome = CachedHome(SystemClock.elapsedRealtime(), feed, listener)
         feed
     }
 
-    private var cachedPlaylistCards: Pair<Long, List<ShelfItem>>? = null
-    private var cachedPlaylistCookie: String? = null
+    /**
+     * The account's playlist cards, with when they were read, kept for the
+     * session that read them: a profile switch under the same cookie (or a
+     * switch away and back) empties it, and a fetch that lands after one
+     * files nothing. See [ListenerScopedCache].
+     */
+    private val playlistCardsCache = ListenerScopedCache<ListenerStamp, Pair<Long, List<ShelfItem>>> { listenerStamp() }
     private val playlistsMutex = Mutex()
     private val PLAYLISTS_CACHE_TTL_MS = 60_000L
 
@@ -524,52 +608,240 @@ class PlaybackService : MediaLibraryService() {
     }
 
     private suspend fun cachedPlaylistCards(): List<ShelfItem> = playlistsMutex.withLock {
-        val cookie = com.music.bitchord.data.innertube.Innertube.cookie
-        if (cookie == null) {
-            cachedPlaylistCards = null
-            cachedPlaylistCookie = null
-            return emptyList()
-        }
-        if (cachedPlaylistCookie != null && cachedPlaylistCookie != cookie) {
-            cachedPlaylistCards = null
-        }
-        cachedPlaylistCards?.let { (at, cards) ->
+        if (com.music.bitchord.data.innertube.Innertube.cookie == null) return emptyList()
+        // The session the cards are read for: filed under it, or not at all.
+        val owner = listenerStamp()
+        playlistCardsCache[PLAYLIST_CARDS_KEY]?.let { (at, cards) ->
             if (SystemClock.elapsedRealtime() - at < PLAYLISTS_CACHE_TTL_MS && cards.isNotEmpty()) return cards
         }
-        val cards = fetchPlaylistCards()
-        if (cards.isNotEmpty()) {
-            cachedPlaylistCards = SystemClock.elapsedRealtime() to cards
-            cachedPlaylistCookie = cookie
-        }
+        // Sent as that session only; a stale scope may refresh and retry as it.
+        val cards = com.music.bitchord.data.innertube.Innertube.asListenerRecoverably(innertubeStamp(owner)) { fetchPlaylistCards() }
+        // Read for a session that has since ended: neither kept nor shown.
+        if (owner != listenerStamp()) return emptyList()
+        if (cards.isNotEmpty()) playlistCardsCache.put(owner, PLAYLIST_CARDS_KEY, SystemClock.elapsedRealtime() to cards)
         cards
     }
 
-    private fun snapshotRecents(): List<Song> = cachedRecents?.second.orEmpty()
-    private fun snapshotQuickPicks(): List<Song> = cachedQuickPicks?.second.orEmpty()
-    private fun snapshotLiked(): List<Song> {
-        val cookie = com.music.bitchord.data.innertube.Innertube.cookie
-        return if (cookie != null && cookie == cachedLikedCookie) cachedLiked?.second.orEmpty() else emptyList()
-    }
+    private fun snapshotRecents(): AutoListing? = cachedRecents.forCurrentListener()
+    private fun snapshotQuickPicks(): AutoListing? = cachedQuickPicks.forCurrentListener()
+    private fun snapshotLiked(): AutoListing? = cachedLiked.forCurrentListener()?.takeIf { it.listener != null }
     private fun snapshotPlaylistCards(): List<ShelfItem> {
-        val cookie = com.music.bitchord.data.innertube.Innertube.cookie
-        return if (cookie != null && cookie == cachedPlaylistCookie) cachedPlaylistCards?.second.orEmpty() else emptyList()
+        return playlistCardsCache[PLAYLIST_CARDS_KEY]?.second.orEmpty()
     }
-    private fun snapshotHome(): com.music.bitchord.data.model.HomeFeed? = cachedHome?.second
+    private fun snapshotHome(): CachedHome? =
+        cachedHome?.takeIf { it.listener == currentListener() }
+
+    /** Every Auto folder listing a tapped row can still be played from. */
+    private val autoBrowseContexts = AutoBrowseContexts()
+
+    /** The job reading later pages of the folder Auto last started. */
+    private var autoContinuationJob: Job? = null
+
+    /**
+     * The pages that job has added, in order, by queue entry. A station request
+     * replays the ones added during its lookup onto the queue it started from,
+     * so a folder page landing meanwhile reads as the same queue, while a user
+     * edit (to any row, a page's included) still reads as one. Main thread only.
+     */
+    private val autoContinuationInserts = ArrayList<ContinuationInsert>()
+
+    /** Bumped whenever [autoContinuationInserts] is cleared, so a reader can tell a new folder from a grown one. */
+    private var autoContinuationEpoch = 0
+
+    private fun clearAutoContinuation() {
+        autoContinuationJob?.cancel()
+        autoContinuationJob = null
+        pendingAutoInstalls.following = null
+        autoContinuationInserts.clear()
+        autoContinuationEpoch++
+    }
+
+    /** The Auto queues handed to Media3 and not installed or refused yet; see [PendingAutoInstalls]. Main thread only. */
+    private val pendingAutoInstalls = PendingAutoInstalls()
+
+    /**
+     * Whether [items] are a pending Auto queue and the session it was built
+     * for is no longer the one signed in: an account switch, even one away and
+     * back, landed between the build and the install. That queue is not
+     * installed, and its continuation stops, so a folder listed for one
+     * account never starts playing under another. A queue of no account is
+     * never refused. Main thread only.
+     *
+     * Each queue is matched to its own record, so a second build landing
+     * before the first is installed can't leave the first unchecked.
+     */
+    private fun refusesStaleAutoInstall(items: List<MediaItem>): Boolean {
+        val entryAt = { index: Int -> items.getOrNull(index)?.queueEntryId }
+        val pending = pendingAutoInstalls.refuses(items.size, entryAt, listenerStamp()) ?: return false
+        Log.w("BitChord", "Auto queue not installed: the account changed after it was built")
+        // Its own continuation only: a later queue's goes on.
+        if (pendingAutoInstalls.refused(pending)) clearAutoContinuation()
+        // The controller that asked for it hears why nothing started, as it
+        // does for a row refused before the build.
+        pending.onRefused()
+        return true
+    }
+
+    /**
+     * After a session player installed [items]: when they are a pending Auto
+     * queue, its continuation learns the entries the folder was installed as
+     * (a later queue carrying the same source id mints its own). Main thread
+     * only.
+     */
+    private fun onSessionQueueSet(items: List<MediaItem>) {
+        val pending = pendingAutoInstalls.installedOrNull(items.size) { items.getOrNull(it)?.queueEntryId } ?: return
+        pending.installed.complete(items.mapNotNullTo(HashSet()) { it.queueEntryId }.takeIf { it.isNotEmpty() })
+    }
+
+    /**
+     * [songs] as Auto rows whose ids name this very listing, so a tap plays
+     * the folder from that row — see [AutoBrowseContexts].
+     *
+     * [listener] is the [Innertube.listener] the listing was read for — a
+     * cached listing's own, not whoever is signed in now; pass null for a
+     * folder that belongs to no account.
+     */
+    private fun autoBrowseItems(
+        songs: List<Song>,
+        source: QueueSource,
+        listener: String?,
+        continuation: String? = null,
+        parentBrowseId: String? = null,
+    ): List<MediaItem> {
+        if (songs.isEmpty()) return emptyList()
+        val token = autoBrowseContexts.register(AutoBrowseContext(songs, continuation, listener, source))
+        return songs.mapIndexed { index, song ->
+            song.toMediaItem(parentBrowseId = parentBrowseId).buildUpon()
+                .setMediaId(AutoBrowseContexts.mediaId(token, index))
+                .build()
+        }
+    }
+
+    /**
+     * Reads the pages of an Auto-started folder after its first one and adds
+     * them behind the folder's last track in the queue, ahead of anything
+     * AutoPlay has appended.
+     *
+     * Stops when the folder runs dry, after [AUTO_CONTINUATION_MAX_PAGES],
+     * when the account changes, or once the queue no longer holds the folder
+     * — the driver started something else — or the listener has played past
+     * it. A later Auto start cancels it.
+     *
+     * Called on the main thread once the folder's queue is built, before
+     * Media3 has installed it, so the queue is read only after the playlist
+     * change that installs it — the one that puts [startEntryId] at
+     * [startIndex] — and never as the one it replaces, whatever else edits
+     * that one first.
+     */
+    private fun followAutoBrowseContinuation(context: AutoBrowseContext, installed: CompletableDeferred<HashSet<String>?>) {
+        clearAutoContinuation()
+        val first = context.continuation ?: return
+        val sourceId = context.source.id ?: return
+        // Installation is reported by whichever session player Media3 hands
+        // the queue to (see [onSessionQueueSet]), not by a listener on the
+        // player active now: a crossfade can hand off before Media3 applies it.
+        autoContinuationJob = scope.launch {
+            followAutoBrowsePages(context, first, sourceId, installed)
+        }
+    }
+
+    private suspend fun followAutoBrowsePages(
+        context: AutoBrowseContext,
+        first: String,
+        sourceId: String,
+        installed: CompletableDeferred<HashSet<String>?>,
+    ) {
+        val seen = context.songs.mapTo(HashSet()) { it.videoId }
+        // Any account switch from here on, even one that switches back, ends
+        // the folder: a page in flight across it may be the other account's.
+        // The session the folder is grown under: each page is sent bound to it,
+        // so a switch after [stillOurs] says yes still can't sign it as another.
+        val session = com.music.bitchord.data.innertube.Innertube.listenerStamp()
+        val generation = session.generation
+        val listener = session.listener
+        fun stillOurs() = context.belongsTo(currentListener()) &&
+            com.music.bitchord.data.innertube.Innertube.listenerGeneration == generation
+        // A token handed back a second time is the feed looping back.
+        val tokens = hashSetOf(first)
+        var next: String? = first
+        var pages = 0
+        while (next != null && pages++ < AUTO_CONTINUATION_MAX_PAGES) {
+            // Before every fetch, a page with nothing new included: no request
+            // for a folder that is no longer this driver's to grow.
+            if (!stillOurs() || castPlayback.active) return
+            if (installed.isCompleted) {
+                val exoPlayer = player ?: return
+                val queuedSongs = (0 until exoPlayer.mediaItemCount).map { exoPlayer.getMediaItemAt(it).toSong() }
+                autoContinuationInsertIndex(queuedSongs, sourceId, exoPlayer.currentMediaItemIndex, installed.await())
+                    ?: return
+            }
+            val token: String = next
+            val page = withContext(Dispatchers.IO) {
+                try {
+                    withTimeoutOrNull(AUTO_CONTINUATION_TIMEOUT_MS) {
+                        com.music.bitchord.data.innertube.Innertube.asListener(session) {
+                            YtMusicRepository.moreSongs(token).getOrNull()
+                        }
+                    }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    null
+                }
+            } ?: return
+            if (!stillOurs()) return
+            // Only a missing or repeated token ends the folder: a page of songs
+            // already queued, or only blocked ones, can still have more after
+            // it. [AUTO_CONTINUATION_MAX_PAGES] bounds a feed that never ends.
+            next = page.continuation?.takeIf { tokens.add(it) }
+            val fresh = page.songs
+                .filter { seen.add(it.videoId) }
+                .filterNot(AppSettings::isSongBlocked)
+            if (fresh.isEmpty()) continue
+            cacheSongs(ListenerStamp(listener, generation), fresh)
+            // Until Media3 has installed the folder, the queue is the one it replaces.
+            // Paired so a folder with no entry ids still reads as installed.
+            val folderEntries = withTimeoutOrNull(AUTO_QUEUE_INSTALL_TIMEOUT_MS) { installed.await() to Unit }
+                ?.first ?: if (installed.isCompleted) null else return
+            // The wait can be long enough for the account to change.
+            if (!stillOurs()) return
+            // Not tied to the player it was installed on: a crossfade hands the same queue to the
+            // other player. Whether the queue still holds this folder is what
+            // decides, below.
+            val exoPlayer = player ?: return
+            if (castPlayback.active) return
+            val queuedSongs = (0 until exoPlayer.mediaItemCount).map { exoPlayer.getMediaItemAt(it).toSong() }
+            // Once the listener has played past the folder, behind it is history.
+            val insertAt = autoContinuationInsertIndex(
+                queuedSongs,
+                sourceId,
+                exoPlayer.currentMediaItemIndex,
+                folderEntries,
+            ) ?: return
+            val queued = queuedSongs.mapTo(HashSet()) { it.videoId }
+            val additions = fresh
+                .filter { it.videoId !in queued }
+                .map { song ->
+                    song.copy(
+                        playbackSource = context.source.title,
+                        playbackSourceType = context.source.type,
+                        playbackSourceId = sourceId,
+                    ).asQueueEntry(QueueTier.CONTEXT).toMediaItem()
+                }
+            if (additions.isNotEmpty()) {
+                val anchor = exoPlayer.getMediaItemAt(insertAt - 1)
+                autoContinuationInserts += ContinuationInsert(anchor.queueKey(), additions.map { it.queueKey() })
+                folderEntries?.let { entries -> additions.mapNotNullTo(entries) { it.queueEntryId } }
+                exoPlayer.addMediaItems(insertAt, additions)
+            }
+        }
+    }
 
     private fun isFresh(at: Long, ttlMs: Long): Boolean =
         SystemClock.elapsedRealtime() - at < ttlMs
 
-    private fun isRecentsFresh(): Boolean =
-        cachedRecents?.let { (at, songs) -> songs.isNotEmpty() && isFresh(at, RECENTS_CACHE_TTL_MS) } ?: false
-
-    private fun isQuickPicksFresh(): Boolean =
-        cachedQuickPicks?.let { (at, songs) -> songs.isNotEmpty() && isFresh(at, QUICK_PICKS_CACHE_TTL_MS) } ?: false
-
-    private fun isLikedFresh(): Boolean =
-        snapshotLiked().isNotEmpty() && cachedLiked?.let { (at, _) -> isFresh(at, LIKED_CACHE_TTL_MS) } == true
-
     private fun isPlaylistsFresh(): Boolean =
-        snapshotPlaylistCards().isNotEmpty() && cachedPlaylistCards?.let { (at, _) -> isFresh(at, PLAYLISTS_CACHE_TTL_MS) } == true
+        playlistCardsCache[PLAYLIST_CARDS_KEY]?.let { (at, cards) -> cards.isNotEmpty() && isFresh(at, PLAYLISTS_CACHE_TTL_MS) } == true
 
     private fun refreshFolderInBackground(
         session: MediaLibrarySession,
@@ -1001,7 +1273,9 @@ class PlaybackService : MediaLibraryService() {
             // Everything the sampler records is about audible time, so its job
             // exists exactly while audio does instead of waking every five
             // seconds to rediscover a paused player.
-            if (isPlaying) reportProgress() else stopProgressReporting()
+            // While a Cast receiver is the speaker, the phone's player pauses
+            // under it on purpose; the sampler then runs on the receiver's clock.
+            if (isPlaying) reportProgress() else if (!castPlayback.isPlaying) stopProgressReporting()
             // Not strictly needed for the glyph — onPlayWhenReadyChanged has
             // already flipped that — but this is where hasNext/hasPrevious and
             // the artwork are known to be settled.
@@ -1593,7 +1867,11 @@ class PlaybackService : MediaLibraryService() {
         scope.launch {
             val startupRepeat = StartupRepeat { controlsInputsAtStartup }
             QueueShuffle.enabled
-                .collectLatest {
+                .collectLatest { enabled ->
+                    // Controllers never hear the app's shuffle from ExoPlayer,
+                    // whose own flag stays off; told before the startup skip,
+                    // which is about the layouts only.
+                    (mediaSession?.player as? SessionPlayer)?.onShuffleChanged(enabled)
                     if (startupRepeat.skip(currentControlsInputs())) return@collectLatest
                     refreshCustomLayouts()
                     publishWidgetState()
@@ -1799,6 +2077,7 @@ class PlaybackService : MediaLibraryService() {
         )
             .setId(SESSION_ID)
             .setSessionActivity(sessionActivity())
+            .setSessionExtras(transportSlotReservations())
             .build()
         refreshCustomLayouts()
     }
@@ -1811,6 +2090,26 @@ class PlaybackService : MediaLibraryService() {
         CastController.attach(castPlayback)
     }
 
+    /**
+     * Keeps Previous and Next in their places even while there is nowhere to go.
+     *
+     * Without these, Media3 converts the custom layout by moving its first
+     * button into the Back slot when Previous is unavailable, and into the
+     * Forward slot when Next is: on the last song of a queue, or a single song
+     * opened from a link, that was Favorite, sitting exactly where Next was.
+     * System UI follows the same two keys when it lays out the platform
+     * session. Phones whose panels hold their button positions turned a tap on
+     * "Next" into a Like on YouTube Music. With them set, an unavailable
+     * Previous or Next just leaves its slot empty or disabled.
+     *
+     * Queue edits copy [MediaSession.getSessionExtras] before adding to them,
+     * so these stay set for the life of the session.
+     */
+    private fun transportSlotReservations() = Bundle().apply {
+        putBoolean(MediaConstants.EXTRAS_KEY_SLOT_RESERVATION_SEEK_TO_PREV, true)
+        putBoolean(MediaConstants.EXTRAS_KEY_SLOT_RESERVATION_SEEK_TO_NEXT, true)
+    }
+
     private fun newSessionPlayer(player: Player, crossfade: CrossfadeController) = SessionPlayer(
         player,
         crossfade,
@@ -1818,6 +2117,10 @@ class PlaybackService : MediaLibraryService() {
         deferPlayToParty = { partySync?.shouldDeferPlay() == true },
         lockedTransport = { playing -> partySync?.onLockedTransport(playing) == true },
         cast = castPlayback,
+        onShuffleRequest = ::toggleShuffleFromSession,
+        onRemotePlaying = ::onRemotePlaying,
+        refusesQueue = ::refusesStaleAutoInstall,
+        onQueueSet = ::onSessionQueueSet,
     ) { lastPublishedSubtitle }
 
     /**
@@ -2016,24 +2319,25 @@ class PlaybackService : MediaLibraryService() {
     private val carControllers = mutableSetOf<MediaSession.ControllerInfo>()
 
     /**
-     * Pushes the current button state to every surface. The phone/lock-screen
-     * notification is driven by Media3's own internal controller, so it gets
-     * an explicit override limited to Favorite/Shuffle; every other connected
-     * controller falls back to the broadcast layout, which also carries
-     * Radio/Revert.
+     * Pushes the current button state to every surface: Favorite/Shuffle on
+     * the phone, plus Radio/Revert while a car is connected.
      *
-     * Media3 mirrors the notification controller's layout into the platform
-     * session's custom actions, and Android Auto reads the platform session,
-     * not the broadcast layout. So while a car is connected the notification
-     * override carries the car buttons too, or Radio/Revert vanish from Auto.
+     * The phone's media panel, Android Auto and a car's own media centre all
+     * read the platform session's custom actions, and Media3 has one slot for
+     * those that both the broadcast layout and the notification controller's
+     * override write into: whichever lands last wins. So both get the same
+     * list. A broadcast that always carried the car buttons put Start radio
+     * and Revert on the phone's panel and made its buttons flicker between
+     * two and four, depending on which write a playback update caught.
      */
     private fun refreshCustomLayouts() {
         val session = mediaSession ?: return
-        val car = carButtons()
-        session.setCustomLayout(car)
-        session.getMediaNotificationControllerInfo()?.let {
-            session.setCustomLayout(it, if (carControllers.isEmpty()) notificationButtons() else car)
-        }
+        val buttons = if (carControllers.isEmpty()) notificationButtons() else carButtons()
+        session.setCustomLayout(buttons)
+        // The broadcast reaches the notification controller and the platform
+        // session too, but only this per-controller call republishes the
+        // platform playback state straight away.
+        session.getMediaNotificationControllerInfo()?.let { session.setCustomLayout(it, buttons) }
     }
 
     /**
@@ -2048,7 +2352,11 @@ class PlaybackService : MediaLibraryService() {
         val originalManualQueue = (0 until originalPlayer.mediaItemCount)
             .map { originalPlayer.getMediaItemAt(it) }
             .filterNot { it.fromAutoplay }
-            .map { it.mediaId }
+            .map { it.queueKey() }
+        // Folder pages already queued are part of what the driver sees: only
+        // ones added after this point may differ without cancelling.
+        val baselineContinuation = autoContinuationInserts.size
+        val baselineEpoch = autoContinuationEpoch
 
         stationActionJob?.cancel()
         stationActionJob = scope.launch {
@@ -2071,9 +2379,18 @@ class PlaybackService : MediaLibraryService() {
             val activeManualQueue = (0 until activePlayer.mediaItemCount)
                 .map { activePlayer.getMediaItemAt(it) }
                 .filterNot { it.fromAutoplay }
-                .map { it.mediaId }
-            if (activePlayer.currentMediaItem?.mediaId != currentItem.mediaId ||
-                activeManualQueue != originalManualQueue
+                .map { it.queueKey() }
+            // A folder page added meanwhile is not the driver's edit, but
+            // removing or moving any row, a page's included, is. A
+            // continuation restarted since (the list cleared) is a new folder.
+            val sameContinuation = autoContinuationEpoch == baselineEpoch
+            val addedSince = if (sameContinuation) {
+                autoContinuationInserts.subList(baselineContinuation, autoContinuationInserts.size)
+            } else {
+                emptyList()
+            }
+            if (activePlayer.currentMediaItem?.mediaId != currentItem.mediaId || !sameContinuation ||
+                !queueOnlyGrewByContinuation(originalManualQueue, activeManualQueue, addedSince)
             ) {
                 return@launch
             }
@@ -2218,7 +2535,7 @@ class PlaybackService : MediaLibraryService() {
             standbyPlayer.clearMediaItems()
             standbyPlayer.skipSilenceEnabled = activePlayer.skipSilenceEnabled
             standbyPlayer.repeatMode = activePlayer.repeatMode
-            standbyPlayer.shuffleModeEnabled = activePlayer.shuffleModeEnabled
+            standbyPlayer.shuffleModeEnabled = false
             // The listener's speed, not the active player's: straight after an
             // Advanced Automix blend the active player is still easing off its
             // beatmatch stretch, and copying that would keep it for good.
@@ -2738,7 +3055,7 @@ class PlaybackService : MediaLibraryService() {
             standby.clearMediaItems()
             standby.skipSilenceEnabled = active.skipSilenceEnabled
             standby.repeatMode = active.repeatMode
-            standby.shuffleModeEnabled = active.shuffleModeEnabled
+            standby.shuffleModeEnabled = false
             // The listener's speed, not the active player's — see the same
             // line in [smoothSwapCurrentTrackVersion].
             standby.setPlaybackSpeed(AppSettings.playbackSpeed.value)
@@ -7197,6 +7514,9 @@ class PlaybackService : MediaLibraryService() {
         crossfade?.onSkipRequested()
         autoplayLoadJob?.cancel()
         autoplayLoadJob = null
+        // A station keeps the playing song, which still names the Auto folder
+        // it came from: a pending page of that folder would land behind it.
+        clearAutoContinuation()
         autoplaySeed = null
         repeatAllStash = emptyList()
         repeatAllStashSeed = null
@@ -7497,9 +7817,27 @@ class PlaybackService : MediaLibraryService() {
      * entry with no watchtime behind it barely registers as a listen, so the
      * sampling has to come from here.
      */
+    /**
+     * A Cast receiver started or stopped playing. The phone's player is held
+     * paused while the receiver is the speaker, so its own isPlaying callback
+     * never starts the sampler: this does, so that listening on the speaker
+     * reaches the listening record too.
+     */
+    private fun onRemotePlaying(playing: Boolean) {
+        if (playing) {
+            reportProgress()
+        } else if (player?.isPlaying != true) {
+            stopProgressReporting()
+            // Paused on the speaker: close the gap like a local pause does.
+            ListeningRecorder.onStopped()
+        }
+    }
+
     private fun reportProgress() {
         if (progressJob?.isActive == true) return
         progressJob = scope.launch {
+            // Whether the last tick counted listening on the Cast receiver.
+            var remoteSampling = false
             while (isActive) {
                 // Re-read every tick rather than captured once: the session
                 // moves between two players, and a sampler pinned to the one
@@ -7543,6 +7881,27 @@ class PlaybackService : MediaLibraryService() {
                     // repeat: it returns immediately unless the track is
                     // pending and nothing is already looking.
                     lookForBetterCopy(player)
+                } else if (castPlayback.active) {
+                    // On the receiver the phone's player is held paused on
+                    // purpose and the receiver owns the clock, so the branch
+                    // above never runs. The receiver's own isPlaying is the
+                    // tick here; the phone's current item is the receiver's
+                    // track (it follows the receiver), and the receiver knows
+                    // the real length.
+                    val playingRemotely = castPlayback.isPlaying
+                    if (playingRemotely) {
+                        player?.currentMediaItem?.toSong()?.let {
+                            val length = castPlayback.durationMs.takeIf { d -> d != C.TIME_UNSET && d > 0 }
+                                ?: (player?.duration ?: 0L)
+                            ListeningRecorder.onSample(it, length)
+                        }
+                    } else if (remoteSampling) {
+                        ListeningRecorder.onStopped()
+                    }
+                    remoteSampling = playingRemotely
+                } else if (remoteSampling) {
+                    remoteSampling = false
+                    ListeningRecorder.onStopped()
                 }
                 delay(PROGRESS_SAMPLE_MS)
             }
@@ -7938,6 +8297,14 @@ class PlaybackService : MediaLibraryService() {
         // the previous service instance's value. Only assigning `true` made a
         // stale enabled state consume the first tap meant to enable Shuffle.
         QueueShuffle.setEnabled(AppSettings.shuffleEnabled.value)
+        // ExoPlayer's own shuffle stays off: the app shuffles by reordering the
+        // queue, and this mode would play that queue in a hidden random order.
+        player.shuffleModeEnabled = false
+        // The session reports the app's shuffle to controllers (see
+        // SessionPlayer.getShuffleModeEnabled), and a controller predicting
+        // Next walks the timeline's shuffle order. Unshuffled, that order is
+        // the queue itself, which is what the app's shuffle plays.
+        player.setShuffleOrder(ShuffleOrder.UnshuffledShuffleOrder(player.mediaItemCount))
         player.repeatMode = AppSettings.repeatMode.value
     }
 
@@ -8207,7 +8574,6 @@ class PlaybackService : MediaLibraryService() {
         val position = oldActive.currentPosition.coerceAtLeast(0L)
         val playWhenReady = oldActive.playWhenReady
         val repeatMode = oldActive.repeatMode
-        val shuffleMode = oldActive.shuffleModeEnabled
 
         oldActive.playWhenReady = false
         crossfade?.release()
@@ -8244,7 +8610,6 @@ class PlaybackService : MediaLibraryService() {
         applySettings(newActive)
         applySettings(newSpare)
         newActive.repeatMode = repeatMode
-        newActive.shuffleModeEnabled = shuffleMode
         applyEqualizer()
         applySpatialAudioEnabled()
         applySimulatedAtmosEnabled()
@@ -8448,14 +8813,12 @@ class PlaybackService : MediaLibraryService() {
             }
         }
         scope.launch {
-            combine(
+            lyricsSettingChanges(
                 AppSettings.syncedLyrics,
                 AppSettings.lyricsSources,
                 AppSettings.lyricsSourceOrder,
                 AppSettings.prioritizeSyllableSync,
-            ) { synced, sources, order, prio ->
-                synced to sources
-            }.distinctUntilChanged().collect {
+            ).collect {
                 loadLyricsForCurrentTrack()
             }
         }
@@ -9296,10 +9659,10 @@ class PlaybackService : MediaLibraryService() {
         serviceLyricsJob?.cancel()
         serviceLyricsJob = scope.launch(Dispatchers.IO) {
             val localUri = currentSong.localUri
-            var lines: List<LyricLine>? = null
-            if (localUri != null) {
-                lines = EmbeddedLyrics.forUri(this@PlaybackService, localUri)
-            }
+            val embedded = localUri?.let { EmbeddedLyrics.forUri(this@PlaybackService, it) }
+            // The file's plain words don't end the lookup: a source may have
+            // them synced, which is all a lock-screen line can follow.
+            var lines: List<LyricLine>? = embedded?.takeIf(EmbeddedLyrics::isSynced)
             if (lines == null) {
                 val found = LyricsRepository.lyrics(
                     videoId = currentSong.videoId,
@@ -9311,7 +9674,7 @@ class PlaybackService : MediaLibraryService() {
                     order = AppSettings.lyricsSourceOrder.value,
                     prioritizeSyllableSync = AppSettings.prioritizeSyllableSync.value,
                 )
-                lines = found?.lines
+                lines = found?.lines?.takeIf(EmbeddedLyrics::isSynced) ?: embedded ?: found?.lines
             }
             withContext(Dispatchers.Main) {
                 serviceLyrics = lines
@@ -9458,6 +9821,14 @@ class PlaybackService : MediaLibraryService() {
         private val lockedTransport: (Boolean) -> Boolean,
         /** What plays on a Cast receiver, whose clock this reports while it is the speaker. */
         private val cast: CastPlayback,
+        /** Flips the app's own shuffle — the queue edit in [QueueShuffle]. */
+        private val onShuffleRequest: () -> Unit,
+        /** The receiver started or stopped making sound; see [PlaybackService.onRemotePlaying]. */
+        private val onRemotePlaying: (Boolean) -> Unit,
+        /** Whether a queue arriving here was built for an account that is no longer the listener; see [PlaybackService.refusesStaleAutoInstall]. */
+        private val refusesQueue: (List<MediaItem>) -> Boolean,
+        /** A queue was installed through here; see [PlaybackService.onSessionQueueSet]. */
+        private val onQueueSet: (List<MediaItem>) -> Unit,
         private val getSubtitle: () -> String?,
     ) : ForwardingPlayer(player), CastSink {
 
@@ -9468,7 +9839,9 @@ class PlaybackService : MediaLibraryService() {
         private val listeners = CopyOnWriteArraySet<Player.Listener>()
         private var reportedPlayWhenReady = false
         private var reportedPlaybackState = Player.STATE_IDLE
-        private var reportedIsPlaying = false
+        // A wrapper rebuilt while the receiver plays starts from that, so its
+        // first paused report is the transition it is, and stops the sampler.
+        private var reportedIsPlaying = cast.active && cast.isPlaying
 
         init {
             cast.sink = this
@@ -9587,6 +9960,7 @@ class PlaybackService : MediaLibraryService() {
                 reportedIsPlaying = playing
                 flags.add(Player.EVENT_IS_PLAYING_CHANGED)
                 listeners.forEach { it.onIsPlayingChanged(playing) }
+                onRemotePlaying(playing)
             }
             // Always: a controller extrapolates the position from the last one
             // it was given, and has to be re-anchored whenever the receiver
@@ -9650,7 +10024,26 @@ class PlaybackService : MediaLibraryService() {
          */
         private fun locked(): Boolean = ListenTogether.state.value.controlsLocked
 
+        /**
+         * Set when a queue was just refused here (see [refusesQueue]), until
+         * the main thread's current task ends. Media3's legacy play-from-media-id
+         * carries on into prepare and play in that same task, and the queue it
+         * would have replaced must not start because the new one was refused.
+         */
+        private var refusedThisTask = false
+
+        private fun refuse() {
+            refusedThisTask = true
+            android.os.Handler(android.os.Looper.getMainLooper()).post { refusedThisTask = false }
+        }
+
+        override fun prepare() {
+            if (refusedThisTask) return
+            super.prepare()
+        }
+
         override fun play() {
+            if (refusedThisTask) return
             // Locked, this plays only here — the party carries on untouched and
             // this device rejoins it wherever it has got to. See
             // [PartySync.onLockedTransport], which owns that catch-up.
@@ -9687,7 +10080,37 @@ class PlaybackService : MediaLibraryService() {
             super.stop()
         }
 
+        /**
+         * A shuffle button outside the app — a car, a Bluetooth headset,
+         * Android Auto, another app's controller — asks for ExoPlayer's own
+         * shuffle mode. That mode plays the queue in a hidden random order while
+         * the queue and the app's button still show it in order, so it is never
+         * passed down: the request becomes the app's shuffle instead, which
+         * rearranges the queue itself (see [QueueShuffle]).
+         */
+        override fun setShuffleModeEnabled(shuffleModeEnabled: Boolean) {
+            // Shuffle reorders the queue, like the queue edits below.
+            if (locked()) return
+            if (shuffleModeEnabled != QueueShuffle.enabled.value) onShuffleRequest()
+        }
+
+        /**
+         * The app's shuffle, not ExoPlayer's (always off): what an outside
+         * controller draws its button from. Reporting ExoPlayer's left a car
+         * showing shuffle off, so its next tap asked for "on" again and shuffle
+         * could be turned on from the car but never off.
+         */
+        override fun getShuffleModeEnabled(): Boolean = QueueShuffle.enabled.value
+
+        /** [QueueShuffle] changed; tell the controllers, which never hear it from ExoPlayer. */
+        fun onShuffleChanged(enabled: Boolean) {
+            listeners.forEach { it.onShuffleModeEnabledChanged(enabled) }
+            val events = Player.Events(FlagSet.Builder().add(Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED).build())
+            listeners.forEach { it.onEvents(this, events) }
+        }
+
         override fun setPlayWhenReady(playWhenReady: Boolean) {
+            if (playWhenReady && refusedThisTask) return
             if (lockedTransport(playWhenReady)) return
             onUserIntent()
             if (playWhenReady && deferPlayToParty()) return
@@ -9759,8 +10182,10 @@ class PlaybackService : MediaLibraryService() {
 
         override fun setMediaItems(mediaItems: List<MediaItem>, resetPosition: Boolean) {
             if (locked()) return
+            if (refusesQueue(mediaItems)) return refuse()
             onUserIntent()
             super.setMediaItems(mediaItems, resetPosition)
+            onQueueSet(mediaItems)
         }
 
         override fun setMediaItems(
@@ -9769,8 +10194,10 @@ class PlaybackService : MediaLibraryService() {
             startPositionMs: Long,
         ) {
             if (locked()) return
+            if (refusesQueue(mediaItems)) return refuse()
             onUserIntent()
             super.setMediaItems(mediaItems, startIndex, startPositionMs)
+            onQueueSet(mediaItems)
         }
 
         // Every other way the running order can change from outside: Play next,
@@ -10082,7 +10509,11 @@ class PlaybackService : MediaLibraryService() {
             page: Int,
             pageSize: Int,
             params: LibraryParams?,
-        ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> = scope.future(Dispatchers.IO) {
+        ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> = answered { owner ->
+            // [owner]: the session these rows are listed in. A listing cached
+            // for its listener is cached again under it, nothing lands after a
+            // switch, and an account's folder is handed over under it or not
+            // at all (see [answered]).
             val isGridFolder = parentId == MEDIA_ROOT_ID || parentId == MEDIA_PLAYLISTS_ID
             val items: List<MediaItem> = when (parentId) {
                 MEDIA_ROOT_ID -> listOf(
@@ -10098,18 +10529,23 @@ class PlaybackService : MediaLibraryService() {
                 )
                 MEDIA_RECENTS_ID -> {
                     val snapshot = snapshotRecents()
-                    val songs = if (snapshot.isNotEmpty()) {
-                        if (!isRecentsFresh()) {
+                    val listing = if (snapshot != null) {
+                        if (!isFresh(snapshot.at, RECENTS_CACHE_TTL_MS)) {
                             refreshFolderInBackground(session, browser, parentId, params) {
                                 cachedRecentsSongs().size
                             }
                         }
                         snapshot
                     } else {
-                        cachedRecentsSongs()
+                        cachedRecentsListing()
                     }
-                    songs.forEach { songCache[it.videoId] = it }
-                    if (songs.isNotEmpty()) songs.map { it.toMediaItem() } else listOf(
+                    val songs = listing?.songs.orEmpty()
+                    if (listing?.listener == owner.listener) cacheSongs(owner, songs)
+                    if (listing != null && songs.isNotEmpty()) autoBrowseItems(
+                        songs,
+                        QueueSource(getString(R.string.auto_recents), PlaybackSourceType.HISTORY, parentId),
+                        listener = AutoBrowseContexts.owner(listing.listener),
+                    ) else listOf(
                         createInfoItem(
                             "msg:empty_recents",
                             getString(R.string.auto_empty_recents_title),
@@ -10119,23 +10555,33 @@ class PlaybackService : MediaLibraryService() {
                 }
                 MEDIA_QUICK_PICKS_ID -> {
                     val snapshot = snapshotQuickPicks()
-                    val songs = if (snapshot.isNotEmpty()) {
-                        if (!isQuickPicksFresh()) {
+                    val listing = if (snapshot != null) {
+                        if (!isFresh(snapshot.at, QUICK_PICKS_CACHE_TTL_MS)) {
                             refreshFolderInBackground(session, browser, parentId, params) {
                                 cachedQuickPicksSongs().size
                             }
                         }
                         snapshot
                     } else {
-                        cachedQuickPicksSongs().ifEmpty {
-                            snapshotHome()?.shelves?.flatMap { it.items }
-                                ?.mapNotNull { it.toSongOrNull() }
-                                ?.distinctBy { it.videoId }
-                                .orEmpty()
+                        cachedQuickPicksListing() ?: run {
+                            // The rows carry the listener of the same snapshot
+                            // they were read from.
+                            snapshotHome()?.let { home ->
+                                home.feed.shelves.flatMap { it.items }
+                                    .mapNotNull { it.toSongOrNull() }
+                                    .distinctBy { it.videoId }
+                                    .takeIf { it.isNotEmpty() }
+                                    ?.let { AutoListing(0L, it, home.listener) }
+                            }
                         }
                     }
-                    songs.forEach { songCache[it.videoId] = it }
-                    if (songs.isNotEmpty()) songs.map { it.toMediaItem() } else listOf(
+                    val songs = listing?.songs.orEmpty()
+                    if (listing?.listener == owner.listener) cacheSongs(owner, songs)
+                    if (listing != null && songs.isNotEmpty()) autoBrowseItems(
+                        songs,
+                        QueueSource(getString(R.string.auto_quick_picks), PlaybackSourceType.HOME, parentId),
+                        listener = AutoBrowseContexts.owner(listing.listener),
+                    ) else listOf(
                         createInfoItem(
                             "msg:empty_quick_picks",
                             getString(R.string.auto_empty_quick_picks_title),
@@ -10147,20 +10593,29 @@ class PlaybackService : MediaLibraryService() {
                     if (com.music.bitchord.data.innertube.Innertube.cookie == null) {
                         listOf(createLoginPromptItem())
                     } else {
+                        // Captured once: the background refresh below replaces
+                        // the cache, and the rows, their next page and their
+                        // listener must all be the listing that was shown.
                         val snapshot = snapshotLiked()
-                        val songs = if (snapshot.isNotEmpty()) {
-                            if (!isLikedFresh()) {
+                        val listing = if (snapshot != null) {
+                            if (!isFresh(snapshot.at, LIKED_CACHE_TTL_MS)) {
                                 refreshFolderInBackground(session, browser, parentId, params) {
                                     cachedLikedSongs().size
                                 }
                             }
                             snapshot
                         } else {
-                            cachedLikedSongs()
+                            cachedLikedListing()
                         }
-                        songs.forEach { songCache[it.videoId] = it }
-                        if (songs.isNotEmpty()) {
-                            songs.map { it.toMediaItem() }
+                        val songs = listing?.songs.orEmpty()
+                        if (listing?.listener == owner.listener) cacheSongs(owner, songs)
+                        if (listing != null && songs.isNotEmpty()) {
+                            autoBrowseItems(
+                                songs,
+                                QueueSource(getString(R.string.auto_liked), PlaybackSourceType.BROWSE, YtMusicRepository.LIKED_MUSIC),
+                                listener = AutoBrowseContexts.owner(listing.listener),
+                                continuation = listing.continuation,
+                            )
                         } else {
                             listOf(
                                 createInfoItem(
@@ -10174,8 +10629,12 @@ class PlaybackService : MediaLibraryService() {
                 }
                 MEDIA_DOWNLOADS_ID -> {
                     val downloaded = Downloads.getDownloadedSongs(this@PlaybackService)
-                    downloaded.forEach { songCache[it.videoId] = it }
-                    if (downloaded.isNotEmpty()) downloaded.map { it.toMediaItem() } else listOf(
+                    cacheSharedSongs(downloaded)
+                    if (downloaded.isNotEmpty()) autoBrowseItems(
+                        downloaded,
+                        QueueSource(getString(R.string.downloads), PlaybackSourceType.BROWSE, parentId),
+                        listener = null,
+                    ) else listOf(
                         createInfoItem(
                             "msg:empty_downloads",
                             getString(R.string.auto_empty_offline_title),
@@ -10220,8 +10679,12 @@ class PlaybackService : MediaLibraryService() {
                 }
                 MEDIA_LOCAL_MUSIC_ID -> {
                     val local = LocalMediaRepository.getLocalMusic(this@PlaybackService)
-                    local.forEach { songCache[it.videoId] = it }
-                    if (local.isNotEmpty()) local.map { it.toMediaItem() } else listOf(
+                    cacheSharedSongs(local)
+                    if (local.isNotEmpty()) autoBrowseItems(
+                        local,
+                        QueueSource(getString(R.string.local_music), PlaybackSourceType.BROWSE, parentId),
+                        listener = null,
+                    ) else listOf(
                         createInfoItem(
                             "msg:empty_local",
                             getString(R.string.auto_empty_offline_title),
@@ -10231,32 +10694,70 @@ class PlaybackService : MediaLibraryService() {
                 }
                 else -> {
                     when {
-                        parentId.startsWith("playlist:") -> {
-                            val playlistId = parentId.removePrefix("playlist:")
-                            val songs = try {
+                        parentId.startsWith("playlist:") || parentId.startsWith("browse:") -> {
+                            val id = parentId.substringAfter(':')
+                            val browseId = if (parentId.startsWith("playlist:")) "VL$id" else id
+                            val listener = currentListener()
+                            val generation = com.music.bitchord.data.innertube.Innertube.listenerGeneration
+                            val songPage = try {
                                 withTimeoutOrNull(2500L) {
-                                    YtMusicRepository.browseSongs("VL$playlistId").getOrNull()?.songs
-                                        ?: YtMusicRepository.browseSongs(playlistId).getOrNull()?.songs
-                                } ?: emptyList()
+                                    YtMusicRepository.browseSongs(browseId).getOrNull()
+                                        ?: if (browseId != id) YtMusicRepository.browseSongs(id).getOrNull() else null
+                                }
                             } catch (_: Exception) {
-                                emptyList()
+                                null
                             }
-                            songs.forEach { songCache[it.videoId] = it }
-                            songs.filterNot(AppSettings::isSongBlocked)
-                                .map { it.toMediaItem(parentBrowseId = parentId) }
-                        }
-                        parentId.startsWith("browse:") -> {
-                            val browseId = parentId.removePrefix("browse:")
-                            val songs = try {
-                                withTimeoutOrNull(2500L) {
-                                    YtMusicRepository.browseSongs(browseId).getOrNull()?.songs
-                                } ?: emptyList()
-                            } catch (_: Exception) {
-                                emptyList()
+                            // Discarded if the account changed during the read: the
+                            // request may have been signed as either account. The
+                            // generation also catches an A→B→A switch.
+                            if (songPage == null || listener != currentListener() ||
+                                com.music.bitchord.data.innertube.Innertube.listenerGeneration != generation
+                            ) emptyList() else {
+                                cacheSongs(ListenerStamp(listener, generation), songPage.songs)
+                                // The queue is labelled as the app labels it:
+                                // the page's own title, else the card's.
+                                val title = songPage.header?.title
+                                    ?: snapshotPlaylistCards().firstOrNull { it.browseId == browseId }?.title
+                                    ?: getString(R.string.playlists)
+                                // A first page of nothing but blocked songs is not an
+                                // empty folder: the pages after it are read, a few at
+                                // most and under the same session, until one has a
+                                // playable row, and the folder starts from there.
+                                var rows = songPage.songs.filterNot(AppSettings::isSongBlocked)
+                                var continuation = songPage.continuation
+                                var leadPages = 0
+                                val session = com.music.bitchord.data.innertube.Innertube.ListenerStamp(listener, generation)
+                                while (rows.isEmpty() && continuation != null && leadPages++ < AUTO_BLOCKED_LEAD_PAGES) {
+                                    val token = continuation
+                                    val more = try {
+                                        withTimeoutOrNull(2500L) {
+                                            com.music.bitchord.data.innertube.Innertube.asListener(session) {
+                                                YtMusicRepository.moreSongs(token).getOrNull()
+                                            }
+                                        }
+                                    } catch (e: kotlinx.coroutines.CancellationException) {
+                                        throw e
+                                    } catch (_: Exception) {
+                                        null
+                                    } ?: break
+                                    if (listener != currentListener() ||
+                                        com.music.bitchord.data.innertube.Innertube.listenerGeneration != generation
+                                    ) {
+                                        rows = emptyList()
+                                        break
+                                    }
+                                    cacheSongs(ListenerStamp(listener, generation), more.songs)
+                                    rows = more.songs.filterNot(AppSettings::isSongBlocked)
+                                    continuation = more.continuation
+                                }
+                                autoBrowseItems(
+                                    rows,
+                                    QueueSource(title, PlaybackSourceType.BROWSE, browseId),
+                                    continuation = continuation,
+                                    listener = AutoBrowseContexts.owner(listener),
+                                    parentBrowseId = parentId,
+                                )
                             }
-                            songs.forEach { songCache[it.videoId] = it }
-                            songs.filterNot(AppSettings::isSongBlocked)
-                                .map { it.toMediaItem(parentBrowseId = parentId) }
                         }
                         else -> {
                             val cachedSong = songCache[parentId]
@@ -10275,14 +10776,78 @@ class PlaybackService : MediaLibraryService() {
                     CONTENT_STYLE_LIST_ITEM_HINT_VALUE,
                 ),
             ).build()
-            LibraryResult.ofItemList(ImmutableList.copyOf(paginate(items, page, pageSize)), returnParams)
+            SessionAnswer(
+                LibraryResult.ofItemList(ImmutableList.copyOf(paginate(items, page, pageSize)), returnParams),
+                // The root's own folders, Downloads and the device's music belong
+                // to no account; everything else was read for this one.
+                bound = parentId !in ACCOUNT_FREE_FOLDERS,
+                stale = LibraryResult.ofItemList(ImmutableList.of(), returnParams),
+            )
+        }
+
+        /**
+         * An Auto request answered from [read] on IO, for the session it was
+         * asked under: `owner`, taken here on the application thread before
+         * anything suspends. The answer goes back to Media3 on that thread, in
+         * a later task, inside that session's lock (see [deliver]). A folder,
+         * a search page, a track or a queue read for one account therefore
+         * reaches the browser, or is installed, before any switch or not at
+         * all; once the session has ended, the answer's stale form goes
+         * instead, or the request fails.
+         */
+        private fun <V> answered(read: suspend (owner: ListenerStamp) -> SessionAnswer<V>): ListenableFuture<V> {
+            val owner = listenerStamp()
+            val delivered = SettableFuture.create<V>()
+            val work = scope.launch(Dispatchers.IO) {
+                val answer = try {
+                    read(owner)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    delivered.setException(e)
+                    return@launch
+                }
+                withContext(Dispatchers.Main) {
+                    delivered.deliver(answer) { complete ->
+                        com.music.bitchord.data.innertube.Innertube.whileListener(innertubeStamp(owner), complete)
+                    }
+                }
+            }
+            // The worker cancelled (the service going away) before it handed
+            // anything over: the request ends instead of waiting forever.
+            work.invokeOnCompletion { if (!delivered.isDone) delivered.cancel(false) }
+            delivered.addListener({ if (delivered.isCancelled) work.cancel() }, MoreExecutors.directExecutor())
+            return delivered
         }
 
         override fun onGetItem(
             session: MediaLibrarySession,
             browser: MediaSession.ControllerInfo,
             mediaId: String,
-        ): ListenableFuture<LibraryResult<MediaItem>> = scope.future(Dispatchers.IO) {
+        ): ListenableFuture<LibraryResult<MediaItem>> = answered { owner ->
+            val unavailable = LibraryResult.ofItem(
+                createInfoItem(
+                    "msg:unavailable|$mediaId",
+                    getString(R.string.auto_unavailable_title),
+                    getString(R.string.auto_unavailable_subtitle),
+                ),
+                null,
+            )
+            if (AutoBrowseContexts.isAutoBrowseId(mediaId)) {
+                val selection = autoBrowseContexts.select(mediaId, owner.listener)
+                if (selection is AutoBrowseContexts.Selection.Found) {
+                    // An account's row is handed over under the session it was
+                    // looked up in, or as unavailable.
+                    return@answered SessionAnswer(
+                        LibraryResult.ofItem(selection.song.toMediaItem().buildUpon().setMediaId(mediaId).build(), null),
+                        bound = selection.context.listener != null,
+                        stale = unavailable,
+                    )
+                }
+                // Expired or from another account: answered as unavailable below.
+            }
+            // A track found in the cache is the session's when it was read for it.
+            var fromSession = false
             val item = when (mediaId) {
                 MEDIA_ROOT_ID -> MediaItem.Builder()
                     .setMediaId(MEDIA_ROOT_ID)
@@ -10310,9 +10875,10 @@ class PlaybackService : MediaLibraryService() {
                             getString(R.string.auto_unavailable_subtitle),
                         )
                     } else {
-                        val cached = songCache[mediaId]
+                        val cached = songCache.entry(mediaId)
                         if (cached != null) {
-                            cached.toMediaItem()
+                            fromSession = !cached.shared
+                            cached.value.toMediaItem()
                         } else if (mediaId.startsWith("playlist:") || mediaId.startsWith("browse:")) {
                             createGridPlaylistItem(
                                 mediaId = mediaId,
@@ -10329,13 +10895,17 @@ class PlaybackService : MediaLibraryService() {
                     }
                 }
             }
-            LibraryResult.ofItem(item, null)
+            SessionAnswer(LibraryResult.ofItem(item, null), bound = fromSession, stale = unavailable)
         }
 
         override fun onPlaybackResumption(
             mediaSession: MediaSession,
             controller: MediaSession.ControllerInfo,
-        ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> = scope.future(Dispatchers.IO) {
+        ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> = answered { owner ->
+            // [owner]: the session these rows are read for. A write that lands
+            // after a switch is dropped, and the home feed's rows are handed
+            // over under it or not at all.
+            val nothing = MediaSession.MediaItemsWithStartPosition(ImmutableList.of(), 0, 0L)
             // 1. If player currently holds items in its queue, resume from it.
             // The player is read on its own (main) thread; the rest of this
             // future stays on IO for the disk and network fallbacks. Reading
@@ -10350,16 +10920,15 @@ class PlaybackService : MediaLibraryService() {
                     activePlayer.currentPosition.coerceAtLeast(0L),
                 )
             }
-            if (fromPlayer != null) return@future fromPlayer
+            if (fromPlayer != null) return@answered SessionAnswer(fromPlayer, bound = false)
 
             // 2. Fallback to local downloaded songs (offline-ready)
             val downloaded = Downloads.getDownloadedSongs(this@PlaybackService)
             if (downloaded.isNotEmpty()) {
                 val items = downloaded.map { it.toMediaItem() }
-                return@future MediaSession.MediaItemsWithStartPosition(
-                    ImmutableList.copyOf(items),
-                    0,
-                    0L,
+                return@answered SessionAnswer(
+                    MediaSession.MediaItemsWithStartPosition(ImmutableList.copyOf(items), 0, 0L),
+                    bound = false,
                 )
             }
 
@@ -10367,10 +10936,9 @@ class PlaybackService : MediaLibraryService() {
             val localSongs = LocalMediaRepository.getLocalMusic(this@PlaybackService)
             if (localSongs.isNotEmpty()) {
                 val items = localSongs.map { it.toMediaItem() }
-                return@future MediaSession.MediaItemsWithStartPosition(
-                    ImmutableList.copyOf(items),
-                    0,
-                    0L,
+                return@answered SessionAnswer(
+                    MediaSession.MediaItemsWithStartPosition(ImmutableList.copyOf(items), 0, 0L),
+                    bound = false,
                 )
             }
 
@@ -10379,7 +10947,7 @@ class PlaybackService : MediaLibraryService() {
                 withTimeoutOrNull(2500L) {
                     val home = YtMusicRepository.home().getOrNull()
                     home?.shelves?.flatMap { shelf ->
-                        shelf.items.mapNotNull { it.toMediaItemOrNull() }
+                        shelf.items.mapNotNull { it.toMediaItemOrNull(owner) }
                     }?.distinctBy { it.mediaId }
                 } ?: emptyList()
             } catch (_: Exception) {
@@ -10387,19 +10955,15 @@ class PlaybackService : MediaLibraryService() {
             }
 
             if (fallbackSongs.isNotEmpty()) {
-                return@future MediaSession.MediaItemsWithStartPosition(
-                    ImmutableList.copyOf(fallbackSongs),
-                    0,
-                    0L,
+                return@answered SessionAnswer(
+                    MediaSession.MediaItemsWithStartPosition(ImmutableList.copyOf(fallbackSongs), 0, 0L),
+                    bound = true,
+                    stale = nothing,
                 )
             }
 
             // Return empty instead of throwing an unhandled exception to prevent crash
-            MediaSession.MediaItemsWithStartPosition(
-                ImmutableList.of(),
-                0,
-                0L,
-            )
+            SessionAnswer(nothing, bound = false)
         }
 
         override fun onSearch(
@@ -10408,9 +10972,13 @@ class PlaybackService : MediaLibraryService() {
             query: String,
             params: LibraryParams?,
         ): ListenableFuture<LibraryResult<Void>> = scope.future(Dispatchers.IO) {
-            val (songs, browses) = searchAll(query)
-            storeSearchResults(query, songs, browses)
-            session.notifySearchResultChanged(browser, query, songs.size + browses.size, params)
+            // The session these rows are read for: a write that lands after a switch is dropped.
+            val owner = listenerStamp()
+            val (songs, browses) = searchAll(query, owner)
+            storeSearchResults(owner, query, songs, browses)
+            // Results for a session that has since ended are not offered.
+            val count = if (owner == listenerStamp()) songs.size + browses.size else 0
+            session.notifySearchResultChanged(browser, query, count, params)
             LibraryResult.ofVoid(params)
         }
 
@@ -10421,17 +10989,32 @@ class PlaybackService : MediaLibraryService() {
             page: Int,
             pageSize: Int,
             params: LibraryParams?,
-        ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> = scope.future(Dispatchers.IO) {
-            val cachedSongs = searchResults[query]
-            val cachedBrowses = searchBrowseResults[query]
-            val (songs, browses) = if (cachedSongs != null || cachedBrowses != null) {
-                cachedSongs.orEmpty() to cachedBrowses.orEmpty()
-            } else {
-                searchAll(query).also { storeSearchResults(query, it.first, it.second) }
-            }
-            songs.forEach { songCache[it.videoId] = it }
+        ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> = answered { owner ->
+            // [owner]: the session these rows are read for. A write that lands
+            // after a switch is dropped, and the rows reach the browser under
+            // it or not at all: a switch first answers none (see [answered]).
+            SessionAnswer(
+                searchResultFor(owner, query, page, pageSize, params),
+                bound = true,
+                stale = LibraryResult.ofItemList(ImmutableList.of(), params),
+            )
+        }
+
+        /** [query]'s results for [owner], or none once another session is current. */
+        private suspend fun searchResultFor(
+            owner: ListenerStamp,
+            query: String,
+            page: Int,
+            pageSize: Int,
+            params: LibraryParams?,
+        ): LibraryResult<ImmutableList<MediaItem>> {
+            val (songs, browses) = searchCache[query]
+                ?: searchAll(query, owner).also { storeSearchResults(owner, query, it.first, it.second) }
+            // Read for a session that has since ended: not delivered.
+            if (owner != listenerStamp()) return LibraryResult.ofItemList(ImmutableList.of(), params)
+            cacheSongs(owner, songs)
             val items = songs.map { it.toMediaItem() } + browses.map(::browseItemToGridItem)
-            LibraryResult.ofItemList(ImmutableList.copyOf(paginate(items, page, pageSize)), params)
+            return LibraryResult.ofItemList(ImmutableList.copyOf(paginate(items, page, pageSize)), params)
         }
 
         override fun onSetMediaItems(
@@ -10440,26 +11023,142 @@ class PlaybackService : MediaLibraryService() {
             mediaItems: List<MediaItem>,
             startIndex: Int,
             startPositionMs: Long,
-        ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> = scope.future(Dispatchers.IO) {
-            // Android Auto hands over the tapped song, not the playlist around
-            // it. Rebuild the folder so the queue follows the playlist's own
-            // order and AutoPlay only starts after its last track.
-            expandPlaylistContext(mediaItems, startIndex)?.let { return@future it }
-            val resolved = resolveMediaItems(mediaItems)
-            val validIndex = startIndex.coerceIn(0, (resolved.size - 1).coerceAtLeast(0))
-            MediaSession.MediaItemsWithStartPosition(
-                ImmutableList.copyOf(resolved),
-                validIndex,
-                startPositionMs.coerceAtLeast(0L),
-            )
+        ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> = answered { owner ->
+            // Android Auto hands over the tapped song, not the folder around
+            // it. A row listed with an auto-browse id names the listing it
+            // came from, so the queue is that folder in the order shown.
+            val selected = AutoBrowseContexts.pickSelected(mediaItems, startIndex) { it.mediaId }
+            if (AutoBrowseContexts.isAutoBrowseId(selected?.mediaId)) {
+                return@answered playAutoBrowseSelection(mediaSession, controller, selected!!.mediaId, startPositionMs, owner)
+            }
+            // Older rows (and controllers that keep extras) still carry the
+            // parent folder: rebuild it so the queue follows the playlist's
+            // own order and AutoPlay only starts after its last track.
+            expandPlaylistContext(mediaItems, startIndex, owner)?.let { return@answered it }
+            // A queue whose rows were read for this session is installed under
+            // it, or without them; one with nothing left fails, so Media3
+            // neither installs nor plays anything for it.
+            resolveMediaItemsFrom(mediaItems, startIndex, owner).map { (resolved, resolvedStart) ->
+                val validIndex = resolvedStart.coerceIn(0, (resolved.size - 1).coerceAtLeast(0))
+                MediaSession.MediaItemsWithStartPosition(
+                    ImmutableList.copyOf(resolved),
+                    validIndex,
+                    startPositionMs.coerceAtLeast(0L),
+                )
+            }
         }
 
         override fun onAddMediaItems(
             mediaSession: MediaSession,
             controller: MediaSession.ControllerInfo,
             mediaItems: List<MediaItem>,
-        ): ListenableFuture<List<MediaItem>> = scope.future(Dispatchers.IO) {
-            resolveMediaItems(mediaItems)
+        ): ListenableFuture<List<MediaItem>> = answered { owner ->
+            resolveMediaItemsFrom(mediaItems, 0, owner).map { it.first }
+        }
+
+        /**
+         * [mediaItems] resolved to tracks, and where the item at [startIndex]
+         * landed among them: a row before it can expand to several tracks or
+         * drop out (a stale Auto row), so its input index no longer names it.
+         */
+
+        /**
+         * The queue for a tapped Auto row: its whole folder listing, labelled
+         * the way the app labels it, with the tapped row playing and any
+         * upcoming "Play next" / "Add to queue" rows kept behind it.
+         *
+         * A stale row — its listing evicted, or listed before the service
+         * restarted — is reported to the controller and the request failed,
+         * so it cannot replace the queue that is playing. A row listed for
+         * another account fails the same way.
+         */
+        private suspend fun playAutoBrowseSelection(
+            mediaSession: MediaSession,
+            controller: MediaSession.ControllerInfo,
+            mediaId: String,
+            startPositionMs: Long,
+            selectedAt: ListenerStamp,
+        ): SessionAnswer<MediaSession.MediaItemsWithStartPosition> {
+            // [selectedAt]: the session the row is selected under. An account's
+            // queue is built and installed under this one or not at all; a
+            // folder of no account (downloads, music on the device) plays
+            // whoever is signed in.
+            val selection = autoBrowseContexts.select(mediaId, selectedAt.listener)
+            if (selection !is AutoBrowseContexts.Selection.Found) {
+                withContext(Dispatchers.Main) {
+                    mediaSession.sendError(
+                        controller,
+                        SessionError(SessionError.ERROR_BAD_VALUE, getString(R.string.auto_unavailable_subtitle)),
+                    )
+                }
+                throw IllegalArgumentException("Auto browse row unusable: $selection")
+            }
+            val context = selection.context
+            val songs = context.songs.filterNot { it.isUnresolvedSpotify }
+            if (selection.song.isUnresolvedSpotify || songs.isEmpty()) {
+                throw IllegalArgumentException("Selected track is unavailable")
+            }
+            val index = (0 until selection.index).count { !context.songs[it].isUnresolvedSpotify }
+            val accountOwned = context.listener != null
+            if (accountOwned) cacheSongs(selectedAt, songs) else cacheSharedSongs(songs)
+            var pending: PendingAutoInstall? = null
+            val built = withContext(Dispatchers.Main) {
+                // The account can change between the IO-side select and here,
+                // even away and back: the generation says so. Only for an
+                // account's own folder: a sign-in landing meanwhile leaves a
+                // Downloads row as playable as it was.
+                if (!context.belongsTo(currentListener()) || (accountOwned && listenerStamp() != selectedAt)) {
+                    mediaSession.sendError(
+                        controller,
+                        SessionError(SessionError.ERROR_BAD_VALUE, getString(R.string.auto_unavailable_subtitle)),
+                    )
+                    return@withContext null
+                }
+                val exoPlayer = player
+                val timeline = if (exoPlayer == null) emptyList() else {
+                    (0 until exoPlayer.mediaItemCount).map { exoPlayer.getMediaItemAt(it).toSong() }
+                }
+                val currentIndex = exoPlayer?.currentMediaItemIndex ?: -1
+                QueueCoordinator.buildContextQueue(timeline, currentIndex, songs, index, context.source)
+                    .also { built ->
+                        val startEntryId = built.timeline.getOrNull(built.startIndex)?.queueEntryId
+                        // Rechecked when Media3 installs it: see [refusesStaleAutoInstall].
+                        val record = PendingAutoInstall(
+                            startEntryId,
+                            built.startIndex,
+                            built.timeline.size,
+                            owner = selectedAt.takeIf { accountOwned },
+                        ) {
+                            mediaSession.sendError(
+                                controller,
+                                SessionError(SessionError.ERROR_BAD_VALUE, getString(R.string.auto_unavailable_subtitle)),
+                            )
+                        }
+                        pendingAutoInstalls.add(record)
+                        pending = record
+                        followAutoBrowseContinuation(context, record.installed)
+                        pendingAutoInstalls.following = record
+                    }
+            } ?: throw IllegalArgumentException("Auto browse row unusable: ${AutoBrowseContexts.Selection.AccountChanged}")
+            return SessionAnswer(
+                MediaSession.MediaItemsWithStartPosition(
+                    ImmutableList.copyOf(built.timeline.map { it.toMediaItem() }),
+                    built.startIndex,
+                    startPositionMs.coerceAtLeast(0L),
+                ),
+                bound = accountOwned,
+                // Handed over after a switch: the request fails, so Media3
+                // neither installs this queue nor plays the one it would have
+                // replaced, and the controller hears why.
+                onStale = {
+                    pending?.let { record ->
+                        // Its own continuation only: a queue built after this
+                        // one may have started its own since.
+                        if (pendingAutoInstalls.refused(record)) clearAutoContinuation()
+                        record.onRefused()
+                    }
+                },
+            )
         }
 
         /**
@@ -10478,7 +11177,8 @@ class PlaybackService : MediaLibraryService() {
         private suspend fun expandPlaylistContext(
             mediaItems: List<MediaItem>,
             startIndex: Int,
-        ): MediaSession.MediaItemsWithStartPosition? {
+            owner: ListenerStamp,
+        ): SessionAnswer<MediaSession.MediaItemsWithStartPosition>? {
             val parents = mediaItems
                 .mapNotNull { it.mediaMetadata.extras?.getString(EXTRA_AUTO_PARENT) }
                 .distinct()
@@ -10487,104 +11187,149 @@ class PlaybackService : MediaLibraryService() {
             val tapped = mediaItems
                 .getOrNull(startIndex.coerceIn(0, (mediaItems.size - 1).coerceAtLeast(0)))
                 ?.mediaId
-            val full = resolveMediaItems(listOf(MediaItem.Builder().setMediaId(parent).build()))
+            val answer = resolveMediaItemsFrom(listOf(MediaItem.Builder().setMediaId(parent).build()), 0, owner)
+            val full = answer.value.first
             if (full.size <= 1 || full.size < mediaItems.size) return null
             val index = full.indexOfFirst { it.mediaId == tapped }.takeIf { it >= 0 } ?: 0
-            return MediaSession.MediaItemsWithStartPosition(ImmutableList.copyOf(full), index, 0L)
+            // The folder was read for this session: installed under it, or the
+            // request fails rather than play a part of it under another.
+            return SessionAnswer(
+                MediaSession.MediaItemsWithStartPosition(ImmutableList.copyOf(full), index, 0L),
+                bound = answer.bound,
+            )
         }
 
-        private suspend fun resolveMediaItems(mediaItems: List<MediaItem>): List<MediaItem> {
-            val resolved = mutableListOf<MediaItem>()
-            for (item in mediaItems) {
+        /**
+         * [mediaItems] resolved to tracks for [owner], the session they were
+         * handed over under, and where the item at [startIndex] landed among
+         * them: a row before it can expand to several tracks or drop out (a
+         * stale Auto row), so its input index no longer names it.
+         *
+         * A later item can suspend on the network after one was read, and the
+         * account can change meanwhile, even away and back, or before the
+         * answer is handed over. So it is answered both ways (see
+         * [SessionRows.finish]): with every row while [owner] is current, and
+         * without the rows read for it once it has ended. Nothing left then
+         * fails the request.
+         */
+        private suspend fun resolveMediaItemsFrom(
+            mediaItems: List<MediaItem>,
+            startIndex: Int,
+            owner: ListenerStamp,
+        ): SessionAnswer<Pair<List<MediaItem>, Int>> {
+            val bound = innertubeStamp(owner)
+            val resolved = SessionRows<MediaItem>()
+            var resolvedStart = 0
+            /** A track the controller named by id: the cached copy, the session's when it was read for it. */
+            fun addCached(entry: ListenerScopedCache.Entry<Song>, otherwise: () -> MediaItem) {
+                val row = entry.value.toMediaItem()
+                if (entry.shared) resolved.add(row) else resolved.addForSession(row, otherwise())
+            }
+            for ((itemIndex, item) in mediaItems.withIndex()) {
+                if (itemIndex == startIndex) resolvedStart = resolved.size
                 val id = item.mediaId
                 val searchQuery = item.requestMetadata.searchQuery
+                // Read once: a switch between a membership check and the read can't empty it in between.
+                val cachedById = songCache.entry(id)
                 when {
+                    // Adding one browsed row to the queue resolves it to its
+                    // track without replacing the queue; a stale one is dropped.
+                    AutoBrowseContexts.isAutoBrowseId(id) -> {
+                        val selection = autoBrowseContexts.select(id, owner.listener)
+                        if (selection is AutoBrowseContexts.Selection.Found) {
+                            val row = listOf(selection.song.toMediaItem())
+                            if (selection.context.listener != null) resolved.addForSession(itemIndex, row) else resolved.addAll(row)
+                        }
+                    }
                     !searchQuery.isNullOrBlank() -> {
-                        val cached = searchResults[searchQuery]
+                        val cached = searchCache[searchQuery]?.first
                         val songs = if (!cached.isNullOrEmpty()) {
                             cached
                         } else {
                             try {
                                 withTimeoutOrNull(3000L) {
-                                    YtMusicRepository.search(searchQuery, SearchFilter.SONGS).getOrNull()
-                                        ?.mapNotNull { if (it is SearchResult.Track) it.song else null }
+                                    com.music.bitchord.data.innertube.Innertube.asListener(bound) {
+                                        YtMusicRepository.search(searchQuery, SearchFilter.SONGS).getOrNull()
+                                    }?.mapNotNull { if (it is SearchResult.Track) it.song else null }
                                 } ?: emptyList()
                             } catch (_: Exception) {
                                 emptyList()
                             }
                         }
-                        songs.forEach { songCache[it.videoId] = it }
-                        if (songs.isNotEmpty()) {
-                            resolved.addAll(songs.map { it.toMediaItem() })
-                        }
+                        cacheSongs(owner, songs)
+                        resolved.addForSession(itemIndex, songs.map { it.toMediaItem() })
                     }
                     id.startsWith("playlist:") -> {
                         val playlistId = id.removePrefix("playlist:")
                         val songs = try {
                             withTimeoutOrNull(3000L) {
-                                YtMusicRepository.browseSongs("VL$playlistId").getOrNull()?.songs
-                                    ?: YtMusicRepository.browseSongs(playlistId).getOrNull()?.songs
+                                com.music.bitchord.data.innertube.Innertube.asListener(bound) {
+                                    YtMusicRepository.browseSongs("VL$playlistId").getOrNull()?.songs
+                                        ?: YtMusicRepository.browseSongs(playlistId).getOrNull()?.songs
+                                }
                             } ?: emptyList()
                         } catch (_: Exception) {
                             emptyList()
                         }
-                        songs.forEach { songCache[it.videoId] = it }
-                        resolved.addAll(songs.map { it.toMediaItem() })
+                        cacheSongs(owner, songs)
+                        resolved.addForSession(itemIndex, songs.map { it.toMediaItem() })
                     }
                     id.startsWith("browse:") -> {
                         val browseId = id.removePrefix("browse:")
                         val songs = try {
                             withTimeoutOrNull(3000L) {
-                                YtMusicRepository.browseSongs(browseId).getOrNull()?.songs
+                                com.music.bitchord.data.innertube.Innertube.asListener(bound) {
+                                    YtMusicRepository.browseSongs(browseId).getOrNull()?.songs
+                                }
                             } ?: emptyList()
                         } catch (_: Exception) {
                             emptyList()
                         }
-                        songs.forEach { songCache[it.videoId] = it }
-                        resolved.addAll(songs.map { it.toMediaItem() })
+                        cacheSongs(owner, songs)
+                        resolved.addForSession(itemIndex, songs.map { it.toMediaItem() })
                     }
                     id == MEDIA_ROOT_ID || id == MEDIA_RECENTS_ID -> {
-                        val songs = cachedRecentsSongs()
-                        resolved.addAll(songs.map { it.toMediaItem() })
+                        resolved.addForSession(itemIndex, cachedRecentsSongs().map { it.toMediaItem() })
                     }
                     id == MEDIA_QUICK_PICKS_ID -> {
-                        val songs = cachedQuickPicksSongs()
-                        resolved.addAll(songs.map { it.toMediaItem() })
+                        resolved.addForSession(itemIndex, cachedQuickPicksSongs().map { it.toMediaItem() })
                     }
                     id == MEDIA_LIKED_ID -> {
-                        val songs = cachedLikedSongs()
-                        if (songs.isNotEmpty()) {
-                            resolved.addAll(songs.map { it.toMediaItem() })
-                        }
+                        resolved.addForSession(itemIndex, cachedLikedSongs().map { it.toMediaItem() })
                     }
                     id == MEDIA_DOWNLOADS_ID -> {
                         val downloaded = Downloads.getDownloadedSongs(this@PlaybackService)
-                        downloaded.forEach { songCache[it.videoId] = it }
+                        cacheSharedSongs(downloaded)
                         resolved.addAll(downloaded.map { it.toMediaItem() })
                     }
                     id == MEDIA_PLAYLISTS_ID -> {
                         val songs = try {
                             withTimeoutOrNull(2500L) {
-                                val playlists = YtMusicRepository.userPlaylists().getOrNull() ?: emptyList()
-                                val first = playlists.firstOrNull()
-                                if (first != null) {
-                                    YtMusicRepository.browseSongs("VL${first.playlistId}").getOrNull()?.songs
-                                        ?: YtMusicRepository.browseSongs(first.playlistId).getOrNull()?.songs
-                                } else null
+                                com.music.bitchord.data.innertube.Innertube.asListener(bound) {
+                                    val playlists = YtMusicRepository.userPlaylists().getOrNull() ?: emptyList()
+                                    val first = playlists.firstOrNull()
+                                    if (first != null) {
+                                        YtMusicRepository.browseSongs("VL${first.playlistId}").getOrNull()?.songs
+                                            ?: YtMusicRepository.browseSongs(first.playlistId).getOrNull()?.songs
+                                    } else null
+                                }
                             } ?: emptyList()
                         } catch (_: Exception) {
                             emptyList()
                         }
-                        songs.forEach { songCache[it.videoId] = it }
-                        resolved.addAll(songs.map { it.toMediaItem() })
+                        cacheSongs(owner, songs)
+                        resolved.addForSession(itemIndex, songs.map { it.toMediaItem() })
                     }
                     id == MEDIA_LOCAL_MUSIC_ID -> {
                         val local = LocalMediaRepository.getLocalMusic(this@PlaybackService)
-                        local.forEach { songCache[it.videoId] = it }
+                        cacheSharedSongs(local)
                         resolved.addAll(local.map { it.toMediaItem() })
                     }
-                    songCache.containsKey(id) -> {
-                        resolved.add(songCache[id]!!.toMediaItem())
+                    // The track the controller named, with what is known of it.
+                    // Known from the session's own reads, those details are the
+                    // session's: after a switch the item goes as it was handed over.
+                    cachedById != null -> {
+                        addCached(cachedById) { item.toSong().toMediaItem() }
                     }
                     item.localConfiguration != null -> {
                         resolved.add(item)
@@ -10593,28 +11338,39 @@ class PlaybackService : MediaLibraryService() {
                         val uri = item.requestMetadata.mediaUri!!
                         val videoId = uri.getQueryParameter("v") ?: uri.lastPathSegment.orEmpty()
                         if (videoId.isNotEmpty() && !videoId.startsWith("http")) {
-                            val cached = songCache[videoId]
-                            if (cached != null) {
-                                resolved.add(cached.toMediaItem())
-                            } else {
-                                resolved.add(Song(videoId = videoId, title = item.mediaMetadata.title?.toString() ?: "Track", artist = item.mediaMetadata.artist?.toString() ?: "Artist", thumbnailUrl = null).toMediaItem())
+                            val asHanded = {
+                                Song(videoId = videoId, title = item.mediaMetadata.title?.toString() ?: "Track", artist = item.mediaMetadata.artist?.toString() ?: "Artist", thumbnailUrl = null).toMediaItem()
                             }
+                            val cached = songCache.entry(videoId)
+                            if (cached != null) addCached(cached, asHanded) else resolved.add(asHanded())
                         } else {
                             resolved.add(item.buildUpon().setUri(uri).build())
                         }
                     }
                     else -> {
-                        val cached = songCache[id]
-                        if (cached != null) {
-                            resolved.add(cached.toMediaItem())
-                        } else {
-                            val song = item.toSong()
-                            resolved.add(song.toMediaItem())
-                        }
+                        // Not in the cache: [cachedById] was read for this very id.
+                        resolved.add(item.toSong().toMediaItem())
                     }
                 }
             }
-            return if (resolved.isEmpty()) mediaItems else resolved
+            if (startIndex >= mediaItems.size) resolvedStart = resolved.size
+            /** The queue for a session still [current] or ended since. */
+            fun forSession(current: Boolean): Pair<List<MediaItem>, Int> {
+                val (kept, keptStart) = resolved.finish(resolvedStart, current)
+                if (kept.isNotEmpty()) return kept to keptStart
+                // A stale browse row has no track behind it, and a request read
+                // for a session that has since ended is not this one's to play:
+                // neither goes back to the player as if it were a track.
+                val stale = resolved.staleRequests(current)
+                val fallback = mediaItems.withIndex()
+                    .filterNot { AutoBrowseContexts.isAutoBrowseId(it.value.mediaId) || it.index in stale }
+                return fallback.map { it.value } to fallback.count { it.index < startIndex }
+            }
+            return SessionAnswer(
+                forSession(current = true),
+                bound = resolved.anyBound,
+                stale = forSession(current = false).takeIf { it.first.isNotEmpty() },
+            )
         }
     }
 
@@ -10670,7 +11426,7 @@ class PlaybackService : MediaLibraryService() {
             MediaMetadata.Builder()
                 .setTitle(title)
                 .setSubtitle(subtitle)
-                .setArtworkUri(artworkUrl?.artworkAt(NOTIFICATION_ART_PX)?.let(Uri::parse))
+                .setArtworkUri(artworkUrl?.artworkAt(NOTIFICATION_ART_PX)?.let { youTubeThumbnailFallback(it) ?: it }?.let(Uri::parse))
                 .setIsBrowsable(true)
                 .setIsPlayable(false)
                 .setFolderType(folderType)
@@ -10690,12 +11446,15 @@ class PlaybackService : MediaLibraryService() {
         )
     }
 
-    private suspend fun searchAll(query: String): Pair<List<Song>, List<BrowseItem>> {
+    /** Every Auto search result for [query], sent bound to [session]: a switch before it goes out sends nothing. */
+    private suspend fun searchAll(query: String, session: ListenerStamp): Pair<List<Song>, List<BrowseItem>> {
         val safeQuery = query.trim().take(MAX_AUTO_SEARCH_QUERY_CHARS)
         if (safeQuery.isEmpty()) return emptyList<Song>() to emptyList()
         val results = try {
             withTimeoutOrNull(3_500L) {
-                YtMusicRepository.search(safeQuery, SearchFilter.ALL).getOrNull()
+                com.music.bitchord.data.innertube.Innertube.asListener(innertubeStamp(session)) {
+                    YtMusicRepository.search(safeQuery, SearchFilter.ALL).getOrNull()
+                }
             } ?: emptyList()
         } catch (_: Exception) {
             emptyList()
@@ -10712,15 +11471,10 @@ class PlaybackService : MediaLibraryService() {
         return songs to browses
     }
 
-    private fun storeSearchResults(query: String, songs: List<Song>, browses: List<BrowseItem>) {
-        while (searchResults.size >= MAX_AUTO_SEARCH_CACHE_ENTRIES) {
-            val key = searchResults.keys.firstOrNull() ?: break
-            searchResults.remove(key)
-            searchBrowseResults.remove(key)
-        }
-        searchResults[query] = songs
-        searchBrowseResults[query] = browses
-        songs.forEach { songCache[it.videoId] = it }
+    /** Keeps [query]'s results for [session], unless another session is current by now. */
+    private fun storeSearchResults(session: ListenerStamp, query: String, songs: List<Song>, browses: List<BrowseItem>) {
+        searchCache.put(session, query, songs to browses)
+        cacheSongs(session, songs)
     }
 
     private fun browseItemToGridItem(item: BrowseItem): MediaItem = createGridPlaylistItem(
@@ -10804,7 +11558,8 @@ class PlaybackService : MediaLibraryService() {
             .build()
     }
 
-    private fun ShelfItem.toMediaItemOrNull(): MediaItem? {
+    /** A home-shelf card as a playable or browsable item; a song's row is cached for [session], the one the shelf was read for. */
+    private fun ShelfItem.toMediaItemOrNull(session: ListenerStamp): MediaItem? {
         val vid = videoId
         if (vid != null) {
             val song = Song(
@@ -10813,7 +11568,7 @@ class PlaybackService : MediaLibraryService() {
                 artist = InnertubeParser.artistFromSubtitle(subtitle),
                 thumbnailUrl = thumbnailUrl,
             )
-            songCache[vid] = song
+            cacheSongs(session, listOf(song))
             return song.toMediaItem()
         }
         val bid = browseId
@@ -10824,7 +11579,7 @@ class PlaybackService : MediaLibraryService() {
                     MediaMetadata.Builder()
                         .setTitle(title)
                         .setSubtitle(subtitle)
-                        .setArtworkUri(thumbnailUrl.artworkAt(NOTIFICATION_ART_PX)?.let { Uri.parse(it) })
+                        .setArtworkUri(thumbnailUrl.artworkAt(NOTIFICATION_ART_PX)?.let { youTubeThumbnailFallback(it) ?: it }?.let { Uri.parse(it) })
                         .setIsBrowsable(true)
                         .setIsPlayable(false)
                         .setFolderType(MediaMetadata.FOLDER_TYPE_ALBUMS)
@@ -10885,6 +11640,10 @@ class PlaybackService : MediaLibraryService() {
         const val FOREIGN_CACHE_KEEP_AHEAD = 3
         const val MEDIA_DOWNLOADS_ID = "downloads"
         const val MEDIA_LOCAL_MUSIC_ID = "local_music"
+        /** The one key of [playlistCardsCache]. */
+        const val PLAYLIST_CARDS_KEY = "cards"
+        /** Auto folders that list nothing read for an account: handed over whoever is signed in. */
+        val ACCOUNT_FREE_FOLDERS = setOf(MEDIA_ROOT_ID, MEDIA_MORE_ID, MEDIA_DOWNLOADS_ID, MEDIA_LOCAL_MUSIC_ID)
         const val MAX_AUTO_PAGE_SIZE = 50
         /**
          * The most a client can ask for in one page. Far above what any
@@ -10904,6 +11663,20 @@ class PlaybackService : MediaLibraryService() {
         const val PLAYLISTS_FETCH_TIMEOUT_MS = 8_000L
         const val MAX_AUTO_SEARCH_QUERY_CHARS = 200
         const val MAX_AUTO_SEARCH_CACHE_ENTRIES = 20
+
+        /**
+         * How many later pages an Auto-started folder reads into the queue —
+         * the ~1000-track shelf a playlist page carries, and an endless mix
+         * cut off there rather than read for as long as the drive lasts.
+         */
+        const val AUTO_CONTINUATION_MAX_PAGES = 10
+
+        /** How many pages past a first page of only blocked songs an Auto folder reads for a playable row. */
+        const val AUTO_BLOCKED_LEAD_PAGES = 3
+        const val AUTO_CONTINUATION_TIMEOUT_MS = 5_000L
+
+        /** How long a continuation waits for Media3 to install the folder it extends. */
+        const val AUTO_QUEUE_INSTALL_TIMEOUT_MS = 10_000L
 
         val ROOT_CHILDREN: List<String> = listOf(
             MEDIA_QUICK_PICKS_ID,
@@ -11340,3 +12113,25 @@ class PlaybackService : MediaLibraryService() {
         const val PARTY_QUEUE_ECHO_TIMEOUT_MS = 5_000L
     }
 }
+
+/**
+ * Every lyric setting the service's lyrics depend on, emitting once per real
+ * change. The order and the syllable preference pick a different answer from
+ * the same providers, so each of them is a reload as much as the switch is.
+ */
+internal fun lyricsSettingChanges(
+    synced: Flow<Boolean>,
+    sources: Flow<Set<LyricsSource>>,
+    order: Flow<List<LyricsSource>>,
+    prioritizeSyllableSync: Flow<Boolean>,
+): Flow<List<Any>> = combine(synced, sources, order, prioritizeSyllableSync) { s, src, o, p ->
+    listOf(s, src, o, p)
+}.distinctUntilChanged()
+
+/**
+ * The account an Android Auto listing was read for and the
+ * [com.music.bitchord.data.innertube.Innertube.listenerGeneration] it started
+ * at. Two stamps are equal only when no switch landed in between, not even one
+ * that switched back to the same account.
+ */
+internal data class ListenerStamp(val listener: String?, val generation: Long)

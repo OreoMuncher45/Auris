@@ -1,6 +1,8 @@
 package com.music.bitchord
 
 import com.music.bitchord.data.lyrics.KuGou
+import com.music.bitchord.data.lyrics.LyricLine
+import com.music.bitchord.data.lyrics.ProviderLyrics
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -77,5 +79,35 @@ class KuGouTest {
     @Test
     fun `empty input yields empty output`() {
         assertEquals("", strip(""))
+    }
+
+    private fun instrumental(text: String): Boolean = with(KuGou) { text.isInstrumentalNotice() }
+
+    @Test
+    fun `the pure-music notice is recognised as no lyrics`() {
+        assertTrue(instrumental("[00:00.00]纯音乐，请欣赏"))
+        assertTrue(instrumental("[00:00.00]纯音乐,请欣赏"))
+        assertTrue(instrumental("[00:00.00]此歌曲为没有填词的纯音乐，请您欣赏"))
+        // A sung line that only mentions the notice is a lyric.
+        assertFalse(instrumental("[00:00.00]这不是纯音乐，请欣赏我的歌声"))
+        assertFalse(instrumental("[00:00.00]纯音乐请欣赏我的歌声"))
+    }
+
+    @Test
+    fun `real lyrics are not mistaken for the notice`() {
+        assertFalse(instrumental(strip(fixture)))
+        assertFalse(instrumental("[00:00.00]纯音乐，请欣赏\n[00:05.00]first sung line"))
+        assertFalse(instrumental(""))
+    }
+
+    @Test
+    fun `QQ's notice relayed through BetterLyrics Portato is no lyrics either`() {
+        // A QRC line as Portato sends it, every character stamped.
+        val qrc = "此歌曲为没有填词的纯音乐，请您欣赏".mapIndexed { i, c -> "$c(${i * 300},300)" }
+            .joinToString("", prefix = "[0,5100]")
+        val lines = ProviderLyrics.parse(qrc)!!
+        assertTrue(KuGou.isInstrumentalNotice(lines))
+        assertFalse(KuGou.isInstrumentalNotice(lines + LyricLine(6000, "first sung line")))
+        assertFalse(KuGou.isInstrumentalNotice(emptyList()))
     }
 }

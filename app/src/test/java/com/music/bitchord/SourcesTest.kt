@@ -1519,6 +1519,7 @@ class SourcesTest {
             limit: Int,
             waitForAll: Boolean,
             request: StreamRequest?,
+            target: TrackMatcher.Target?,
         ): List<Song> {
             asked = true
             try {

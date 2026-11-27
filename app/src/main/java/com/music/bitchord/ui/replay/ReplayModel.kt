@@ -62,10 +62,18 @@ data class ReplayState(
  *   costing a file merge on every cold start for a page most launches never
  *   open. It also means reopening Replay re-reads: whatever has been played
  *   since is on it.
+ * @param pageOpen whether the Replay page is open (or showing its stories or
+ *   share sheet). Only there can another period be picked: everywhere else,
+ *   the Library cards above all, the period is [DEFAULT_PERIOD], and the page
+ *   opens on it again each time.
  */
 @Composable
-fun rememberReplayState(active: Boolean): Pair<ReplayState, (ReplayPeriod) -> Unit> {
-    var period by rememberSaveable { mutableStateOf(ReplayPeriod.THIS_YEAR) }
+fun rememberReplayState(active: Boolean, pageOpen: Boolean): Pair<ReplayState, (ReplayPeriod) -> Unit> {
+    var picked by rememberSaveable { mutableStateOf(DEFAULT_PERIOD) }
+    LaunchedEffect(pageOpen) { if (!pageOpen) picked = DEFAULT_PERIOD }
+    // Read straight off [pageOpen] rather than waiting for the reset above, so
+    // the frame the page closes on already asks for the default period.
+    val period = if (pageOpen) picked else DEFAULT_PERIOD
     var summary by remember { mutableStateOf<ReplaySummary?>(null) }
     var loading by remember { mutableStateOf(true) }
     var memberSince by remember { mutableStateOf<String?>(null) }
@@ -102,9 +110,16 @@ fun rememberReplayState(active: Boolean): Pair<ReplayState, (ReplayPeriod) -> Un
             summary = ListeningStats.summary(period)
         }
     }
-    return ReplayState(period, summary, loading, memberSince) to
-        { next: ReplayPeriod -> period = next }
+    // The page keeps the last period's charts up while the next one is read
+    // (see above). Outside it they would be the wrong numbers: the period the
+    // page was left on, shown on the Library cards until the default arrives.
+    val shown = summary?.takeIf { pageOpen || it.period == period }
+    return ReplayState(period, shown, loading || (summary != null && shown == null), memberSince) to
+        { next: ReplayPeriod -> picked = next }
 }
+
+/** The period the Library cards show, and the one the Replay page opens on. */
+private val DEFAULT_PERIOD = ReplayPeriod.THIS_YEAR
 
 /** How long a burst of artist lookups is allowed to settle before a rebuild. */
 private const val SETTLE_MILLIS = 1_200L

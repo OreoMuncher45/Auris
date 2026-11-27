@@ -41,6 +41,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -358,9 +359,36 @@ object AudioCache {
         scope.launch {
             AppSettings.audioCacheLimitBytes.collect { maxBytes ->
                 evictor.maxBytes = maxBytes
-                evictor.applyNow(cache)
+                whileOpen("apply the cache limit") { evictor.applyNow(cache) }
             }
         }
+    }
+
+    /**
+     * [block], unless the cache was released (or never set) by the time a
+     * background job got to it: there is then nothing left to clean, and the
+     * job ends quietly instead of failing in [scope] with no one to catch it.
+     */
+    private inline fun <T> whileOpen(what: String, block: () -> T): T? = try {
+        block()
+    } catch (e: IllegalStateException) {
+        // SimpleCache refuses every call once released.
+        TrackLog.d(TAG, "skipped: $what, the cache is released (${e.message})")
+        null
+    } catch (e: UninitializedPropertyAccessException) {
+        TrackLog.d(TAG, "skipped: $what, the cache is not set")
+        null
+    }
+
+    /**
+     * Cancels the background work [init] and the cleanups started, and waits
+     * for it to end, so a test can release the cache after it: a cleanup
+     * already walking the cache has no suspension point, and cancelling alone
+     * would leave it running. [scope] itself stays usable for a later [init].
+     */
+    @androidx.annotation.VisibleForTesting
+    internal suspend fun cancelBackgroundWorkForTest() {
+        scope.coroutineContext.job.children.toList().forEach { it.cancelAndJoin() }
     }
 
     /**
@@ -1295,32 +1323,37 @@ object AudioCache {
      * Analysis results are kept in their own store, so the analysis-only
      * audio has done its job by then.
      */
-    fun dropForeignEntries(keep: Set<String>) {
-        if (!::cache.isInitialized) return
-        scope.launch {
-            var dropped = 0
-            cache.keys.toList().forEach { key ->
-                val meta = runCatching { cache.getContentMetadata(key) }.getOrNull() ?: return@forEach
-                val foreign = meta.get(META_ORIGIN, null as String?) == Origin.OTHER.name
-                val analysisOnly = meta.get(META_ANALYSIS, null as String?) != null &&
-                    meta.get(META_PLAYBACK, null as String?) == null &&
-                    meta.get(META_PLAYED, null as String?) == null
-                if (!foreign && !analysisOnly) return@forEach
-                val mediaId = meta.get(META_MEDIA_ID, null as String?)
-                if (mediaId != null && mediaId in keep) return@forEach
-                runCatching { cache.removeResource(key) }
-                    .onSuccess {
-                        dropped++
-                        mediaId?.let { id ->
-                            analysisHeads.remove(id)
-                            analysisHeadWant.remove(id)
-                            renditionKeys.remove(id)
-                        }
+    fun dropForeignEntries(keep: Set<String>): Job? {
+        if (!::cache.isInitialized) return null
+        // The cache this cleanup is for: one installed by a later [init]
+        // meanwhile is never touched by it.
+        val target = cache
+        return scope.launch { whileOpen("drop addon and analysis-only entries") { dropForeign(target, keep) } }
+    }
+
+    private fun dropForeign(cache: SimpleCache, keep: Set<String>) {
+        var dropped = 0
+        cache.keys.toList().forEach { key ->
+            val meta = runCatching { cache.getContentMetadata(key) }.getOrNull() ?: return@forEach
+            val foreign = meta.get(META_ORIGIN, null as String?) == Origin.OTHER.name
+            val analysisOnly = meta.get(META_ANALYSIS, null as String?) != null &&
+                meta.get(META_PLAYBACK, null as String?) == null &&
+                meta.get(META_PLAYED, null as String?) == null
+            if (!foreign && !analysisOnly) return@forEach
+            val mediaId = meta.get(META_MEDIA_ID, null as String?)
+            if (mediaId != null && mediaId in keep) return@forEach
+            runCatching { cache.removeResource(key) }
+                .onSuccess {
+                    dropped++
+                    mediaId?.let { id ->
+                        analysisHeads.remove(id)
+                        analysisHeadWant.remove(id)
+                        renditionKeys.remove(id)
                     }
-                    .onFailure { TrackLog.d(TAG, "unkept cache entry $key still in use: ${it.message}") }
-            }
-            if (dropped > 0) TrackLog.d(TAG, "dropped $dropped addon / analysis-only cache entries")
+                }
+                .onFailure { TrackLog.d(TAG, "unkept cache entry $key still in use: ${it.message}") }
         }
+        if (dropped > 0) TrackLog.d(TAG, "dropped $dropped addon / analysis-only cache entries")
     }
 
     /**

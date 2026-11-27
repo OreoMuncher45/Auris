@@ -102,4 +102,25 @@ class LoudnessProcessorTest {
         proc.process(settled)
         assertEquals(0.4f, peak(settled, fromFrame = 3000), 0.01f)
     }
+
+    @Test
+    fun aHeldLimiterReleasesAllTheWaySoItCanParkAgain() {
+        for (rate in intArrayOf(44_100, 48_000, 96_000)) {
+            val loudness = LoudnessProcessor().apply {
+                gainFor = { 1f }
+                configure(rate, 2)
+                track("a", null)
+                holdLimiter = true
+            }
+            val loud = sine(1.4f, frames = 2048)
+            loudness.process(loud)
+            // The limiter really engaged on the loud block — otherwise parking
+            // afterwards proves nothing about its release.
+            assertTrue("limited at $rate Hz", peak(loud, fromFrame = 1024) < 1.2f)
+            // Well past the release: quiet audio, the limiter still held.
+            repeat(200) { loudness.process(sine(0.1f, frames = 2048)) }
+            loudness.holdLimiter = false
+            assertTrue("parked at $rate Hz", loudness.isParked())
+        }
+    }
 }

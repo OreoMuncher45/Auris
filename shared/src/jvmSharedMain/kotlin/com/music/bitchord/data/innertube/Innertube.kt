@@ -100,17 +100,34 @@ object Innertube {
     private const val WEB_REMIX_VERSION = "1.20250101.01.00"
     private const val WEB_REMIX_CLIENT_ID = "67"
 
+    /**
+     * The Android Music client, which is the only one YouTube serves its timed
+     * lyrics to — see [browseMobile]. Everything else in the app keeps asking
+     * as the web client.
+     */
+    private const val ANDROID_MUSIC_CLIENT_ID = "21"
+    private const val ANDROID_MUSIC_VERSION = "7.21.50"
+
     private const val TAG = "BitChord"
+
+    /**
+     * Guards every write to the state [listener] is built from (cookie, scope,
+     * adopted identity, channel override) together with the rebuild, so a
+     * rebuild can never publish from a read another thread has since replaced.
+     */
+    private val identityLock = Any()
 
     /** Session cookie captured by the login WebView; null = browse as guest. */
     var cookie: String? = null
-        set(value) {
+        set(value) = synchronized(identityLock) {
             if (field != value) {
+                accountTransitions++
                 // Both belong to the session that just left. A scope kept across
                 // a sign-in would credit the new account's plays to the old one,
                 // and a visitor id minted under the old session is not bound to
                 // the new one — see [SessionScope] and [visitorData].
                 scope = null
+                adoptedIdentity = null
                 visitorData = null
                 visitorDataIsSessionBound = false
                 // The chosen channel belonged to the account that just left.
@@ -119,7 +136,81 @@ object Innertube {
                 channelOverride = null
             }
             field = value
+            refreshListener()
         }
+
+    /**
+     * Who requests are answered for: the session [cookie] and the channel
+     * chosen under it, or null signed out. A profile switch keeps the cookie
+     * and changes only the channel, so a cache of one listener's answers
+     * compares this rather than the cookie. Rebuilt only when either changes.
+     */
+    val listener: String? get() = published.listener
+
+    /**
+     * Bumped each time [listener] changes. Unlike the listener itself it tells
+     * an A→B→A switch apart from no switch at all, so an answer requested
+     * before the change is never kept as the current listener's.
+     */
+    val listenerGeneration: Long get() = published.generation
+
+    /**
+     * [listener] and [listenerGeneration], published together in one write:
+     * a reader never sees the new account under the old generation.
+     */
+    private class PublishedListener(val listener: String?, val generation: Long)
+
+    @Volatile
+    private var published = PublishedListener(null, 0L)
+
+    private fun refreshListener() = synchronized(identityLock) {
+        // An install in progress publishes once, at its end.
+        if (deferPublish) return@synchronized
+        // Exactly what requests are signed with — the brand page, the account
+        // on whose behalf, and the account index in the jar, whichever of the
+        // chosen channel, an adopted page scope or the shell's own scope
+        // supplies them — plus the cookie. Two names for the same signing
+        // identity (an adopted personal scope and the shell's default for it)
+        // are one listener; any difference in what is sent is another.
+        val session = cookie
+        val fresh = session?.let {
+            val scoped = scope
+            "${pageIdFor(scoped)}/${dataSyncIdFor(scoped)}/${authUserFor(scoped)}|$it"
+        }
+        val current = published
+        if (fresh != current.listener) published = PublishedListener(fresh, current.generation + 1)
+    }
+
+    /** Set while [installSession] writes, so the listener is published once, whole. Under [identityLock]. */
+    private var deferPublish = false
+
+    /**
+     * Counts account transitions — sign-in, sign-out, a profile or channel
+     * picked, a page's scope adopted, an install — as opposed to the
+     * [refreshSessionScope]'s own clearing and re-reading of the scope. A
+     * refresh that saw one land meanwhile hands back no retry stamp, even if
+     * the listener came back the same (A, B, then A again). Under [identityLock].
+     */
+    private var accountTransitions = 0L
+
+    /** The current [accountTransitions]; for tests at this seam. */
+    internal fun accountTransitionsForTest(): Long = synchronized(identityLock) { accountTransitions }
+
+    /**
+     * The session to retry under after a refresh that began at [startTransitions]:
+     * the current one, or null when an account transition landed meanwhile.
+     */
+    internal fun retryStampAfter(startTransitions: Long): ListenerStamp? = synchronized(identityLock) {
+        if (accountTransitions != startTransitions) null else ListenerStamp(published.listener, published.generation)
+    }
+
+    /**
+     * The identity [adoptSessionScope] took from a page, while its scope is
+     * the one requests use. The shell's own default ([ensureSessionScope]) is
+     * not one: it is what the cookie alone already names.
+     */
+    @Volatile
+    private var adoptedIdentity: String? = null
 
     /**
      * Google's per-session visitor id.
@@ -152,20 +243,24 @@ object Innertube {
 
     /**
      * A visitor id for this session, minting one if there isn't one yet.
-     *
-     * @param refresh discard the current id and take a fresh one — worth doing
-     *   exactly once when a request comes back accusing us of being a bot,
-     *   since an id can be burned while the session around it is fine.
+     * Never replaces one already in hand: a session-bound id adopted while
+     * this one was being minted always wins.
      */
-    suspend fun ensureVisitorData(refresh: Boolean = false): String? {
-        if (!refresh && visitorData != null) return visitorData
+    suspend fun ensureVisitorData(): String? {
+        if (visitorData != null) return visitorData
+        val generation = listenerGeneration
         runCatching { fetchVisitorData() }
             .onFailure { Log.w(TAG, "could not mint a visitor id: ${it.message}") }
             .getOrNull()
             ?.let {
-                if (refresh || !visitorDataIsSessionBound) {
-                    visitorData = it
-                    visitorDataIsSessionBound = false
+                // Under the lock the session writers hold, and only for the
+                // listener it was minted under: a session-bound id adopted
+                // meanwhile, or a switch, wins over this anonymous one.
+                synchronized(identityLock) {
+                    if (published.generation == generation && visitorData == null && !visitorDataIsSessionBound) {
+                        visitorData = it
+                        visitorDataIsSessionBound = false
+                    }
                 }
             }
         return visitorData
@@ -229,6 +324,11 @@ object Innertube {
         val pageId: String?,
         val authUser: String,
         val clientVersion: String?,
+        /**
+         * The shell's session-bound visitor id, when this scope was fetched;
+         * installed with the scope or not at all — see [ensureSessionScope].
+         */
+        val visitorData: String? = null,
     )
 
     @Volatile
@@ -267,16 +367,29 @@ object Innertube {
      * default. Takes effect on the next request — nothing is cached from it.
      */
     fun selectChannel(pageId: String?, dataSyncId: String?, authUser: String? = null) {
-        channelOverride = if (pageId == null && dataSyncId == null) {
-            null
-        } else {
-            ChannelSelection(pageId, dataSyncId, authUser)
+        synchronized(identityLock) {
+            accountTransitions++
+            channelOverride = channelSelection(pageId, dataSyncId, authUser)
+            refreshListener()
         }
         Log.d(
             TAG,
             "acting as channel pageId=${pageId ?: "none"} authUser=${authUser ?: "as-is"} " +
                 "(override=${channelOverride != null})",
         )
+    }
+
+    /**
+     * What a choice of channel overrides: nothing when it names no channel and
+     * no account index, so the shell's own answer stands. A personal account
+     * picked by its index alone (any Google account in the jar, the first
+     * included, with no brand page) is still a choice: a refresh that reads
+     * whatever index the shell defaults to must not sign as another account.
+     * Only a selection that names no index inherits the shell's.
+     */
+    private fun channelSelection(pageId: String?, dataSyncId: String?, authUser: String?): ChannelSelection? {
+        val index = authUser?.takeIf { it.isNotBlank() }
+        return if (pageId == null && dataSyncId == null && index == null) null else ChannelSelection(pageId, dataSyncId, index)
     }
 
     /**
@@ -305,10 +418,26 @@ object Innertube {
         clientVersion: String?,
         loggedIn: Boolean,
     ) {
+        synchronized(identityLock) {
+            accountTransitions++
+            adoptSessionScopeLocked(pageId, dataSyncId, authUser, visitorData, clientVersion, loggedIn)
+        }
+    }
+
+    private fun adoptSessionScopeLocked(
+        pageId: String?,
+        dataSyncId: String?,
+        authUser: String?,
+        visitorData: String?,
+        clientVersion: String?,
+        loggedIn: Boolean,
+    ) {
         val version = clientVersion ?: scope?.clientVersion
         if (!loggedIn) {
             Log.w(TAG, "captured page was signed out; not scoping requests to it")
             scope = version?.let { SessionScope(null, null, "0", it) }
+            adoptedIdentity = null
+            refreshListener()
             return
         }
         scope = SessionScope(
@@ -316,7 +445,8 @@ object Innertube {
             pageId = pageId?.takeIf { it.isNotBlank() },
             authUser = authUser?.takeIf { it.isNotBlank() } ?: "0",
             clientVersion = version,
-        )
+        ).also { adoptedIdentity = "${it.pageId}/${it.dataSyncId}/${it.authUser}" }
+        refreshListener()
         // The page's own visitor id, bound to this session — strictly better
         // than the anonymous one [fetchVisitorData] mints. See [visitorData].
         visitorData?.takeIf { it.isNotBlank() }?.let {
@@ -344,6 +474,234 @@ object Innertube {
     /** Which account in the cookie jar, chosen channel's first. */
     private fun authUserFor(session: SessionScope?): String =
         channelOverride?.authUser ?: session?.authUser ?: "0"
+
+    /**
+     * What one signed request goes out with, read in one go under
+     * [identityLock]: the cookie, the account and channel it acts as, and the
+     * visitor id.
+     *
+     * Read field by field while a sign-in or channel switch was half-way
+     * through, a request could pair the new channel with the old cookie or
+     * scope — credentials no published [listener] ever named, so a caller's
+     * before-and-after [listenerGeneration] check could not tell. Taken whole
+     * under the lock, every request goes out as a state that was published at
+     * some generation, and generations only grow: a caller that reads the
+     * same generation before the request and after it got that listener's
+     * answer.
+     */
+    private class RequestCredentials(
+        val cookie: String?,
+        val authUser: String,
+        val pageId: String?,
+        val dataSyncId: String?,
+        val visitorData: String?,
+        /** The [listenerGeneration] these credentials were published at. */
+        val generation: Long,
+    )
+
+    /** [listener] and [listenerGeneration] as one value, read in one go. */
+    data class ListenerStamp(val listener: String?, val generation: Long)
+
+    /** The current [ListenerStamp]; never one account's listener with another's generation. */
+    fun listenerStamp(): ListenerStamp = published.let { ListenerStamp(it.listener, it.generation) }
+
+    /**
+     * The listener a request must go out as, set by [asListener]. Carried in
+     * the coroutine context so [requestCredentials] can check it in the same
+     * locked read that takes the credentials.
+     */
+    private class ExpectedListener(stamp: ListenerStamp, val recoverable: Boolean = false) :
+        kotlin.coroutines.AbstractCoroutineContextElement(Key) {
+        /**
+         * The session requests here must go out as. A recoverable binding
+         * moves it to a refreshed session of the same listener (see
+         * [adoptRefreshedBinding]); a strict one never moves.
+         */
+        @Volatile
+        var stamp: ListenerStamp = stamp
+
+        companion object Key : kotlin.coroutines.CoroutineContext.Key<ExpectedListener>
+    }
+
+    /**
+     * Whether the caller bound its requests to a session with [asListener],
+     * strictly. Such a request can't be retried under any other session — not
+     * even the same listener after a refresh moved the generation — so a retry
+     * is the caller's to make, under a session it chose. A binding made
+     * `recoverable` is not strict: see [asListener].
+     */
+    suspend fun boundToSession(): Boolean =
+        kotlinx.coroutines.currentCoroutineContext()[ExpectedListener]?.let { !it.recoverable } == true
+
+    /**
+     * How many account transitions there have been: sign-ins, sign-outs,
+     * profile and channel switches. A caller that reads it before waiting on
+     * something and again after can tell an actual transition from the
+     * session scope merely being read in, which moves [listenerGeneration]
+     * without changing whose session it is.
+     */
+    fun accountTransitionCount(): Long = synchronized(identityLock) { accountTransitions }
+
+    /** Thrown when a request bound by [asListener] would go out as another listener. */
+    class ListenerChangedException : IllegalStateException("the account changed before the request was sent")
+
+    /**
+     * Runs [block] with its requests bound to [stamp]: a request whose
+     * credentials, read under [identityLock], were published at any other
+     * generation — another account, or the same one after a switch away and
+     * back — fails with [ListenerChangedException] instead of being sent.
+     */
+    suspend fun <T> asListener(stamp: ListenerStamp, block: suspend () -> T): T =
+        kotlinx.coroutines.withContext(ExpectedListener(stamp)) { block() }
+
+    /**
+     * As [asListener], with recovery: a request rejected for stale credentials
+     * may refresh the scope of the session it was signed as, and be retried
+     * once under the refreshed session when that is still the same listener
+     * (see YtMusicRepository's `call`). It is never sent as another account.
+     * For a write the listener asked for (a playlist add), which a refresh
+     * should not turn into a failure; a page's continuation stays strict.
+     */
+    suspend fun <T> asListenerRecoverably(stamp: ListenerStamp, block: suspend () -> T): T =
+        kotlinx.coroutines.withContext(ExpectedListener(stamp, recoverable = true)) { block() }
+
+    /**
+     * Moves the caller's recoverable binding to [refreshed]: a refresh of the
+     * session it was bound to, already checked as the same listener with no
+     * account transition in between. Every later request in the binding (the
+     * write after a recovered lookup, the next batch of an add) then goes out
+     * under it, rather than being refused for a generation the refresh moved.
+     * Does nothing for a strict binding, or none.
+     */
+    /** The session the caller's requests are bound to now, if any: a recoverable binding's may have moved. */
+    suspend fun boundStamp(): ListenerStamp? = kotlinx.coroutines.currentCoroutineContext()[ExpectedListener]?.stamp
+
+    suspend fun adoptRefreshedBinding(refreshed: ListenerStamp) {
+        val binding = kotlinx.coroutines.currentCoroutineContext()[ExpectedListener] ?: return
+        if (!binding.recoverable || binding.stamp.listener != refreshed.listener) return
+        binding.stamp = refreshed
+    }
+
+    /**
+     * A signed-in session under validation, kept apart from the shared one.
+     *
+     * Validation asks the account about itself with these credentials, and
+     * nothing of them reaches the shared state ([cookie], the scope, the chosen
+     * channel, the visitor id, [listener]) until [installSession] accepts them.
+     * So no other request, cache or write can ever be signed as, or keyed to,
+     * an account that might yet be rejected, and a rejected or abandoned one
+     * leaves nothing behind to roll back.
+     */
+    class CandidateSession(
+        val cookie: String,
+        val pageId: String?,
+        val dataSyncId: String?,
+        val authUser: String?,
+        val visitorData: String?,
+        val clientVersion: String?,
+    )
+
+    private class CandidateContext(val session: CandidateSession) :
+        kotlin.coroutines.AbstractCoroutineContextElement(Key) {
+        companion object Key : kotlin.coroutines.CoroutineContext.Key<CandidateContext>
+    }
+
+    /**
+     * Holds the [ListenerStamp] the last request inside [recordingSignedStamp]
+     * was signed under. The stamp taken before a call can be stale by the time
+     * it is sent — installing the session scope advances the generation under
+     * the same cookie — so a rejection is attributed to the session that
+     * actually signed it.
+     */
+    class SignedStamp internal constructor() :
+        kotlin.coroutines.AbstractCoroutineContextElement(Key) {
+        @Volatile
+        var stamp: ListenerStamp? = null
+            internal set
+
+        companion object Key : kotlin.coroutines.CoroutineContext.Key<SignedStamp>
+    }
+
+    /** Runs [block], recording in the returned holder the session its requests were signed under. */
+    suspend fun <T> recordingSignedStamp(block: suspend (SignedStamp) -> T): T {
+        val holder = SignedStamp()
+        return kotlinx.coroutines.withContext(holder) { block(holder) }
+    }
+
+    /** Runs [block] with every request in it signed as [candidate], and only them. */
+    suspend fun <T> asCandidate(candidate: CandidateSession, block: suspend () -> T): T =
+        kotlinx.coroutines.withContext(CandidateContext(candidate)) { block() }
+
+    /** Whether the caller is inside [asCandidate]: its failures say nothing about the shared session. */
+    suspend fun inCandidate(): Boolean = kotlinx.coroutines.currentCoroutineContext()[CandidateContext] != null
+
+    /**
+     * Makes an accepted [candidate] the session, in one write under
+     * [identityLock]: cookie, adopted scope, chosen channel and visitor id
+     * together, so no request is ever signed with part of it. Returns false,
+     * installing nothing, when [unless] — read under the same lock — says the
+     * acceptance was superseded (a sign-out or profile switch meanwhile).
+     */
+    fun installSession(candidate: CandidateSession, unless: () -> Boolean = { false }): Boolean = synchronized(identityLock) {
+        if (unless()) return@synchronized false
+        // Every field first, then one publish: no one reads a stamp for half of it.
+        deferPublish = true
+        try {
+            cookie = candidate.cookie
+            adoptSessionScopeLocked(
+                pageId = candidate.pageId,
+                dataSyncId = candidate.dataSyncId,
+                authUser = candidate.authUser,
+                visitorData = candidate.visitorData,
+                clientVersion = candidate.clientVersion,
+                loggedIn = true,
+            )
+            channelOverride = channelSelection(candidate.pageId, candidate.dataSyncId, candidate.authUser)
+            // The candidate's own visitor id, or none: a profile sharing the
+            // cookie must not inherit the previous one's session-bound id.
+            visitorData = candidate.visitorData?.takeIf { it.isNotBlank() }
+            visitorDataIsSessionBound = visitorData != null
+        } finally {
+            deferPublish = false
+        }
+        accountTransitions++
+        refreshListener()
+        true
+    }
+
+    private suspend fun requestCredentials(): RequestCredentials {
+        val context = kotlinx.coroutines.currentCoroutineContext()
+        context[CandidateContext]?.session?.let { c ->
+            // A candidate's request is built from the candidate alone, and its
+            // generation matches no published one: nothing it answers (a
+            // visitor id) is ever kept for the shared session.
+            return RequestCredentials(
+                c.cookie, c.authUser ?: "0", c.pageId, c.dataSyncId, c.visitorData, CANDIDATE_GENERATION,
+            )
+        }
+        val expected = context[ExpectedListener]
+        return synchronized(identityLock) {
+            if (expected != null && published.let { it.listener != expected.stamp.listener || it.generation != expected.stamp.generation }) {
+                throw ListenerChangedException()
+            }
+            context[SignedStamp]?.stamp = ListenerStamp(published.listener, published.generation)
+            snapshotCredentials()
+        }
+    }
+
+    /** The credentials a request here would go out with, described; for tests at this seam. */
+    internal suspend fun requestIdentityForTest(): String =
+        requestCredentials().let { "${it.cookie}|${it.authUser}|${it.pageId}|${it.dataSyncId}|${it.generation}|${it.visitorData}" }
+
+    private const val CANDIDATE_GENERATION = -1L
+
+    /** Callers hold [identityLock]. */
+    private fun snapshotCredentials(): RequestCredentials {
+        val session = scope
+        return RequestCredentials(
+            cookie, authUserFor(session), pageIdFor(session), dataSyncIdFor(session), visitorData, published.generation,
+        )
+    }
 
     /**
      * The WEB_REMIX version to claim, live if the shell has been read.
@@ -377,11 +735,24 @@ object Innertube {
                     // flight. Never install the old cookie's answer under the
                     // new one: that is a guaranteed 401 and, worse, can credit
                     // a play to the profile that just left.
-                    if (cookie != session) {
-                        Log.d(TAG, "discarding a session scope from an account that is no longer active")
+                    // Nor over a scope a signed-in page adopted meanwhile under
+                    // the same cookie: that names the profile the listener
+                    // picked, and [adoptedIdentity] already says so.
+                    val installed = synchronized(identityLock) {
+                        if (cookie != session || scope != null) return@synchronized false
+                        scope = fresh
+                        fresh.visitorData?.let {
+                            visitorData = it
+                            visitorDataIsSessionBound = true
+                        }
+                        // Its account index can be what the listener names.
+                        refreshListener()
+                        true
+                    }
+                    if (!installed) {
+                        Log.d(TAG, "discarding a session scope from an account or profile that is no longer active")
                         return@let
                     }
-                    scope = fresh
                     channelOverride?.let { selected ->
                         if (selected.pageId != fresh.pageId || selected.dataSyncId != fresh.dataSyncId) {
                             Log.w(TAG, "server shell identity differs from selected profile; retaining override")
@@ -399,10 +770,50 @@ object Innertube {
     }
 
     /** Re-read request context once after an authenticated rejection. */
-    suspend fun refreshSessionScope() {
-        if (cookie == null) return
-        scopeLock.withLock { scope = null }
+    /**
+     * Re-reads the scope after a rejection, for the session [owner] names —
+     * the one the rejected request was signed as. A rejection that arrives
+     * after another listener took over refreshes nothing: clearing now would
+     * drop *that* listener's adopted scope for a failure it never had.
+     * Returns the session to retry under, or null when the refresh did not
+     * run, or an account transition landed while it read the shell.
+     */
+    /**
+     * Runs [block] only while [stamp] is the current session, holding
+     * [identityLock] for it, so no account transition can land between the
+     * check and what [block] does (admitting a listener's results, say).
+     * Null, without running [block], when the session is another one.
+     *
+     * [block] must not suspend and must not itself take [identityLock] or
+     * anything that waits on it: every session writer is held off while it runs.
+     */
+    fun <T> whileListener(stamp: ListenerStamp, block: () -> T): T? = synchronized(identityLock) {
+        if (published.listener == stamp.listener && published.generation == stamp.generation) block() else null
+    }
+
+    /** Whether [owner] is the session requests are signed with now: same listener, same generation. */
+    internal fun isCurrentSession(owner: ListenerStamp): Boolean = synchronized(identityLock) {
+        published.listener == owner.listener && published.generation == owner.generation
+    }
+
+    suspend fun refreshSessionScope(owner: ListenerStamp): ListenerStamp? {
+        if (cookie == null) return null
+        var start = 0L
+        val cleared = scopeLock.withLock {
+            synchronized(identityLock) {
+                if (!isCurrentSession(owner)) return@synchronized false
+                start = accountTransitions
+                scope = null
+                adoptedIdentity = null
+                refreshListener()
+                true
+            }
+        }
+        if (!cleared) return null
         ensureSessionScope()
+        // The session to retry under, unless an account transition landed
+        // while the shell was read — even one that came back to the same listener.
+        return retryStampAfter(start)
     }
 
     /**
@@ -444,14 +855,11 @@ object Innertube {
         // pings are attributed against the visitor the player response was
         // issued to, so a signed-in play reported under an anonymous id is a
         // play reported about nobody.
-        CONFIG_VISITOR_DATA.find(html)?.groupValues?.get(1)
-            ?.takeIf { it.isNotBlank() }
-            ?.let {
-                visitorData = it
-                visitorDataIsSessionBound = true
-            }
+        // Returned, not installed: a scope the guard in [ensureSessionScope]
+        // rejects must not leave its visitor id behind either.
+        val shellVisitor = CONFIG_VISITOR_DATA.find(html)?.groupValues?.get(1)?.takeIf { it.isNotBlank() }
 
-        return SessionScope(dataSyncId, pageId, authUser ?: "0", clientVersion)
+        return SessionScope(dataSyncId, pageId, authUser ?: "0", clientVersion, shellVisitor)
     }
 
     private val CONFIG_LOGGED_IN = Regex(""""LOGGED_IN"\s*:\s*(true|false)""")
@@ -467,9 +875,24 @@ object Innertube {
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    private val client = HttpClient(OkHttp) {
+    @Volatile
+    private var client = musicClient(com.music.bitchord.data.Http.client)
+
+    /**
+     * Sends this client's requests through [answer] instead of the network, or
+     * back to the network when null: what a test of the request → rejection →
+     * refresh → retry path needs to see which credentials signed each request.
+     */
+    internal fun answerRequestsForTest(answer: okhttp3.Interceptor?) {
+        client = musicClient(
+            answer?.let { com.music.bitchord.data.Http.client.newBuilder().addInterceptor(it).build() }
+                ?: com.music.bitchord.data.Http.client,
+        )
+    }
+
+    private fun musicClient(okHttp: okhttp3.OkHttpClient) = HttpClient(OkHttp) {
         // Same OkHttp instance ExoPlayer streams through — see Http.
-        engine { preconfigured = com.music.bitchord.data.Http.client }
+        engine { preconfigured = okHttp }
         install(ContentNegotiation) { json(json) }
         // Without this the only bound is OkHttp's own read timeout, and the
         // failure it raises reads as "Socket timeout has expired […]
@@ -535,6 +958,30 @@ object Innertube {
         }
 
     /**
+     * The same page as [browse], asked as the Android Music client.
+     *
+     * YouTube Music only hands out its timed lyrics to the mobile clients: the
+     * web client is answered with the plain `musicDescriptionShelfRenderer`,
+     * while the phone gets an `elementRenderer` carrying `timedLyricsModel`.
+     * The lyrics tab's own page is the only thing this is needed for, so it
+     * stays a separate call rather than changing the identity of the rest.
+     *
+     * Anonymous on purpose: lyrics are not tied to an account, and an Android
+     * client context paired with a web session's cookie is not a combination
+     * Google recognises.
+     */
+    suspend fun browseMobile(browseId: String, params: String? = null): JsonObject =
+        postMusicAnonymous(
+            endpoint = "browse",
+            clientId = ANDROID_MUSIC_CLIENT_ID,
+            clientName = "ANDROID_MUSIC",
+            clientVersion = ANDROID_MUSIC_VERSION,
+        ) {
+            put("browseId", browseId)
+            params?.let { put("params", it) }
+        }
+
+    /**
      * The next page of a paged browse response — playlists and library feeds
      * come back roughly 100 rows at a time. YouTube Music takes the token as
      * query parameters rather than in the body, and answers with a bare
@@ -578,16 +1025,16 @@ object Innertube {
     suspend fun accountSwitcher(): JsonObject {
         requireSession()
         ensureSessionScope()
-        val session = scope
+        val credentials = requestCredentials()
         val text = withRetry {
             client.get("$YOUTUBE_ORIGIN/getAccountSwitcherEndpoint") {
                 header("User-Agent", WEB_USER_AGENT)
                 header("Accept-Language", acceptLanguageHeader)
                 header("X-Origin", YOUTUBE_ORIGIN)
                 header("Referer", "$YOUTUBE_ORIGIN/")
-                cookie?.let { c ->
+                credentials.cookie?.let { c ->
                     header("Cookie", c)
-                    header("X-Goog-AuthUser", authUserFor(session))
+                    header("X-Goog-AuthUser", credentials.authUser)
                     sapisidFrom(c)?.let {
                         header("Authorization", sapisidHash(it, YOUTUBE_ORIGIN))
                     }
@@ -785,10 +1232,10 @@ object Innertube {
         // Playback can outlive the Activity that restored the session. Ensure
         // the selected profile's headers exist before this first history ping.
         if (cookie != null) ensureSessionScope()
-        val session = scope
+        val credentials = requestCredentials()
         return client.get(baseUrl) {
             parameter("cpn", cpn)
-            statsHeaders(session)
+            statsHeaders(credentials)
         }.status.value
     }
 
@@ -799,7 +1246,7 @@ object Innertube {
         extras: HttpRequestBuilder.() -> Unit,
     ): Int {
         if (cookie != null) ensureSessionScope()
-        val session = scope
+        val credentials = requestCredentials()
         return client.get(baseUrl) {
             parameter("ver", "2")
             parameter("c", "WEB_REMIX")
@@ -815,7 +1262,7 @@ object Innertube {
             parameter("hl", "en_US")
             parameter("cr", "US")
             extras()
-            statsHeaders(session)
+            statsHeaders(credentials)
         }.status.value
     }
 
@@ -825,16 +1272,16 @@ object Innertube {
      * player response; sending fewer is what makes a ping land somewhere other
      * than the listener's own history.
      */
-    private fun HttpRequestBuilder.statsHeaders(session: SessionScope?) {
+    private fun HttpRequestBuilder.statsHeaders(credentials: RequestCredentials) {
         header("X-Origin", MUSIC_ORIGIN)
         header("Origin", MUSIC_ORIGIN)
         header("Referer", "$MUSIC_ORIGIN/")
         header("User-Agent", WEB_USER_AGENT)
-        visitorData?.let { header("X-Goog-Visitor-Id", it) }
-        cookie?.let { c ->
+        credentials.visitorData?.let { header("X-Goog-Visitor-Id", it) }
+        credentials.cookie?.let { c ->
             header("Cookie", c)
-            header("X-Goog-AuthUser", authUserFor(session))
-            pageIdFor(session)?.let { header("X-Goog-PageId", it) }
+            header("X-Goog-AuthUser", credentials.authUser)
+            credentials.pageId?.let { header("X-Goog-PageId", it) }
             sapisidFrom(c)?.let { header("Authorization", sapisidHash(it)) }
         }
     }
@@ -1120,9 +1567,11 @@ object Innertube {
         // likes, playlists, account menus and all their continuations pass
         // through it. Waiting here makes restoration process-wide rather than
         // a special case implemented by whichever screen happened to open.
-        if (cookie != null) ensureSessionScope()
-        val session = scope
-        val clientVersion = webRemixVersion
+        val candidate = kotlinx.coroutines.currentCoroutineContext()[CandidateContext]?.session
+        // A candidate brings its own scope; the shared one is not its business.
+        if (candidate == null && cookie != null) ensureSessionScope()
+        val credentials = requestCredentials()
+        val clientVersion = candidate?.clientVersion ?: webRemixVersion
         val response = withRetry {
             client.post("$MUSIC_BASE/$endpoint") {
                 contentType(ContentType.Application.Json)
@@ -1138,14 +1587,14 @@ object Innertube {
                 // id is minted on the first call and reused for the session.
                 header("X-YouTube-Client-Name", WEB_REMIX_CLIENT_ID)
                 header("X-YouTube-Client-Version", clientVersion)
-                visitorData?.let { header("X-Goog-Visitor-Id", it) }
-                cookie?.let { c ->
+                credentials.visitorData?.let { header("X-Goog-Visitor-Id", it) }
+                credentials.cookie?.let { c ->
                     header("Cookie", c)
                     // Which account in the jar, and which brand channel of it.
                     // Both were fixed at "the first one" before — see
                     // [SessionScope].
-                    header("X-Goog-AuthUser", authUserFor(session))
-                    pageIdFor(session)?.let { header("X-Goog-PageId", it) }
+                    header("X-Goog-AuthUser", credentials.authUser)
+                    credentials.pageId?.let { header("X-Goog-PageId", it) }
                     sapisidFrom(c)?.let { header("Authorization", sapisidHash(it)) }
                 }
                 setBody(
@@ -1156,7 +1605,7 @@ object Innertube {
                                 put("clientVersion", clientVersion)
                                 put("hl", currentLanguage)
                                 put("gl", "US")
-                                visitorData?.let { put("visitorData", it) }
+                                credentials.visitorData?.let { put("visitorData", it) }
                             }
                             putJsonObject("user") {
                                 put("lockedSafetyMode", false)
@@ -1165,7 +1614,7 @@ object Innertube {
                                 // `onBehalfOfUser` it cannot tie to the cookie
                                 // with 401, so a guess here would take the
                                 // whole app down rather than just history.
-                                dataSyncIdFor(session)?.let { put("onBehalfOfUser", it) }
+                                credentials.dataSyncId?.let { put("onBehalfOfUser", it) }
                             }
                             putJsonObject("request") { put("useSsl", true) }
                         }
@@ -1175,9 +1624,15 @@ object Innertube {
             }.body<JsonObject>()
         }
 
-        if (visitorData == null) {
-            visitorData = response["responseContext"]?.jsonObject
-                ?.get("visitorData")?.jsonPrimitive?.content
+        // Kept only for the session the request went out as: an answer that
+        // lands after a sign-in or sign-out must not hand its visitor id to
+        // the next account's requests.
+        response["responseContext"]?.jsonObject?.get("visitorData")?.jsonPrimitive?.content?.let { answered ->
+            synchronized(identityLock) {
+                // The generation, not just the cookie: a channel switch under
+                // the same cookie is another listener too.
+                if (visitorData == null && published.generation == credentials.generation) visitorData = answered
+            }
         }
         return response
     }
@@ -1191,9 +1646,12 @@ object Innertube {
      */
     private suspend fun postMusicAnonymous(
         endpoint: String,
+        /** Which client to ask as; the web one unless a caller needs another. */
+        clientId: String = WEB_REMIX_CLIENT_ID,
+        clientName: String = "WEB_REMIX",
+        clientVersion: String = webRemixVersion,
         bodyExtras: JsonObjectBuilder.() -> Unit,
     ): JsonObject {
-        val clientVersion = webRemixVersion
         return withRetry {
             client.post("$MUSIC_BASE/$endpoint") {
                 contentType(ContentType.Application.Json)
@@ -1201,7 +1659,7 @@ object Innertube {
                 header("X-Origin", MUSIC_ORIGIN)
                 header("Origin", MUSIC_ORIGIN)
                 header("Referer", "$MUSIC_ORIGIN/")
-                header("X-YouTube-Client-Name", WEB_REMIX_CLIENT_ID)
+                header("X-YouTube-Client-Name", clientId)
                 header("X-YouTube-Client-Version", clientVersion)
                 visitorData?.let { header("X-Goog-Visitor-Id", it) }
                 // No Cookie / Authorization headers — anonymous request.
@@ -1209,7 +1667,7 @@ object Innertube {
                     buildJsonObject {
                         putJsonObject("context") {
                             putJsonObject("client") {
-                                put("clientName", "WEB_REMIX")
+                                put("clientName", clientName)
                                 put("clientVersion", clientVersion)
                                 put("hl", "en")
                                 put("gl", "US")

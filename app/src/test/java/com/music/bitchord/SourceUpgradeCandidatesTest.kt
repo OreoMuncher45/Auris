@@ -122,6 +122,7 @@ class SourceUpgradeCandidatesTest {
             limit: Int,
             waitForAll: Boolean,
             request: StreamRequest?,
+            target: com.music.bitchord.data.sources.TrackMatcher.Target?,
         ): List<Song> = emptyList()
 
         override suspend fun stream(trackId: String, request: StreamRequest): SourceStream? = null

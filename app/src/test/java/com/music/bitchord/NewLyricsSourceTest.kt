@@ -43,6 +43,57 @@ class NewLyricsSourceTest {
         assertEquals("https://lyrics-storage.binimum.org/GBKPL2204171.ttml", hit.lyricsUrl)
     }
 
+    /**
+     * `GET https://lyrics-api.binimum.org/?track=Mockingbird&artist=Eminem&duration=251`
+     * on 2026-11-16, trimmed to the first four of 15 results. None of the 15
+     * results is Eminem's own recording.
+     */
+    private val mockingbirdSearch = """
+        {"total":15,"source":"HIT-LRC-RED","results":[
+        {"track_name":"Californication / Love the Way You Lie (feat. Rihanna) / Mockingbird (Mixed)",
+         "artist_name":"Red Hot Chili Peppers, Eminem","duration":118,"isrc":"US23A8123748",
+         "timing_type":"line","lyricsUrl":"https://lrc.red/s/US23A8123748.ttml"},
+        {"track_name":"Mockingbird (Mixed)","artist_name":"Eminem","duration":91,
+         "isrc":"US23A9015852","timing_type":"none"},
+        {"track_name":"Mockingbird","artist_name":"JULA","duration":247,"isrc":"QT6ET2622623",
+         "timing_type":"line","lyricsUrl":"https://lrc.red/s/QT6ET2622623.ttml"},
+        {"track_name":"Mockingbird (1950s Eminem)","artist_name":"The Speakeasy Rappers",
+         "duration":160,"isrc":"USANG2475706","timing_type":"none"}]}
+    """.trimIndent().replace("\n", "")
+
+    @Test
+    fun `a binilyrics hit for another recording is not taken`() {
+        val results = lyricsJson.decodeFromString<BiniLyrics.Response>(mockingbirdSearch).results!!
+        assertNull(BiniLyrics.best(results, "Mockingbird", "Eminem", 251_000))
+    }
+
+    @Test
+    fun `of two hits sharing an isrc, the one that matched is returned`() {
+        val wrong = BiniLyrics.Hit(trackName = "Something Else", artistName = "JVKE", duration = 209, isrc = "GBKPL2204171", lyricsUrl = "wrong")
+        val right = BiniLyrics.Hit(trackName = "golden hour", artistName = "JVKE", duration = 209, isrc = "GBKPL2204171", lyricsUrl = "right")
+        assertEquals("right", BiniLyrics.best(listOf(wrong, right), "golden hour", "JVKE", 209_000)?.lyricsUrl)
+    }
+
+    @Test
+    fun `a binilyrics hit with the same title, artist and length is taken`() {
+        val results = lyricsJson.decodeFromString<BiniLyrics.Response>(biniSearch).results!!
+        assertEquals("GBKPL2204171", BiniLyrics.best(results, "golden hour", "JVKE", 209_000)?.isrc)
+    }
+
+    @Test
+    fun `a binilyrics name-search hit without an isrc is still taken`() {
+        val hit = BiniLyrics.Hit(trackName = "golden hour", artistName = "JVKE", duration = 209, isrc = null, lyricsUrl = "right")
+        assertEquals("right", BiniLyrics.best(listOf(hit), "golden hour", "JVKE", 209_000)?.lyricsUrl)
+        // With neither a document nor an ISRC there is nothing to offer.
+        assertNull(BiniLyrics.best(listOf(hit.copy(lyricsUrl = null)), "golden hour", "JVKE", 209_000))
+    }
+
+    @Test
+    fun `a matching hit with an isrc but no document still identifies the recording`() {
+        val hit = BiniLyrics.Hit(trackName = "golden hour", artistName = "JVKE", duration = 209, isrc = "GBKPL2204171", lyricsUrl = null)
+        assertEquals("GBKPL2204171", BiniLyrics.best(listOf(hit), "golden hour", "JVKE", 209_000)?.isrc)
+    }
+
     @Test
     fun `a binilyrics response with no results is not a match`() {
         val response = lyricsJson.decodeFromString<BiniLyrics.Response>("""{"total":0}""")
