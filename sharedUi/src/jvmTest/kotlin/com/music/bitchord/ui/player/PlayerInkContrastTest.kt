@@ -388,9 +388,8 @@ class PlayerInkContrastTest {
 
     @Test
     fun aHeaderOnlyChangeIsPublished() {
-        val palette = NowPlayingPalette(fg = Color.White)
         val deck = InkSurface(intArrayOf(grey(0x30)), intArrayOf(grey(0x30)))
-        val before = LivePalette(palette, LiveColorSource.CANVAS, deck, InkSurface(intArrayOf(grey(0x30)), intArrayOf(grey(0x30))))
+        val before = LivePalette(LiveColorSource.CANVAS, deck, InkSurface(intArrayOf(grey(0x30)), intArrayOf(grey(0x30))))
         val after = before.copy(header = InkSurface(intArrayOf(white), intArrayOf(white)))
         assertTrue(inkMoved(before, after), "a bright patch moving into the header must reach the header's ink")
         assertFalse(inkMoved(before, before.copy()), "nothing moved")

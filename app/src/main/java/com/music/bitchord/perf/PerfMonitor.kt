@@ -499,6 +499,7 @@ object PerfMonitor {
         PerfCounters.Counter.FRAME_READ -> "frames"
         PerfCounters.Counter.MESH_READ -> "mesh"
         PerfCounters.Counter.INK_READ -> "ink"
+        PerfCounters.Counter.INK_CHANGE -> "inkchg"
         PerfCounters.Counter.BLUR_PASS -> "blur"
         PerfCounters.Counter.ANALYSER_PASS -> "analyser"
         PerfCounters.Counter.RESOLVE -> "resolve"
