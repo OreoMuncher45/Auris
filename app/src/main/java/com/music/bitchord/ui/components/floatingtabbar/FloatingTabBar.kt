@@ -908,19 +908,17 @@ private fun SharedTransitionScope.ExpandedTabs(
                                 },
                                 onHorizontalDrag = { _, delta ->
                                     totalDrag += delta * direction
-                                    val dragOffset = when {
-                                        totalDrag > 0 && currentSelectedTabIndex == scope.tabs.lastIndex ->
-                                            totalDrag * 0.25f
-                                        totalDrag < 0 && currentSelectedTabIndex == 0 ->
-                                            totalDrag * 0.25f
-                                        else -> totalDrag
-                                    }
-                                    pill.dragTo(currentSelectedTabIndex + dragOffset / tabStepPx)
+                                    val dragPosition = tabPillDragPosition(
+                                        selectedIndex = currentSelectedTabIndex,
+                                        dragPx = totalDrag,
+                                        stepPx = tabStepPx,
+                                        lastIndex = scope.tabs.lastIndex,
+                                    )
+                                    pill.dragTo(dragPosition)
 
-                                    val approximateTab =
-                                        (currentSelectedTabIndex + dragOffset / tabStepPx)
-                                            .coerceIn(0f, scope.tabs.lastIndex.toFloat())
-                                            .roundToInt()
+                                    val approximateTab = dragPosition
+                                        .coerceIn(0f, scope.tabs.lastIndex.toFloat())
+                                        .roundToInt()
                                     if (approximateTab != lastHapticTab) {
                                         haptics.play(Haptic.Tick)
                                         lastHapticTab = approximateTab
@@ -1344,3 +1342,35 @@ object FloatingTabBarDefaults {
         expandedElevation = expandedElevation,
     )
 }
+
+/** The furthest, in tab steps, a held pill stretches past the first or last tab. */
+internal const val PILL_EDGE_OVERSHOOT = 0.12f
+
+/**
+ * Where a held selection pill stands, in tab steps, after the finger has
+ * travelled [dragPx] (in tab order) from the tab at [selectedIndex].
+ *
+ * Between the first and last tab the pill follows the finger one to one. Past
+ * either end it stretches with growing resistance and never more than
+ * [PILL_EDGE_OVERSHOOT], so it can't be dragged off the bar however far the
+ * finger goes.
+ */
+internal fun tabPillDragPosition(
+    selectedIndex: Int,
+    dragPx: Float,
+    stepPx: Float,
+    lastIndex: Int,
+): Float {
+    if (stepPx <= 0f || lastIndex < 0) return selectedIndex.toFloat()
+    val raw = selectedIndex + dragPx / stepPx
+    val end = lastIndex.toFloat()
+    return when {
+        raw > end -> end + edgeOvershoot(raw - end)
+        raw < 0f -> -edgeOvershoot(-raw)
+        else -> raw
+    }
+}
+
+/** Eases [past] tab steps beyond an end into at most [PILL_EDGE_OVERSHOOT]. */
+private fun edgeOvershoot(past: Float): Float =
+    PILL_EDGE_OVERSHOOT * past / (past + PILL_EDGE_OVERSHOOT)

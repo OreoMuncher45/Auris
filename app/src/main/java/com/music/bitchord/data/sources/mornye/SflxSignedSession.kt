@@ -335,11 +335,27 @@ class SflxSignedSession(
      * app did not itself send the listener to is a grant for somebody else's
      * challenge.
      */
-    fun completeGrant(grant: String, state: String? = null): Boolean {
+    fun completeGrant(
+        grant: String,
+        state: String? = null,
+        /**
+         * Refuse when a challenge is outstanding. Set by a caller that chose
+         * this client because none was, so a challenge issued in between is
+         * checked under [lock] rather than skipped with the null [state].
+         */
+        onlyWithoutChallenge: Boolean = false,
+    ): Boolean {
         val trimmed = grant.trim()
         if (trimmed.isEmpty()) return false
         synchronized(lock) {
+            // A retired client can't save, so an exchange here would spend the
+            // single-use grant and report a session that never reached disk.
+            if (retired) throw SflxSessionRetired()
             val challenge = pending
+            if (onlyWithoutChallenge && challenge != null) {
+                Log.w(TAG, "sflx[$extensionId] a challenge was issued before this grant arrived; ignoring")
+                return false
+            }
             if (state != null && challenge != null && challenge.state.isNotEmpty() && state != challenge.state) {
                 Log.w(TAG, "sflx[$extensionId] grant state did not match the challenge; ignoring")
                 return false
@@ -1126,3 +1142,6 @@ private fun JSONObject.field(name: String): String {
     }
     return ""
 }
+
+/** A grant reached a client an add-ons import has replaced; the next client can take it. */
+internal class SflxSessionRetired : SflxException("this session client was replaced by an import")
