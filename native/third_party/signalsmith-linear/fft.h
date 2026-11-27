@@ -5,6 +5,8 @@
 #include <vector>
 #include <cmath>
 #include <cstring>
+#include <cstddef> // Auris patch: std::size_t, declared here rather than by luck of include order
+#include <utility> // Auris patch: std::move
 
 #if defined(__FAST_MATH__) && (__apple_build_version__ >= 16000000) && (__apple_build_version__ <= 16000099) && !defined(SIGNALSMITH_IGNORE_BROKEN_APPLECLANG)
 #	error Apple Clang 16.0.0 generates incorrect SIMD for ARM. If you HAVE to use this version of Clang, turn off -ffast-math.
@@ -120,6 +122,7 @@ struct SimpleFFT {
 	
 	void fft(const Complex *time, Complex *freq) {
 		size_t size = working.size();
+		if (size == 0) return; // Auris patch: an empty transform touches no buffer
 		if (size <= 1) {
 			*freq = *time;
 			return;
@@ -129,6 +132,7 @@ struct SimpleFFT {
 
 	void ifft(const Complex *freq, Complex *time) {
 		size_t size = working.size();
+		if (size == 0) return; // Auris patch: an empty transform touches no buffer
 		if (size <= 1) {
 			*time = *freq;
 			return;
@@ -138,6 +142,7 @@ struct SimpleFFT {
 
 	void fft(const Sample *inR, const Sample *inI, Sample *outR, Sample *outI) {
 		size_t size = working.size();
+		if (size == 0) return; // Auris patch: an empty transform touches no buffer
 		if (size <= 1) {
 			*outR = *inR;
 			*outI = *inI;
@@ -148,6 +153,7 @@ struct SimpleFFT {
 	}
 	void ifft(const Sample *inR, const Sample *inI, Sample *outR, Sample *outI) {
 		size_t size = working.size();
+		if (size == 0) return; // Auris patch: an empty transform touches no buffer
 		if (size <= 1) {
 			*outR = *inR;
 			*outI = *inI;
@@ -907,6 +913,7 @@ struct SimpleRealFFT {
 			outR[i] = tmpFreqR[i];
 			outI[i] = tmpFreqI[i];
 		}
+		outR[0] = tmpFreqR[0]; // Auris patch: size 1 has no loop pass; DC as the packed layout gives it
 		outI[0] = tmpFreqR[tmpFreq.size()/2];
 	}
 
@@ -978,6 +985,7 @@ struct RealFFT {
 		tmpTime.resize(hSize);
 		
 		twiddles.resize(hSize/2 + 1);
+		if (size == 0) return; // Auris patch: an empty transform has no phases to divide out
 		
 		if (!halfBinShift) {
 			for (size_t i = 0; i < twiddles.size(); ++i) {

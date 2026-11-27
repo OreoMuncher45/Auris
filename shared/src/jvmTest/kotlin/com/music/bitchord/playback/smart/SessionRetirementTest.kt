@@ -30,22 +30,31 @@ class SessionRetirementTest {
         val options = Closeable()
         val running = CountDownLatch(1)
         val finish = CountDownLatch(1)
+        var closedUnderTheRun = false
+        // Leaves [SessionRetirement.using] only when the test releases it, so no
+        // pause on the test's side can end the run before the assertions.
         val worker = thread {
             retirement.using {
                 running.countDown()
-                finish.await(5, TimeUnit.SECONDS)
-                assertFalse(session.closed, "closed under a run")
+                finish.await()
+                closedUnderTheRun = session.closed
             }
         }
-        assertTrue(running.await(5, TimeUnit.SECONDS))
+        try {
+            assertTrue(running.await(5, TimeUnit.SECONDS))
 
-        retirement.retire(session, options)
-        // Returned without waiting, and nothing closed yet.
-        assertFalse(session.closed)
-        assertEquals(2, retirement.waiting)
-
-        finish.countDown()
+            // On a thread of its own, with a bounded wait: a retire that
+            // blocked on the run would show here as a timeout.
+            val retiring = thread { retirement.retire(session, options) }
+            retiring.join(5_000)
+            assertFalse(retiring.isAlive, "retire waited for the run")
+            assertFalse(session.closed)
+            assertEquals(2, retirement.waiting)
+        } finally {
+            finish.countDown()
+        }
         worker.join(5_000)
+        assertFalse(closedUnderTheRun, "closed under a run")
         assertTrue(session.closed)
         assertTrue(options.closed)
         assertEquals(0, retirement.waiting)

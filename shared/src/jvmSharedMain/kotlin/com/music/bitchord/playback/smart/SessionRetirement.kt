@@ -33,16 +33,21 @@ internal class SessionRetirement {
     }
 
     private fun drain() {
-        if (retired.isEmpty()) return
-        val write = inUse.writeLock()
-        if (!write.tryLock()) return
-        try {
-            while (true) {
-                val item = retired.poll() ?: break
-                runCatching { item.close() }
+        // Looped, not one pass: a session retired after this pass's last empty
+        // poll but before its unlock fails its own tryLock and leaves the close
+        // to whoever holds the lock, which would be this call, already done.
+        while (retired.isNotEmpty()) {
+            val write = inUse.writeLock()
+            // A run in flight closes them when it leaves; see [using].
+            if (!write.tryLock()) return
+            try {
+                while (true) {
+                    val item = retired.poll() ?: break
+                    runCatching { item.close() }
+                }
+            } finally {
+                write.unlock()
             }
-        } finally {
-            write.unlock()
         }
     }
 
