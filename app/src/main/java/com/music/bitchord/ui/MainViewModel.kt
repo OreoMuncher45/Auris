@@ -1761,7 +1761,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val transitions = com.music.bitchord.data.innertube.Innertube.accountTransitionCount()
         viewModelScope.launch {
             val startedAs = addingAs(transitions)
-            val outcomes = playlists.map { if (startedAs == null) AddOutcome.FAILED else addOne(it, song, startedAs) }
+            // One binding for the whole add, every playlist of it: a refresh
+            // one request recovers from carries on to the rest.
+            val outcomes = if (startedAs == null) playlists.map { AddOutcome.FAILED } else {
+                com.music.bitchord.data.innertube.Innertube.asListenerRecoverably(startedAs) {
+                    playlists.map { addOne(it, song) }
+                }
+            }
             onResult(
                 outcomes.count { it == AddOutcome.ADDED },
                 outcomes.count { it == AddOutcome.ALREADY_THERE },
@@ -1811,8 +1817,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val transitions = com.music.bitchord.data.innertube.Innertube.accountTransitionCount()
         viewModelScope.launch {
             val startedAs = addingAs(transitions)
-            val outcomes = playlists.map {
-                if (startedAs == null) AddOutcome.FAILED to 0 else addReleaseTo(it, songs, startedAs)
+            // As [addToPlaylists]: one binding for the whole add.
+            val outcomes = if (startedAs == null) playlists.map { AddOutcome.FAILED to 0 } else {
+                com.music.bitchord.data.innertube.Innertube.asListenerRecoverably(startedAs) {
+                    playlists.map { addReleaseTo(it, songs) }
+                }
             }
             onResult(
                 outcomes.count { it.first == AddOutcome.ADDED },
@@ -1826,45 +1835,22 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * Files a release into one playlist, and says how many tracks went in.
      *
-     * Every read and edit is bound to [startedAs], the account the playlist
-     * was picked under: after a switch the edit fails with nothing sent,
-     * rather than go out signed as another account. Bound recoverably: a
-     * rejection for stale credentials refreshes that account's scope and is
-     * retried once as it, and only the batch that was rejected is resent.
+     * Runs inside the caller's binding to the account the playlist was
+     * picked under (see [addSongsToPlaylists]): after a switch the edit fails
+     * with nothing sent, rather than go out signed as another account. The
+     * lookup and the batches are [YtMusicRepository.addMissingTracks]'s.
      */
-    private suspend fun addReleaseTo(
-        playlist: UserPlaylist,
-        songs: List<Song>,
-        startedAs: com.music.bitchord.data.innertube.Innertube.ListenerStamp,
-    ): Pair<AddOutcome, Int> {
+    private suspend fun addReleaseTo(playlist: UserPlaylist, songs: List<Song>): Pair<AddOutcome, Int> {
         // A track the open page already shows is there; anything else is
-        // checked against the whole playlist, since the page may not have
-        // loaded all of it yet and can't rule a track out. That read is all
-        // or nothing (see YtMusicRepository.allSongs): a partial list never
-        // says a track is absent. When it can't be read, the tracks are added
-        // anyway: duplicate prevention is best effort, and a failed lookup
-        // must not lose the add the listener asked for.
+        // checked against the whole playlist (see addMissingTracks).
         val visible = (_detailStack.value.latestOpening(playlist.browseId)?.songs as? UiState.Success)
             ?.data?.mapNotNullTo(HashSet()) { it.videoId }.orEmpty()
         val unseen = songs.mapNotNull { it.videoId }.filter { it !in visible }.distinct()
-        val listed = if (unseen.isEmpty()) emptySet() else {
-            com.music.bitchord.data.innertube.Innertube.asListenerRecoverably(startedAs) { YtMusicRepository.allSongs(playlist.browseId) }
-                .getOrNull()?.mapNotNullTo(HashSet()) { it.videoId }
-        }
-        val ids = unseen.filter { id -> listed == null || id !in listed }
-        if (ids.isEmpty()) return AddOutcome.ALREADY_THERE to 0
-        var failed = false
-        val addedIds = mutableListOf<String>()
-        ids.chunked(ADD_TO_PLAYLIST_BATCH).forEach { batch ->
-            val result = com.music.bitchord.data.innertube.Innertube.asListenerRecoverably(startedAs) {
-                YtMusicRepository.addToPlaylist(playlist.playlistId, batch)
-            }
-            if (result.isFailure) {
-                failed = true
-            } else {
-                addedIds += batch
-            }
-        }
+        if (unseen.isEmpty()) return AddOutcome.ALREADY_THERE to 0
+        val result = YtMusicRepository.addMissingTracks(playlist.browseId, playlist.playlistId, unseen, ADD_TO_PLAYLIST_BATCH)
+        if (result.alreadyThere) return AddOutcome.ALREADY_THERE to 0
+        val failed = result.failed
+        val addedIds = result.added.keys
         libraryStale = true
         // The playlist's own page may be open behind the picker.
         appendToOpenPlaylist(
@@ -1882,45 +1868,31 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         return (if (failed) AddOutcome.FAILED else AddOutcome.ADDED) to addedIds.size
     }
 
-    /** One track into one playlist, bound to [startedAs] as [addReleaseTo] is. */
-    private suspend fun addOne(
-        playlist: UserPlaylist,
-        song: Song,
-        startedAs: com.music.bitchord.data.innertube.Innertube.ListenerStamp,
-    ): AddOutcome {
+    /** One track into one playlist, inside the caller's binding as [addReleaseTo] is. */
+    private suspend fun addOne(playlist: UserPlaylist, song: Song): AddOutcome {
         // Shown on the open page: there. Not shown: the page may be partial,
-        // so only the whole playlist can say it is absent, and that read is
-        // all or nothing. A lookup that fails adds the track anyway: duplicate
-        // prevention is best effort (see addReleaseTo).
+        // so only the whole playlist can say it is absent (see addMissingTracks).
         val visible = (_detailStack.value.latestOpening(playlist.browseId)?.songs as? UiState.Success)?.data
         if (visible?.any { it.videoId == song.videoId } == true) return AddOutcome.ALREADY_THERE
-        val known = com.music.bitchord.data.innertube.Innertube.asListenerRecoverably(startedAs) {
-            YtMusicRepository.allSongs(playlist.browseId)
-        }.getOrNull()
-        if (known?.any { it.videoId == song.videoId } == true) return AddOutcome.ALREADY_THERE
-        return com.music.bitchord.data.innertube.Innertube.asListenerRecoverably(startedAs) {
-            YtMusicRepository.addToPlaylist(playlist.playlistId, listOf(song.videoId))
-        }.fold(
-            onSuccess = { added ->
-                libraryStale = true
-                // The playlist's page may be open behind the picker — it is
-                // reachable from a row's own menu on it — so the track goes
-                // into it for the same reason [addSuggestedSong] does.
-                appendToOpenPlaylist(playlist.browseId, song, added[song.videoId])
-                // A playlist that was downloaded whole is a promise about a
-                // moving thing: this track is now part of it, so it belongs on
-                // the device too. Looked at now rather than at the next
-                // scheduled pass, because this is the moment the listener
-                // knows it happened.
-                com.music.bitchord.download.DownloadedPlaylistSync.refresh(
-                    getApplication(),
-                    playlist.browseId,
-                    force = true,
-                )
-                AddOutcome.ADDED
-            },
-            onFailure = { AddOutcome.FAILED },
+        val result = YtMusicRepository.addMissingTracks(playlist.browseId, playlist.playlistId, listOf(song.videoId), batchSize = 1)
+        if (result.alreadyThere) return AddOutcome.ALREADY_THERE
+        if (result.failed || song.videoId !in result.added) return AddOutcome.FAILED
+        libraryStale = true
+        // The playlist's page may be open behind the picker — it is
+        // reachable from a row's own menu on it — so the track goes
+        // into it for the same reason [addSuggestedSong] does.
+        appendToOpenPlaylist(playlist.browseId, song, result.added[song.videoId]?.takeIf { it.isNotEmpty() })
+        // A playlist that was downloaded whole is a promise about a
+        // moving thing: this track is now part of it, so it belongs on
+        // the device too. Looked at now rather than at the next
+        // scheduled pass, because this is the moment the listener
+        // knows it happened.
+        com.music.bitchord.download.DownloadedPlaylistSync.refresh(
+            getApplication(),
+            playlist.browseId,
+            force = true,
         )
+        return AddOutcome.ADDED
     }
 
     /**
