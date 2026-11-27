@@ -113,6 +113,7 @@ object LyricsPlus {
                     timeMs = minOf(start, words.first().startMs),
                     text = words.joinToString(" ") { it.text },
                     words = words,
+                    timed = true,
                 )
                 // Some sources are only line-synced; still worth showing.
                 // The line's duration is the only end it gets, and without it
@@ -121,6 +122,7 @@ object LyricsPlus {
                     timeMs = start,
                     text = line.text.trim(),
                     sungUntilMs = line.duration?.takeIf { it > 0 }?.let { start + it },
+                    timed = true,
                 )
                 else -> null
             }

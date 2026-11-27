@@ -49,4 +49,32 @@ class LyricsPickTest {
 
         assertEquals(LyricsSource.YOUTUBE_MUSIC, picked?.source)
     }
+
+    @Test
+    fun `a timed source whose only cue is at 0 s with no end is still timed`() = runBlocking {
+        // YouTube Music's timed lyrics, one cue at 0 and no end time.
+        val page = kotlinx.serialization.json.Json.parseToJsonElement(
+            """{ "timedLyricsData": [ { "lyricLine": "Hello", "cueRange": { "startTimeMilliseconds": "0" } } ] }""",
+        ) as kotlinx.serialization.json.JsonObject
+        val lines = timedLyrics(page)!!
+        kotlin.test.assertTrue(lines.any { it.isTimed }, "the cue at 0 was read as plain")
+        // An LRC whose only stamp is [00:00.00], likewise.
+        kotlin.test.assertTrue(LrcLib.parseLrc("[00:00.00]Hello").any { it.isTimed })
+        val zeroOnly = LyricsRepository.Result(LyricsSource.YOUTUBE_MUSIC, lines)
+        listOf(true, false).forEach { prefer ->
+            val picked = LyricsRepository.pick(
+                listOf(
+                    LyricsSource.GENIUS to suspend { result(LyricsSource.GENIUS, 0L) },
+                    LyricsSource.YOUTUBE_MUSIC to suspend { zeroOnly },
+                ),
+                prioritizeSyllableSync = prefer,
+            )
+            assertEquals(LyricsSource.YOUTUBE_MUSIC, picked?.source)
+        }
+    }
+
+    @Test
+    fun `a plain source's lines are not timed`() {
+        kotlin.test.assertFalse(LyricLine(0L, "Hello").isTimed)
+    }
 }

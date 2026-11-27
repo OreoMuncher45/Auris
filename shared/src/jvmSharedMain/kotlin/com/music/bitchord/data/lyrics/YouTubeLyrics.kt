@@ -49,7 +49,7 @@ internal fun timedLyrics(page: JsonObject): List<LyricLine>? {
             ?.contentOrNull?.toLongOrNull() ?: return@mapNotNull null
         val end = (cue?.get("endTimeMilliseconds") as? JsonPrimitive)
             ?.contentOrNull?.toLongOrNull()
-        LyricLine(start, text, sungUntilMs = end)
+        LyricLine(start, text, sungUntilMs = end, timed = true)
     }.takeIf { it.isNotEmpty() }
         // Each cue says when its singing stops, so a break gets its marker as
         // every other timed provider's does, rather than the last sung line
@@ -85,7 +85,7 @@ object YouTubeTranscriptLyrics {
                 ?: return@mapNotNull null
             val text = cue["cue"]?.youtubeStrings()?.joinToString("").orEmpty()
                 .trim(' ', '\n', '♪')
-            text.takeIf { it.isNotEmpty() }?.let { LyricLine(start, it) }
+            text.takeIf { it.isNotEmpty() }?.let { LyricLine(start, it, timed = true) }
         }.sortedBy { it.timeMs }.toList().takeIf { it.isNotEmpty() }
     }
 }
