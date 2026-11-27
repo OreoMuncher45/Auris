@@ -83,9 +83,10 @@ object EmbeddedLyrics {
      */
     internal fun linesOf(raw: String): List<LyricLine>? {
         val synced = LrcLib.parseLrc(raw)
-        // Stamps with no words under any of them are an empty LRC, not plain
-        // lyrics to show the stamps of.
-        if (synced.isNotEmpty()) return synced.takeIf { lines -> lines.any { it.text.isNotBlank() } }
+        if (synced.isNotEmpty()) return synced
+        // Stamps with no words under any of them are an empty LRC (which
+        // parses to nothing), not plain lyrics to show the stamps of.
+        if (LrcLib.isStamped(raw)) return null
         // An LRC header with no stamped lines under it (`[ar:…]`, `[ti:…]`,
         // `[length:…]`) is metadata, not words to sing.
         return raw.lineSequence().map { it.trim() }
