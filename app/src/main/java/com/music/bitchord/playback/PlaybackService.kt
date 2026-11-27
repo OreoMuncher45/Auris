@@ -552,8 +552,13 @@ class PlaybackService : MediaLibraryService() {
         feed
     }
 
-    private var cachedPlaylistCards: Pair<Long, List<ShelfItem>>? = null
-    private var cachedPlaylistCookie: String? = null
+    /**
+     * The account's playlist cards, with when they were read, kept for the
+     * session that read them: a profile switch under the same cookie (or a
+     * switch away and back) empties it, and a fetch that lands after one
+     * files nothing. See [ListenerScopedCache].
+     */
+    private val playlistCardsCache = ListenerScopedCache<ListenerStamp, Pair<Long, List<ShelfItem>>> { listenerStamp() }
     private val playlistsMutex = Mutex()
     private val PLAYLISTS_CACHE_TTL_MS = 60_000L
 
@@ -607,23 +612,17 @@ class PlaybackService : MediaLibraryService() {
     }
 
     private suspend fun cachedPlaylistCards(): List<ShelfItem> = playlistsMutex.withLock {
-        val cookie = com.music.bitchord.data.innertube.Innertube.cookie
-        if (cookie == null) {
-            cachedPlaylistCards = null
-            cachedPlaylistCookie = null
-            return emptyList()
-        }
-        if (cachedPlaylistCookie != null && cachedPlaylistCookie != cookie) {
-            cachedPlaylistCards = null
-        }
-        cachedPlaylistCards?.let { (at, cards) ->
+        if (com.music.bitchord.data.innertube.Innertube.cookie == null) return emptyList()
+        // The session the cards are read for: filed under it, or not at all.
+        val owner = listenerStamp()
+        playlistCardsCache[PLAYLIST_CARDS_KEY]?.let { (at, cards) ->
             if (SystemClock.elapsedRealtime() - at < PLAYLISTS_CACHE_TTL_MS && cards.isNotEmpty()) return cards
         }
-        val cards = fetchPlaylistCards()
-        if (cards.isNotEmpty()) {
-            cachedPlaylistCards = SystemClock.elapsedRealtime() to cards
-            cachedPlaylistCookie = cookie
-        }
+        // Sent as that session only; a stale scope may refresh and retry as it.
+        val cards = com.music.bitchord.data.innertube.Innertube.asListenerRecoverably(innertubeStamp(owner)) { fetchPlaylistCards() }
+        // Read for a session that has since ended: neither kept nor shown.
+        if (owner != listenerStamp()) return emptyList()
+        if (cards.isNotEmpty()) playlistCardsCache.put(owner, PLAYLIST_CARDS_KEY, SystemClock.elapsedRealtime() to cards)
         cards
     }
 
@@ -631,8 +630,7 @@ class PlaybackService : MediaLibraryService() {
     private fun snapshotQuickPicks(): AutoListing? = cachedQuickPicks.forCurrentListener()
     private fun snapshotLiked(): AutoListing? = cachedLiked.forCurrentListener()?.takeIf { it.listener != null }
     private fun snapshotPlaylistCards(): List<ShelfItem> {
-        val cookie = com.music.bitchord.data.innertube.Innertube.cookie
-        return if (cookie != null && cookie == cachedPlaylistCookie) cachedPlaylistCards?.second.orEmpty() else emptyList()
+        return playlistCardsCache[PLAYLIST_CARDS_KEY]?.second.orEmpty()
     }
     private fun snapshotHome(): CachedHome? =
         cachedHome?.takeIf { it.listener == currentListener() }
@@ -847,7 +845,7 @@ class PlaybackService : MediaLibraryService() {
         SystemClock.elapsedRealtime() - at < ttlMs
 
     private fun isPlaylistsFresh(): Boolean =
-        snapshotPlaylistCards().isNotEmpty() && cachedPlaylistCards?.let { (at, _) -> isFresh(at, PLAYLISTS_CACHE_TTL_MS) } == true
+        playlistCardsCache[PLAYLIST_CARDS_KEY]?.let { (at, cards) -> cards.isNotEmpty() && isFresh(at, PLAYLISTS_CACHE_TTL_MS) } == true
 
     private fun refreshFolderInBackground(
         session: MediaLibrarySession,
@@ -11936,6 +11934,8 @@ class PlaybackService : MediaLibraryService() {
         const val FOREIGN_CACHE_KEEP_AHEAD = 3
         const val MEDIA_DOWNLOADS_ID = "downloads"
         const val MEDIA_LOCAL_MUSIC_ID = "local_music"
+        /** The one key of [playlistCardsCache]. */
+        const val PLAYLIST_CARDS_KEY = "cards"
         /** Auto folders that list nothing read for an account: handed over whoever is signed in. */
         val ACCOUNT_FREE_FOLDERS = setOf(MEDIA_ROOT_ID, MEDIA_MORE_ID, MEDIA_DOWNLOADS_ID, MEDIA_LOCAL_MUSIC_ID)
         const val MAX_AUTO_PAGE_SIZE = 50

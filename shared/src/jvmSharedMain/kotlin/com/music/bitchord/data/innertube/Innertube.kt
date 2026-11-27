@@ -517,18 +517,29 @@ object Innertube {
      * the coroutine context so [requestCredentials] can check it in the same
      * locked read that takes the credentials.
      */
-    private class ExpectedListener(val stamp: ListenerStamp) :
+    private class ExpectedListener(val stamp: ListenerStamp, val recoverable: Boolean = false) :
         kotlin.coroutines.AbstractCoroutineContextElement(Key) {
         companion object Key : kotlin.coroutines.CoroutineContext.Key<ExpectedListener>
     }
 
     /**
-     * Whether the caller bound its requests to a session with [asListener].
-     * Such a request can't be retried under any other session — not even the
-     * same listener after a refresh moved the generation — so a retry is the
-     * caller's to make, under a session it chose.
+     * Whether the caller bound its requests to a session with [asListener],
+     * strictly. Such a request can't be retried under any other session — not
+     * even the same listener after a refresh moved the generation — so a retry
+     * is the caller's to make, under a session it chose. A binding made
+     * `recoverable` is not strict: see [asListener].
      */
-    suspend fun boundToSession(): Boolean = kotlinx.coroutines.currentCoroutineContext()[ExpectedListener] != null
+    suspend fun boundToSession(): Boolean =
+        kotlinx.coroutines.currentCoroutineContext()[ExpectedListener]?.let { !it.recoverable } == true
+
+    /**
+     * How many account transitions there have been: sign-ins, sign-outs,
+     * profile and channel switches. A caller that reads it before waiting on
+     * something and again after can tell an actual transition from the
+     * session scope merely being read in, which moves [listenerGeneration]
+     * without changing whose session it is.
+     */
+    fun accountTransitionCount(): Long = synchronized(identityLock) { accountTransitions }
 
     /** Thrown when a request bound by [asListener] would go out as another listener. */
     class ListenerChangedException : IllegalStateException("the account changed before the request was sent")
@@ -541,6 +552,17 @@ object Innertube {
      */
     suspend fun <T> asListener(stamp: ListenerStamp, block: suspend () -> T): T =
         kotlinx.coroutines.withContext(ExpectedListener(stamp)) { block() }
+
+    /**
+     * As [asListener], with recovery: a request rejected for stale credentials
+     * may refresh the scope of the session it was signed as, and be retried
+     * once under the refreshed session when that is still the same listener
+     * (see YtMusicRepository's `call`). It is never sent as another account.
+     * For a write the listener asked for (a playlist add), which a refresh
+     * should not turn into a failure; a page's continuation stays strict.
+     */
+    suspend fun <T> asListenerRecoverably(stamp: ListenerStamp, block: suspend () -> T): T =
+        kotlinx.coroutines.withContext(ExpectedListener(stamp, recoverable = true)) { block() }
 
     /**
      * A signed-in session under validation, kept apart from the shared one.
