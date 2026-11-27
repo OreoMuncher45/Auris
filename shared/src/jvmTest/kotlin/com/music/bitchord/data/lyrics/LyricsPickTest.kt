@@ -77,4 +77,27 @@ class LyricsPickTest {
     fun `a plain source's lines are not timed`() {
         kotlin.test.assertFalse(LyricLine(0L, "Hello").isTimed)
     }
+
+    @Test
+    fun `an LRC of stamps with nothing sung parses to nothing`() {
+        kotlin.test.assertTrue(LrcLib.parseLrc("[00:00.00]\n[00:12.00]\n[00:30.00]").isEmpty())
+    }
+
+    @Test
+    fun `a result of breaks only does not outrank plain lyrics from an earlier source`() = runBlocking {
+        val breaksOnly = LyricsRepository.Result(
+            LyricsSource.LRCLIB,
+            listOf(LyricLine(0L, "", timed = true), LyricLine(12_000L, "", timed = true)),
+        )
+        listOf(true, false).forEach { prefer ->
+            val picked = LyricsRepository.pick(
+                listOf(
+                    LyricsSource.YOUTUBE_MUSIC to suspend { result(LyricsSource.YOUTUBE_MUSIC, 0L) },
+                    LyricsSource.LRCLIB to suspend { breaksOnly },
+                ),
+                prioritizeSyllableSync = prefer,
+            )
+            assertEquals(LyricsSource.YOUTUBE_MUSIC, picked?.source)
+        }
+    }
 }
