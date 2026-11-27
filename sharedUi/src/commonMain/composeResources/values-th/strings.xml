@@ -263,10 +263,10 @@
     <string name="queue_selected_count">เลือก %1$d รายการ</string>
     <string name="queue_close_selection">ปิดโหมดเลือก</string>
     <string name="queue_selection_remove">นำออก</string>
-    <string name="queue_selection_add_to_playlist">Add to playlist</string>
+    <string name="queue_selection_add_to_playlist">เพิ่มลงในเพลย์ลิสต์</string>
     <string name="queue_download">ดาวน์โหลด</string>
-    <string name="queue_removed_song">Removed %1$s</string>
-    <string name="queue_removed_songs">Removed %1$d songs</string>
-    <string name="queue_undo_action">Undo</string>
-    <string name="queue_cleared">Next in queue cleared</string>
+    <string name="queue_removed_song">นำ %1$s ออกแล้ว</string>
+    <string name="queue_removed_songs">นำ %1$d เพลงออกแล้ว</string>
+    <string name="queue_undo_action">เลิกทำ</string>
+    <string name="queue_cleared">ล้าง \"ถัดไปในคิว\" แล้ว</string>
 </resources>

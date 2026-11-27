@@ -263,10 +263,10 @@
     <string name="queue_selected_count">%1$d件選択</string>
     <string name="queue_close_selection">選択モードを終了</string>
     <string name="queue_selection_remove">削除</string>
-    <string name="queue_selection_add_to_playlist">Add to playlist</string>
+    <string name="queue_selection_add_to_playlist">プレイリストに追加</string>
     <string name="queue_download">ダウンロード</string>
-    <string name="queue_removed_song">Removed %1$s</string>
-    <string name="queue_removed_songs">Removed %1$d songs</string>
-    <string name="queue_undo_action">Undo</string>
-    <string name="queue_cleared">Next in queue cleared</string>
+    <string name="queue_removed_song">%1$s を削除しました</string>
+    <string name="queue_removed_songs">%1$d 曲を削除しました</string>
+    <string name="queue_undo_action">元に戻す</string>
+    <string name="queue_cleared">「キューの次の曲」をクリアしました</string>
 </resources>

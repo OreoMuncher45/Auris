@@ -263,10 +263,10 @@
     <string name="queue_selected_count">Выбрано: %1$d</string>
     <string name="queue_close_selection">Выйти из режима выбора</string>
     <string name="queue_selection_remove">Удалить</string>
-    <string name="queue_selection_add_to_playlist">Add to playlist</string>
+    <string name="queue_selection_add_to_playlist">Добавить в плейлист</string>
     <string name="queue_download">Загрузить</string>
-    <string name="queue_removed_song">Removed %1$s</string>
-    <string name="queue_removed_songs">Removed %1$d songs</string>
-    <string name="queue_undo_action">Undo</string>
-    <string name="queue_cleared">Next in queue cleared</string>
+    <string name="queue_removed_song">Удалено: %1$s</string>
+    <string name="queue_removed_songs">Удалено треков: %1$d</string>
+    <string name="queue_undo_action">Отменить</string>
+    <string name="queue_cleared">«Следующая в очереди» очищена</string>
 </resources>
