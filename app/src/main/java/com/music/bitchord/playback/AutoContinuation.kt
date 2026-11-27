@@ -160,9 +160,21 @@ internal class PendingAutoInstalls(private val capacity: Int = 4) {
     fun refuses(size: Int, entryAt: (Int) -> String?, now: ListenerStamp): PendingAutoInstall? =
         matching(size, entryAt)?.takeIf { staleAutoInstall(it, size, entryAt, now) == true }
 
-    fun refused(pending: PendingAutoInstall) {
+    /**
+     * The record whose folder the running continuation grows, if any: set
+     * when a built queue starts its continuation, cleared with it.
+     */
+    var following: PendingAutoInstall? = null
+
+    /**
+     * Takes [pending] out as refused. True when the continuation running now
+     * is its own, so the caller ends it; a refused queue built before a later
+     * one must not stop the later one's continuation.
+     */
+    fun refused(pending: PendingAutoInstall): Boolean {
         records.remove(pending)
         pending.installed.complete(null)
+        return (following === pending).also { if (it) following = null }
     }
 
     /** The record for a queue just installed, taken out; null when it was not a recorded one. */
