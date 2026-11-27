@@ -111,6 +111,7 @@ object KaraokeLrc {
                 text = EnhancedLrc.decodeEntities(body.replace(WORD_TIME, "")).trim(),
                 words = words,
                 sungUntilMs = (lineStart + lineDuration).takeIf { lineDuration > 0 },
+                timed = true,
             )
         }.filter { it.text.isNotEmpty() }.sortedBy { it.timeMs }.toList()
         return rows.withInstrumentalGaps()
