@@ -2643,6 +2643,9 @@ internal fun BitChordApp(
      * the playlist menu fetches them.
      */
     val playMix: (ShelfItem) -> Unit = { item ->
+        // Anything played while the mix is still being fetched supersedes it:
+        // a slow fetch must not replace a song tapped after it.
+        val asked = playRequestGeneration
         withBrowseSongs(
             BrowseTarget(
                 browseId = item.browseId,
@@ -2652,6 +2655,7 @@ internal fun BitChordApp(
                 type = BrowseType.PLAYLIST,
             ),
         ) { songs ->
+            if (asked != playRequestGeneration) return@withBrowseSongs
             setShuffleForNextQueue(false)
             play(songs, 0)
         }
