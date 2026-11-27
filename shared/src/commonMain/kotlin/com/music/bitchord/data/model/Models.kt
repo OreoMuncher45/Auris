@@ -320,8 +320,17 @@ fun String?.artworkAt(px: Int): String? {
 }
 
 internal fun isYouTubeThumbnailHost(url: String): Boolean {
-    val host = url.substringAfter("://", "")
-        .ifEmpty { url.substringAfter("//", "") }
+    // The authority comes first: a "://" past the first '/', '?' or '#' is in
+    // the path or query ("//cdn.test/a?u=https://i.ytimg.com/..."), not
+    // the scheme.
+    val scheme = url.indexOf("://")
+    val firstDelimiter = url.indexOfAny(charArrayOf('/', '?', '#'))
+    val afterScheme = when {
+        scheme >= 0 && (firstDelimiter < 0 || scheme < firstDelimiter) -> url.substring(scheme + 3)
+        url.startsWith("//") -> url.substring(2)
+        else -> ""
+    }
+    val host = afterScheme
         .substringBefore('/')
         .substringBefore('?')
         .substringBefore('#')
