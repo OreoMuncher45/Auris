@@ -188,7 +188,9 @@ object LyricsRepository {
             // If we already found a line-synced or better result, skip Genius completely
             if ((lineSynced ?: plain) != null && source == LyricsSource.GENIUS) continue
 
-            val found = runCatching { await() }.getOrNull() ?: continue
+            // A result with no sung line in it (breaks only) is not lyrics,
+            // whichever source sent it: it neither wins nor counts as plain.
+            val found = runCatching { await() }.getOrNull()?.takeIf { result -> result.lines.any { !it.isGap } } ?: continue
             if (found.lines.any { it.isWordSynced }) return found
             if (found.lines.any { it.isTimed }) {
                 if (!prioritizeSyllableSync) return found
