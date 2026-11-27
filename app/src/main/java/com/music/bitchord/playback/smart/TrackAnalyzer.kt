@@ -440,6 +440,9 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      */
     fun isAnalysing(trackId: String): Boolean = scoped(trackId) in running
 
+    /** True while [trackId]'s result is a head-only one the whole-track pass has yet to replace. */
+    fun isProvisional(trackId: String): Boolean = scoped(trackId) in provisional
+
     /**
      * Queues [trackId] (playing at [uri]) for analysis if it is not already
      * done or in flight. Cheap to call repeatedly; callers re-request as
