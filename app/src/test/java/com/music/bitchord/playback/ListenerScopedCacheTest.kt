@@ -76,4 +76,15 @@ class ListenerScopedCacheTest {
         assertNull(small["q1"])
         assertEquals("3", small["q3"])
     }
+
+    @Test
+    fun `a hit says whether it was read for the session or belongs to no account`() {
+        put(session, "account-row")
+        cache.putShared(listOf("download")) { it }
+        assertEquals(false, cache.entry("account-row")?.shared)
+        assertEquals(true, cache.entry("download")?.shared)
+        // Read for the session later: the session's, no longer shared.
+        put(session, "download")
+        assertEquals(false, cache.entry("download")?.shared)
+    }
 }

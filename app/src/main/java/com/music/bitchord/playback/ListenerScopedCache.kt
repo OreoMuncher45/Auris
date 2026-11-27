@@ -19,15 +19,19 @@ internal class ListenerScopedCache<S, V : Any>(
     private val owner: () -> S,
 ) {
     private val entries = object : LinkedHashMap<String, V>() {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, V>?): Boolean = size > capacity
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, V>?): Boolean =
+            (size > capacity).also { if (it && eldest != null) sharedKeys.remove(eldest.key) }
     }
     private var scope: Any? = UNSET
+    /** The keys of entries that belong to no account; see [putShared]. Under the lock. */
+    private val sharedKeys = HashSet<String>()
 
     /** [entries] for the session now, emptied first when that is another one. Called under the lock. */
     private fun current(): LinkedHashMap<String, V> {
         val now = owner()
         if (now != scope) {
             entries.clear()
+            sharedKeys.clear()
             scope = now
         }
         return entries
@@ -37,11 +41,21 @@ internal class ListenerScopedCache<S, V : Any>(
     @Synchronized
     operator fun get(key: String): V? = current()[key]
 
+    /** One entry and whether it belongs to no account, or was read for the session now. */
+    class Entry<V>(val value: V, val shared: Boolean)
+
+    /** [get], saying where the entry came from: a hit read for the session is that session's. */
+    @Synchronized
+    fun entry(key: String): Entry<V>? = current()[key]?.let { Entry(it, key in sharedKeys) }
+
     /** Files [value] under [key], read for [session], unless another session is current now. */
     @Synchronized
     fun put(session: S, key: String, value: V) {
         val map = current()
-        if (session == scope) map[key] = value
+        if (session == scope) {
+            map[key] = value
+            sharedKeys.remove(key)
+        }
     }
 
     /** Files [values] (by [keyOf]) read for [session], unless another session is current now. */
@@ -49,14 +63,22 @@ internal class ListenerScopedCache<S, V : Any>(
     fun putAll(session: S, values: Iterable<V>, keyOf: (V) -> String) {
         val map = current()
         if (session != scope) return
-        values.forEach { map[keyOf(it)] = it }
+        values.forEach {
+            val key = keyOf(it)
+            map[key] = it
+            sharedKeys.remove(key)
+        }
     }
 
     /** Files [values] that belong to no account, for whichever session is current. */
     @Synchronized
     fun putShared(values: Iterable<V>, keyOf: (V) -> String) {
         val map = current()
-        values.forEach { map[keyOf(it)] = it }
+        values.forEach {
+            val key = keyOf(it)
+            map[key] = it
+            sharedKeys += key
+        }
     }
 
     private companion object {
