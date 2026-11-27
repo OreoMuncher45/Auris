@@ -938,13 +938,13 @@ private enum class SearchProvider { SPOTIFY, YOUTUBE }
             lastYtBrowseCookie = cookie
         }
     }
-
+songCache\[[^\]]+\]\s*=\s*([^\s}]+)
     private suspend fun loadYtBrowseSongs(parentId: String, timeoutMs: Long = 3_000L): List<Song> {
         val cookie = com.music.bitchord.data.innertube.Innertube.cookie
         syncYtBrowseCache(cookie)
         val cached = ytBrowseSongsCache[parentId]
         if (cached != null && cached.cookie == cookie && isFresh(cached.fetchedAtMs, YT_BROWSE_CACHE_TTL_MS)) {
-            cached.songs.forEach { songCache[it.videoId] = it }
+            cached.songs.forEach { cacheSongs(listenerStamp(), listOf(it)) }
             return cached.songs
         }
         val songs = try {
@@ -973,7 +973,7 @@ private enum class SearchProvider { SPOTIFY, YOUTUBE }
             return emptyList()
         }
         if (songs.isNotEmpty()) {
-            songs.forEach { songCache[it.videoId] = it }
+            songs.forEach { cacheSongs(listenerStamp(), listOf(it)) }
             if (ytBrowseSongsCache.size >= 30 && !ytBrowseSongsCache.containsKey(parentId)) {
                 ytBrowseSongsCache.clear()
             }
@@ -1018,7 +1018,7 @@ private enum class SearchProvider { SPOTIFY, YOUTUBE }
         }
         if (songs.isNotEmpty()) {
             cachedRecents = SystemClock.elapsedRealtime() to songs
-            songs.forEach { songCache[it.videoId] = it }
+            songs.forEach { cacheSongs(listenerStamp(), listOf(it)) }
             return songs
         }
         null
@@ -1037,7 +1037,7 @@ private enum class SearchProvider { SPOTIFY, YOUTUBE }
         }
         if (songs.isNotEmpty()) {
             cachedQuickPicks = SystemClock.elapsedRealtime() to songs
-            songs.forEach { songCache[it.videoId] = it }
+            songs.forEach { cacheSongs(listenerStamp(), listOf(it)) }
             return songs
         }
         null
@@ -1077,7 +1077,7 @@ private enum class SearchProvider { SPOTIFY, YOUTUBE }
         if (songs.isNotEmpty() && com.music.bitchord.data.innertube.Innertube.cookie == cookie) {
             cachedLiked = SystemClock.elapsedRealtime() to songs
             cachedLikedCookie = cookie
-            songs.forEach { songCache[it.videoId] = it }
+            songs.forEach { cacheSongs(listenerStamp(), listOf(it)) }
             LikeState.seedLiked(songs.mapTo(HashSet()) { it.videoId })
             return songs
         }
@@ -1653,7 +1653,7 @@ private enum class SearchProvider { SPOTIFY, YOUTUBE }
         val deduped = combined.distinctBy { it.id }
         deduped.forEach { track ->
             val song = SpotifyHomeSource.songFor(track)
-            songCache[song.videoId] = song
+            cacheSongs(listenerStamp(), listOf(song))
         }
         if (deduped.isNotEmpty() && paginationCompleted && (currentSpotifyToken() ?: "anon") == cacheKey) {
             spotifyAlbumTracksCache[albumId] = AccountScopedList(
@@ -1685,7 +1685,7 @@ private enum class SearchProvider { SPOTIFY, YOUTUBE }
         val deduped = tracks.distinctBy { it.id }
         deduped.forEach { track ->
             val song = SpotifyHomeSource.songFor(track)
-            songCache[song.videoId] = song
+            cacheSongs(listenerStamp(), listOf(song))
         }
         if (deduped.isNotEmpty() && (currentSpotifyToken() ?: "anon") == cacheKey) {
             spotifyArtistTracksCache[artistId] = AccountScopedList(
@@ -1784,7 +1784,7 @@ private enum class SearchProvider { SPOTIFY, YOUTUBE }
             null
         }
         if (song != null) {
-            songCache[song.videoId] = song
+            cacheSongs(listenerStamp(), listOf(song))
         }
         return song
     }
@@ -1965,7 +1965,7 @@ private enum class SearchProvider { SPOTIFY, YOUTUBE }
                 .filterNot(AppSettings::isSongBlocked)
             if (remainingSongs.isEmpty()) return@launch
             remainingSongs.forEach { song ->
-                songCache[song.videoId] = song
+                cacheSongs(listenerStamp(), listOf(song))
                 rememberAutoParent(song.videoId, pending.parentId)
             }
             val remainingItems = remainingSongs.map { song ->
@@ -12937,12 +12937,55 @@ val cached = songCache.entry(mediaId)
                         SessionError(SessionError.ERROR_BAD_VALUE, getString(R.string.auto_unavailable_subtitle)),
                     )
         }
+return@withContext null
+                }
+                val exoPlayer = player
+                val timeline = if (exoPlayer == null) emptyList() else {
+                    (0 until exoPlayer.mediaItemCount).map { exoPlayer.getMediaItemAt(it).toSong() }
+                }
+                val currentIndex = exoPlayer?.currentMediaItemIndex ?: -1
+                QueueCoordinator.buildContextQueue(timeline, currentIndex, songs, index, context.source)
+                    .also { built ->
+                        val startEntryId = built.timeline.getOrNull(built.startIndex)?.queueEntryId
+                        val record = PendingAutoInstall(
+                            startEntryId,
+                            built.startIndex,
+                            built.timeline.size,
+                            owner = selectedAt.takeIf { accountOwned },
+                        ) {
+                            mediaSession.sendError(
+                                controller,
+                                SessionError(SessionError.ERROR_BAD_VALUE, getString(R.string.auto_unavailable_subtitle)),
+                            )
+                        }
+                        pendingAutoInstalls.add(record)
+                        pending = record
+                        followAutoBrowseContinuation(context, record.installed)
+                        pendingAutoInstalls.following = record
+                    }
+            } ?: throw IllegalArgumentException("Auto browse row unusable: ${AutoBrowseContexts.Selection.AccountChanged}")
+            return SessionAnswer(
+                MediaSession.MediaItemsWithStartPosition(
+                    ImmutableList.copyOf(built.timeline.map { it.toMediaItem() }),
+                    built.startIndex,
+                    startPositionMs.coerceAtLeast(0L),
+                ),
+                bound = accountOwned,
+                onStale = {
+                    pending?.let { record ->
+                        if (pendingAutoInstalls.refused(record)) clearAutoContinuation()
+                        record.onRefused()
+                    }
+                },
+            )
+        }
 
-        private suspend fun resolveMediaItems(
+        private suspend fun resolveMediaItemsFrom(
             mediaItems: List<MediaItem>,
-onItemResolved: ((inputIndex: Int, outputStartIndex: Int, addedCount: Int) -> Unit)? = null,
-            onPartialSpotifyPlaylistSpan: ((PartialSpotifySpan) -> Unit)? = null,
+            startIndex: Int = 0,
             owner: ListenerStamp = listenerStamp(),
+            onItemResolved: ((inputIndex: Int, outputStartIndex: Int, addedCount: Int) -> Unit)? = null,
+            onPartialSpotifyPlaylistSpan: ((PartialSpotifySpan) -> Unit)? = null,
         ): SessionAnswer<Pair<List<MediaItem>, Int>> {
             val bound = innertubeStamp(owner)
             val resolved = SessionRows<MediaItem>()
