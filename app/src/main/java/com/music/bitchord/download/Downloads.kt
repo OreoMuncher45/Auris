@@ -957,6 +957,13 @@ object Downloads {
     ) {
         if (songs.isEmpty()) return
         val ids = songs.map { it.videoId }.distinct()
+        // Liked Music downloaded with the page's own button: the listener
+        // asked for it kept, which the sync reads from the setting.
+        if (!keepSwitch && switchOn() && samePlaylist(target.id, YtMusicRepository.LIKED_MUSIC) &&
+            !AppSettings.downloadLikedSongs.value
+        ) {
+            AppSettings.setDownloadLikedSongs(true)
+        }
         recordCollections { current ->
             val existing = current[target.id]
             // The sync only grows a record that is still there: one deleted
