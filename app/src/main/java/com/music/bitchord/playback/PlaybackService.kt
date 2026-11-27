@@ -2659,8 +2659,13 @@ class PlaybackService : MediaLibraryService() {
             // owns the volume now, so the swap goes in at the faded level
             // instead of morphing a full-volume copy in under it.
             if (SleepTimer.fadingOut) {
-                standbyPlayer.volume = activePlayer.volume
-                adoptPlayerForVersionSwap(outgoing = activePlayer, incoming = standbyPlayer)
+                // The fade's own gain, which adoption keeps rather than
+                // resetting to full; and the listener's play intent as it is
+                // now, a pause made while the standby aligned included.
+                val gain = SleepTimer.handoffGain(sleepFadeGain)
+                standbyPlayer.volume = gain
+                standbyPlayer.playWhenReady = activePlayer.playWhenReady
+                adoptPlayerForVersionSwap(outgoing = activePlayer, incoming = standbyPlayer, incomingGain = gain)
                 onSwapCommitted?.invoke()
                 return@launch
             }
@@ -2929,7 +2934,7 @@ class PlaybackService : MediaLibraryService() {
         }
     }
 
-    private fun adoptPlayerForVersionSwap(outgoing: ExoPlayer, incoming: ExoPlayer) {
+    private fun adoptPlayerForVersionSwap(outgoing: ExoPlayer, incoming: ExoPlayer, incomingGain: Float = 1f) {
         setSessionOwner(outgoing, owns = false)
         setSessionOwner(incoming, owns = true)
 
@@ -2953,7 +2958,7 @@ class PlaybackService : MediaLibraryService() {
         // a queue under it.
         crossfade?.rebind()
 
-        incoming.volume = 1f
+        incoming.volume = incomingGain
         outgoing.stop()
         outgoing.clearMediaItems()
         outgoing.volume = 1f
@@ -3304,6 +3309,13 @@ class PlaybackService : MediaLibraryService() {
                 about = mediaId,
             )
 
+            // The first volume write is here. The sleep timer's fade, if it
+            // began while the standby got ready, owns the volume: the upgrade
+            // is shelved for later instead of blending under it.
+            if (!SleepTimer.claimUpgradeBlend()) {
+                TrackLog.d("BitChord", "upgrade fade deferred: the sleep timer is fading out", about = mediaId)
+                return UpgradeSwap.Abandoned
+            }
             var progress = 0f
             var lastTick = SystemClock.elapsedRealtime()
             var pausedSince: Long? = null
@@ -3415,6 +3427,7 @@ class PlaybackService : MediaLibraryService() {
             // readers rather than letting them run out their timeout.
             alignmentJob?.cancel()
             upgradeFadeActive = false
+            SleepTimer.releaseUpgradeBlend()
             AppSettings.versionAlignmentInProgress.value = false
             loudnessA.setBlendTrim(1f)
             loudnessB.setBlendTrim(1f)
@@ -3426,7 +3439,9 @@ class PlaybackService : MediaLibraryService() {
                 standby.clearMediaItems()
                 standby.playWhenReady = false
                 standby.volume = 1f
-                active.volume = 1f
+                // Not under the sleep timer's fade, which owns this player's
+                // volume and would hear it jump to full until its next step.
+                if (SleepTimer.upgradeMayRestoreVolume) active.volume = 1f
             }
         }
     }
@@ -8058,7 +8073,7 @@ class PlaybackService : MediaLibraryService() {
                         // could leave no time to fade at all.
                         SleepTimer.fadingOut = true
                         while ((crossfade?.isTransitioning() == true ||
-                                versionSwapFading || upgradeFadeActive) &&
+                                versionSwapFading || SleepTimer.upgradeBlending) &&
                             SystemClock.elapsedRealtime() < deadline
                         ) {
                             delay(FADE_STEP_MS)

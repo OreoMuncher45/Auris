@@ -86,6 +86,43 @@ object SleepTimer {
     var fadingOut: Boolean = false
 
     /**
+     * Whether a quality upgrade's blend is writing both players' volumes
+     * right now. Only the blend: an upgrade still preparing or aligning its
+     * standby has touched no volume, and the fade must not spend its window
+     * waiting for one. See [claimUpgradeBlend].
+     */
+    @Volatile
+    var upgradeBlending: Boolean = false
+        private set
+
+    /**
+     * Start a quality upgrade's blend, unless the fade already owns the
+     * volume: then the upgrade is deferred rather than morphed in under it.
+     */
+    fun claimUpgradeBlend(): Boolean {
+        if (fadingOut) return false
+        upgradeBlending = true
+        return true
+    }
+
+    /** The upgrade's blend has ended, however it ended. */
+    fun releaseUpgradeBlend() {
+        upgradeBlending = false
+    }
+
+    /**
+     * Whether an upgrade that stopped may put the playing player back at full
+     * volume: not while the fade owns it, or the music jumps up mid-fade.
+     */
+    val upgradeMayRestoreVolume: Boolean get() = !fadingOut
+
+    /**
+     * The volume a player adopted mid-fade starts at: where the fade has the
+     * music now, or full when no fade step has run yet.
+     */
+    fun handoffGain(fadeGain: Float?): Float = fadeGain ?: 1f
+
+    /**
      * The volume for [remainingMs] before the deadline, over a fade lasting
      * [fadeMs]: full until the fade starts, then down in a straight line to
      * silence at the deadline.
