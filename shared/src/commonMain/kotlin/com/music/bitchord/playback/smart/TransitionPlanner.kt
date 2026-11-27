@@ -105,9 +105,11 @@ private val SPOKEN_TEXT = Regex(
 private val LIVE_TEXT = Regex(
     // A bracketed tag: "(Live)", "(Acoustic Live)", "(Live Acoustic)", "[Live at Wembley]", "(Live Version)",
     // "(Live 2016)", "(Live, 2016)", "(Live and Acoustic)", "(Live Remaster)".
-    """[(\[]\s*(?:(?:acoustic|unplugged|stripped|solo|piano|radio|remastered|remaster|full\s+band)\s+)?live(?:\s*,?\s+(?:(?:at|from|in|on|and|version|session|recording|performance|edit|acoustic|remaster|remastered)|\d{4})\b[^)\]]*)?\s*[)\]]""" +
-        // A dash suffix: "Song - Live", "Song – Live from the Garden", "Song - Live 2016", "Song - Live Remaster".
-        """|[-–—]\s*live(?:\s*,?\s+(?:(?:at|from|in|on|and|version|session|recording|performance|edit|acoustic|remaster|remastered)|\d{4})\b.*)?\s*$""",
+    // "(Live: Wembley)" too: a colon after the word is a label, never a title.
+    """[(\[]\s*(?:(?:acoustic|unplugged|stripped|solo|piano|radio|remastered|remaster|full\s+band)\s+)?live(?:\s*,?\s+(?:(?:at|from|in|on|and|version|session|recording|performance|edit|acoustic|remaster|remastered)|\d{4})\b[^)\]]*|\s*:[^)\]]*)?\s*[)\]]""" +
+        // A dash suffix: "Song - Live", "Song – Live from the Garden", "Song - Live 2016", "Song - Live Remaster",
+        // "Song - Live: Wembley".
+        """|[-–—]\s*live(?:\s*,?\s+(?:(?:at|from|in|on|and|version|session|recording|performance|edit|acoustic|remaster|remastered)|\d{4})\b.*|\s*:.*)?\s*$""",
     RegexOption.IGNORE_CASE,
 )
 

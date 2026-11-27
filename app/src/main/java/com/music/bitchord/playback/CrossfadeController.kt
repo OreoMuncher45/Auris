@@ -138,8 +138,12 @@ class CrossfadeController(
      * Called once per transition, halfway through the blend. After it returns, [active] must answer `incoming` and [standby]
      * must answer `outgoing` — this class re-reads neither during a transition,
      * but everything else in the service does.
+     *
+     * `late`: the outgoing player already ran on into the incoming track, so
+     * the service's own listener has booked that track change (the natural
+     * advance); the handoff moves the session without booking it again.
      */
-    private val onHandoff: (outgoing: ExoPlayer, incoming: ExoPlayer) -> Unit,
+    private val onHandoff: (outgoing: ExoPlayer, incoming: ExoPlayer, late: Boolean) -> Unit,
     /**
      * Stored Automix analysis for a media item, or an empty [TrackAnalysis]
      * when there is none yet. This is the seam Phase 1's DSP analyzer plugs
@@ -2048,7 +2052,7 @@ class CrossfadeController(
             val progress = maxOf(elapsed / axisMs, endProgress).coerceIn(0f, 1f)
             (progress * axisMs / 1000.0) to (axisMs / 1000.0)
         } else null
-        onHandoff(out, into)
+        onHandoff(out, into, late)
         val swap = visualAudioSeconds ?: endOfItemSample?.first
         val end = visualEndSeconds ?: endOfItemSample?.second
         if (swap != null && end != null) AutoMixVisualFeed.swap(visualGeneration, swap, end)
@@ -2107,6 +2111,7 @@ class CrossfadeController(
         val liveIncoming = if (late) out.currentMediaItemIndex else out.nextMediaItemIndex
         when (val plan = QueueReconcile.plan(
             queue, liveIncoming, heldQueue, into.currentMediaItemIndex, ::sameQueueEntry, ::samePlayableEntry,
+            sameRow = ::sameVisualQueueItem,
         )) {
             QueueReconcile.Bail -> {
                 TrackLog.w(TAG, "the queue changed at or before the incoming track; not handing off")

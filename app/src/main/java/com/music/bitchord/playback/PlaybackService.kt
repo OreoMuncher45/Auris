@@ -2170,6 +2170,13 @@ class PlaybackService : MediaLibraryService() {
             standby = { requireNotNull(spare) },
             onHandoff = ::adoptPlayer,
             analysisFor = { item -> trackAnalyzer.analysisFor(item.mediaId) },
+            // The mix popup's waveforms, read off the copy analysis measured; a
+            // region it can't read stays null, which the popup shows as none.
+            mixWaveform = { item, durationMs, from, to, bins ->
+                item.localConfiguration?.uri?.let { uri ->
+                    trackAnalyzer.mixWaveform(item.mediaId, uri, durationMs / 1000.0, from, to, bins)
+                }
+            },
             requestAnalysis = { item, durationMs ->
                 // Nothing the eye cannot see is worth a decode. Off screen, or
                 // with the display off, an analysis pass is the largest thing
@@ -4193,7 +4200,7 @@ class PlaybackService : MediaLibraryService() {
      * *before* the incoming one asks for it, so the app never holds two focus
      * requests at once and never briefly holds none.
      */
-    private fun adoptPlayer(outgoing: ExoPlayer, incoming: ExoPlayer) {
+    private fun adoptPlayer(outgoing: ExoPlayer, incoming: ExoPlayer, late: Boolean) {
         setSessionOwner(outgoing, owns = false)
         setSessionOwner(incoming, owns = true)
 
@@ -4218,12 +4225,18 @@ class PlaybackService : MediaLibraryService() {
         // that callback is driven explicitly instead. Without this the crossfade
         // would silently stop scrobbling, stop writing history, stop honouring
         // "sleep after this song" and stop reading ahead.
-        onTrackBecameCurrent(
-            incoming.currentMediaItem,
-            previousEnded = true,
-            reason = Player.MEDIA_ITEM_TRANSITION_REASON_AUTO,
-            alreadyAudible = true,
-        )
+        // A late handoff is the exception: the outgoing player ran on into this
+        // track first, and [playbackListener] (registered before the
+        // controller's, so told first) booked that advance as it happened.
+        // Booking it again would submit the new song as a finished listen.
+        if (HandoffBookkeeping.booksTrackChange(late)) {
+            onTrackBecameCurrent(
+                incoming.currentMediaItem,
+                previousEnded = true,
+                reason = Player.MEDIA_ITEM_TRANSITION_REASON_AUTO,
+                alreadyAudible = true,
+            )
+        }
 
         // A crossfade starts the incoming item on the player that was idle, so
         // it never delivers onMediaItemTransition to playbackListener. Keep

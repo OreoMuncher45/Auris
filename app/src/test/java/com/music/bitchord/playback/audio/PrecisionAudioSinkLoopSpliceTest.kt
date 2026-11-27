@@ -225,4 +225,48 @@ class PrecisionAudioSinkLoopSpliceTest {
         feed(crossingUs + 15_000L, 240)
         assertEquals(1, session.opens)
     }
+
+    @Test
+    fun anInterruptionRecordedBeforeTheSinkSawTheArmStands() {
+        configure()
+        port.armIncoming(LoopMixPort.InArm(handoverUs = 2_000_000L))
+        // Called off before this sink processed a buffer for it.
+        assertTrue(port.interrupt(port.armed.generation))
+        feed(900_000L, 240)
+        assertTrue("adopting the arm cleared its interruption", port.interrupted)
+        assertArrayEquals("a rejected arm still muted the song", ShortArray(480) { 1000 }, delegate.written.last())
+    }
+
+    @Test
+    fun aFailedRenderQueuesNoSilenceAheadOfTheRetirement() {
+        configure()
+        var fail = false
+        arm(LoopMixPort.Render { _, out, offset, frames ->
+            if (fail) return@Render false
+            out.fill(0.25f, offset, offset + 2 * frames); true
+        })
+        assertFalse(feed(crossingUs, 1_920))
+        val before = delegate.written.size
+        fail = true
+        assertFalse(feed(crossingUs, 1_920))
+        assertEquals("blocks were generated after the renderer failed", before, delegate.written.size)
+        assertTrue(port.interrupted)
+    }
+
+    @Test
+    fun theTakeoverBufferIsNotWrittenAfterTheMixIsRetired() {
+        configure()
+        arm()
+        assertFalse(feed(crossingUs, 1_920)) // through the loop start: taken over
+        assertTrue(port.tookOver)
+        val before = delegate.written.size
+        port.disarm()
+        // The renderer hands the held, pre-takeover buffer back.
+        assertFalse(feed(crossingUs, 1_920))
+        assertEquals("the stale buffer was written with its old timestamp", before, delegate.written.size)
+        // The controller's seek flushes the sink: the song plays from there.
+        sink.flush()
+        assertTrue(feed(5_000_000L, 240))
+        assertEquals(before + 1, delegate.written.size)
+    }
 }

@@ -19,9 +19,11 @@ audio our loop mix renders.
 - `signalsmith-linear/fft.h`: `SimpleFFT`, `SimpleRealFFT` and `RealFFT`
   return at once from a size-0 transform instead of touching bin 0 of empty
   storage; a one-sample `SimpleRealFFT` writes its DC bin in the split layout
-  too, as the packed layout does.
+  too, as the packed layout does; an empty `RealFFT` builds no twiddles; it
+  includes `<cstddef>` and `<utility>` for what it uses.
 - `signalsmith-linear/stft.h`: the default interval is never 0 for blocks
-  under 4 samples; `reset()` clears both sample counters; the one-sample
+  under 4 samples, and `setInterval` keeps a hop between one sample and one
+  block; `reset()` clears both sample counters; the one-sample
   `moveOutput` fast path counts its sample; the confined-Gaussian window's
   offset scale is computed as `1/(e^(-8f) + 1)` so it can't divide two
   underflowed values.

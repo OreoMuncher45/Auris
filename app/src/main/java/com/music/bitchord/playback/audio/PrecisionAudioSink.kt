@@ -819,6 +819,7 @@ class PrecisionAudioSink(
         // input carries a timestamp the mix has already played past, so
         // resuming it would replay that stretch of the song.
         if (armed.out != null && loopGenerating && port.interrupted) return false
+        if (awaitingFlushAfterMix) return false
         val outArm = armed.out?.takeIf { !port.interrupted }?.let { arm ->
             // Built for another rate than this sink now runs at (a reset and a
             // reconfigure since it was armed, or a sink that changed rate
@@ -1108,14 +1109,25 @@ class PrecisionAudioSink(
 
     /** A new arm (or a disarm): whatever the sink was doing for the last one is dropped. */
     private fun adoptLoopGeneration(port: LoopMixPort, generation: Int) {
+        // A mix this sink had taken over is retired: the decoder buffer it
+        // held is from before the takeover, and the mix has played past it.
+        // Nothing is written until the controller's seek flushes it.
+        if (loopGenerating) awaitingFlushAfterMix = true
         loopGeneration = generation
         loopGenerating = false
         loopRendering = false
         loopCrossing = false
         loopInStarted = false
-        port.resetStatus(generation)
+        // No status to clear: each arm's is its own (an interruption recorded
+        // before this sink saw the arm stands).
         port.resetSplice()
     }
+
+    /**
+     * Set when a mix this sink had taken over is retired, until the flush that
+     * follows: see [adoptLoopGeneration].
+     */
+    private var awaitingFlushAfterMix = false
 
     /** Whether the arm armed now is audible on this sink: crossing, generating, or the incoming side started. */
     private fun loopAudibleHere(): Boolean =
@@ -1208,9 +1220,11 @@ class PrecisionAudioSink(
             val frames = minOf(LOOP_GENERATED_FRAMES, audioBlock.capacityFrames)
             audioBlock.reset(frames)
             if (!arm.render.render(loopNextFrame, audioBlock.samples, 0, frames)) {
-                // Closed under the arm: silence, not a stale block, until the controller retires it.
-                audioBlock.samples.fill(0f, 0, frames * audioBlock.channelCount)
+                // Closed under the arm: nothing more is generated. The sink stays
+                // silent until the controller retires it (see handleBuffer), and
+                // no batch of silent blocks is queued ahead of that.
                 loop.interrupt(loopGeneration)
+                return false
             }
             loopNextFrame += frames
             // Bit-perfect switched on mid-mix: until the controller's next tick
@@ -1316,6 +1330,7 @@ class PrecisionAudioSink(
     }
 
     override fun flush() {
+        awaitingFlushAfterMix = false
         processedEndUs = C.TIME_UNSET
         dspChain.transition.leadUs = 0L
         loopInterrupted()
@@ -1344,6 +1359,7 @@ class PrecisionAudioSink(
     }
 
     override fun reset() {
+        awaitingFlushAfterMix = false
         // Keep the claimed endpoint between items when the switch is still
         // on: closing it would put the DAC back behind snd-usb-audio and the
         // next configure would pay the Feature Unit re-probe again.

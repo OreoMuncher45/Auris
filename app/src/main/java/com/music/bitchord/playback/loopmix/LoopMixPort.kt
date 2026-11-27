@@ -115,18 +115,6 @@ class LoopMixPort {
         true
     }
 
-    /**
-     * A sink adopting [generation]: its status starts clean, unless that arm was
-     * replaced meanwhile. Each arm's status is its own already (a new
-     * generation reads as neither taken over nor interrupted); this clears a
-     * mark left on the same generation.
-     */
-    fun resetStatus(generation: Int) = synchronized(lock) {
-        if (armed.generation != generation) return@synchronized
-        if (tookOverAt == generation) tookOverAt = NO_GENERATION
-        if (interruptedAt == generation) interruptedAt = NO_GENERATION
-    }
-
     // ---- What the sink publishes ---------------------------------------------------------
 
     /** The sink's format, as last configured: a loop mix needs linear PCM, stereo. */

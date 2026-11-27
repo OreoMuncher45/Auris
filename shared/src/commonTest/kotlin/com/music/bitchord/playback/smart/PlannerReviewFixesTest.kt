@@ -35,12 +35,22 @@ class PlannerReviewFixesTest {
         phraseBars = phraseBars,
     )
 
+    /** [fallback] is the plan the same pair gets with no fixed phrase asked for. */
+    private fun assertIsTheAdaptivePlan(fallback: TransitionPlan, a: TrackAnalysis, b: TrackAnalysis) {
+        val adaptive = plan(a, b)
+        assertTrue(!fallback.blocked, "blocked: ${fallback.reason}")
+        assertEquals(adaptive.reason, fallback.reason)
+        assertEquals(adaptive.transitionStyle, fallback.transitionStyle)
+        assertEquals(adaptive.transitionStart, fallback.transitionStart, 1e-9)
+        assertEquals(adaptive.transitionEnd, fallback.transitionEnd, 1e-9)
+        assertEquals(adaptive.incomingCueTime, fallback.incomingCueTime, 1e-9)
+    }
+
     @Test
     fun aFixedPhraseWithNoMeasuredBarLinesFallsBackToTheAdaptivePlan() {
-        val p = plan(track(120.0, downbeats = false), track(120.0), phraseBars = PHRASE_BARS_SHORT)
-        // Falls back to a plan, not a refusal.
-        assertTrue(!p.blocked, "blocked: ${p.reason}")
-        assertTrue(!p.reason.contains("phrase-8-bar"), "reason ${p.reason}")
+        val a = track(120.0, downbeats = false)
+        val b = track(120.0)
+        assertIsTheAdaptivePlan(plan(a, b, phraseBars = PHRASE_BARS_SHORT), a, b)
     }
 
     @Test
@@ -56,8 +66,8 @@ class PlannerReviewFixesTest {
             mixInTime = 0.0,
             mixInCandidates = listOf(MixCandidate(0.0, 1.0, "drop"), MixCandidate(16.5, 0.2, "drop")),
         )
-        val point = incomingMixInPoint(next)
-        assertTrue(point != null && point > 0.0, "mix-in point $point")
+        // The next ranked drop, not some other positive fallback.
+        assertEquals(16.5, incomingMixInPoint(next))
     }
 
     @Test
@@ -77,9 +87,7 @@ class PlannerReviewFixesTest {
     fun aBeatmatchedPhraseWithNoMeasuredCueFallsBackToTheAdaptivePlan() {
         // A trusted opening grid the model measured with no bar lines at all.
         val next = track(120.0).let { it.copy(headBeats = BeatSide(emptyList(), emptyList(), 120.0, 0.9)) }
-        val p = plan(track(120.0), next, phraseBars = PHRASE_BARS_SHORT)
-        assertTrue(!p.blocked, "blocked: ${p.reason}")
-        assertTrue(!p.reason.contains("phrase-8-bar"), "reason ${p.reason}")
+        assertIsTheAdaptivePlan(plan(track(120.0), next, phraseBars = PHRASE_BARS_SHORT), track(120.0), next)
     }
 
     @Test
@@ -193,7 +201,11 @@ class PlannerReviewFixesTest {
         val a = track(120.0).copy(beatConfidence = 0.0)
         val b = track(120.0, duration = 60.0).copy(beatConfidence = 0.0, audibleStartTime = 20.0, firstBeat = 20.0)
         val p = plan(a, b)
-        assertTrue(p.incomingCueTime <= latestIncomingCue(60.0) + 1e-9, "cue ${p.incomingCueTime}")
+        // An unblocked plain crossfade whose cue was capped, not thrown away: the
+        // 20 s audible start moved back whole bars (2 s) to under the 15 s cap.
+        assertTrue(!p.blocked, "blocked: ${p.reason}")
+        assertEquals(TransitionStyle.EQUAL_POWER, p.transitionStyle, p.reason)
+        assertEquals(14.0, p.incomingCueTime, 1e-9)
     }
 
     @Test
@@ -201,8 +213,7 @@ class PlannerReviewFixesTest {
         // The best candidate sits just after a downbeat at 0 s: snapping would make it no drop at all.
         val next = track(120.0).copy(downbeats = listOf(0.0, 2.0, 4.0), mixInTime = 0.6,
             mixInCandidates = listOf(MixCandidate(0.6, 1.0, "drop")))
-        val point = incomingMixInPoint(next)
-        assertTrue(point != null && point > 0.0, "mix-in point $point")
+        assertEquals(0.6, incomingMixInPoint(next))
     }
 
     @Test

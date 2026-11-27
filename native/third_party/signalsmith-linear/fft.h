@@ -5,6 +5,8 @@
 #include <vector>
 #include <cmath>
 #include <cstring>
+#include <cstddef> // Auris patch: std::size_t, declared here rather than by luck of include order
+#include <utility> // Auris patch: std::move
 
 #if defined(__FAST_MATH__) && (__apple_build_version__ >= 16000000) && (__apple_build_version__ <= 16000099) && !defined(SIGNALSMITH_IGNORE_BROKEN_APPLECLANG)
 #	error Apple Clang 16.0.0 generates incorrect SIMD for ARM. If you HAVE to use this version of Clang, turn off -ffast-math.
@@ -983,6 +985,7 @@ struct RealFFT {
 		tmpTime.resize(hSize);
 		
 		twiddles.resize(hSize/2 + 1);
+		if (size == 0) return; // Auris patch: an empty transform has no phases to divide out
 		
 		if (!halfBinShift) {
 			for (size_t i = 0; i < twiddles.size(); ++i) {
