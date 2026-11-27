@@ -657,6 +657,7 @@ class PlaybackService : MediaLibraryService() {
     private fun clearAutoContinuation() {
         autoContinuationJob?.cancel()
         autoContinuationJob = null
+        pendingAutoInstalls.following = null
         autoContinuationInserts.clear()
         autoContinuationEpoch++
     }
@@ -678,9 +679,9 @@ class PlaybackService : MediaLibraryService() {
     private fun refusesStaleAutoInstall(items: List<MediaItem>): Boolean {
         val entryAt = { index: Int -> items.getOrNull(index)?.queueEntryId }
         val pending = pendingAutoInstalls.refuses(items.size, entryAt, listenerStamp()) ?: return false
-        pendingAutoInstalls.refused(pending)
         Log.w("BitChord", "Auto queue not installed: the account changed after it was built")
-        clearAutoContinuation()
+        // Its own continuation only: a later queue's goes on.
+        if (pendingAutoInstalls.refused(pending)) clearAutoContinuation()
         // The controller that asked for it hears why nothing started, as it
         // does for a row refused before the build.
         pending.onRefused()
@@ -11430,6 +11431,7 @@ class PlaybackService : MediaLibraryService() {
                         pendingAutoInstalls.add(record)
                         pending = record
                         followAutoBrowseContinuation(context, record.installed)
+                        pendingAutoInstalls.following = record
                     }
             } ?: throw IllegalArgumentException("Auto browse row unusable: ${AutoBrowseContexts.Selection.AccountChanged}")
             return SessionAnswer(
@@ -11444,8 +11446,9 @@ class PlaybackService : MediaLibraryService() {
                 // replaced, and the controller hears why.
                 onStale = {
                     pending?.let { record ->
-                        pendingAutoInstalls.refused(record)
-                        clearAutoContinuation()
+                        // Its own continuation only: a queue built after this
+                        // one may have started its own since.
+                        if (pendingAutoInstalls.refused(record)) clearAutoContinuation()
                         record.onRefused()
                     }
                 },

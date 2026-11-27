@@ -388,14 +388,15 @@ object Innertube {
 
     /**
      * What a choice of channel overrides: nothing when it names no channel and
-     * no account other than the default one, so the shell's own answer
-     * stands. A personal account picked by its index alone (the second Google
-     * account in the jar, with no brand page) is still a choice: a refresh
-     * that reads the shell's default index must not sign as another account.
+     * no account index, so the shell's own answer stands. A personal account
+     * picked by its index alone (any Google account in the jar, the first
+     * included, with no brand page) is still a choice: a refresh that reads
+     * whatever index the shell defaults to must not sign as another account.
+     * Only a selection that names no index inherits the shell's.
      */
     private fun channelSelection(pageId: String?, dataSyncId: String?, authUser: String?): ChannelSelection? {
-        val index = authUser?.takeIf { it.isNotBlank() && it != "0" }
-        return if (pageId == null && dataSyncId == null && index == null) null else ChannelSelection(pageId, dataSyncId, authUser)
+        val index = authUser?.takeIf { it.isNotBlank() }
+        return if (pageId == null && dataSyncId == null && index == null) null else ChannelSelection(pageId, dataSyncId, index)
     }
 
     /**
