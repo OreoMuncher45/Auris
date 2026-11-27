@@ -11199,9 +11199,23 @@ class PlaybackService : MediaLibraryService() {
             page: Int,
             pageSize: Int,
             params: LibraryParams?,
-        ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> = scope.future(Dispatchers.IO) {
+        ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> {
             // The session these rows are read for: a write that lands after a switch is dropped.
             val owner = listenerStamp()
+            return searchResultFor(owner, query, page, pageSize, params)
+                // A switch after the check below but before Media3 delivers the
+                // rows: Auto is told the result changed, and asks again.
+                .recheckedFor(owner, { listenerStamp() }) { session.notifySearchResultChanged(browser, query, 0, params) }
+        }
+
+        /** [query]'s results for [owner], or none once another session is current. */
+        private fun searchResultFor(
+            owner: ListenerStamp,
+            query: String,
+            page: Int,
+            pageSize: Int,
+            params: LibraryParams?,
+        ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> = scope.future(Dispatchers.IO) {
             val (songs, browses) = searchCache[query]
                 ?: searchAll(query, owner).also { storeSearchResults(owner, query, it.first, it.second) }
             // Read for a session that has since ended: not delivered.
@@ -11364,15 +11378,14 @@ class PlaybackService : MediaLibraryService() {
             mediaItems: List<MediaItem>,
             startIndex: Int,
         ): Pair<List<MediaItem>, Int> {
-            val resolved = mutableListOf<MediaItem>()
-            var resolvedStart = 0
-            // A later item can suspend on the network after an Auto row was
-            // accepted for this account: such rows are noted, with their
-            // listing, and checked again once everything is resolved.
-            val generation = com.music.bitchord.data.innertube.Innertube.listenerGeneration
-            // The session the rows fetched below are read for: a write landing after a switch is dropped.
+            // The session the rows read below belong to. A later item can
+            // suspend on the network after one was read, and the account can
+            // change meanwhile, even away and back: [SessionRows.finish] takes
+            // back every row read for this session once everything is resolved.
             val owner = listenerStamp()
-            var accountBound: MutableList<Pair<Int, AutoBrowseContext>>? = null
+            val bound = innertubeStamp(owner)
+            val resolved = SessionRows<MediaItem>(owner)
+            var resolvedStart = 0
             for ((itemIndex, item) in mediaItems.withIndex()) {
                 if (itemIndex == startIndex) resolvedStart = resolved.size
                 val id = item.mediaId
@@ -11383,13 +11396,10 @@ class PlaybackService : MediaLibraryService() {
                     // Adding one browsed row to the queue resolves it to its
                     // track without replacing the queue; a stale one is dropped.
                     AutoBrowseContexts.isAutoBrowseId(id) -> {
-                        val selection = autoBrowseContexts.select(id, currentListener())
+                        val selection = autoBrowseContexts.select(id, owner.listener)
                         if (selection is AutoBrowseContexts.Selection.Found) {
-                            if (selection.context.listener != null) {
-                                (accountBound ?: mutableListOf<Pair<Int, AutoBrowseContext>>().also { accountBound = it })
-                                    .add(resolved.size to selection.context)
-                            }
-                            resolved.add(selection.song.toMediaItem())
+                            val row = listOf(selection.song.toMediaItem())
+                            if (selection.context.listener != null) resolved.addForSession(itemIndex, row) else resolved.addAll(row)
                         }
                     }
                     !searchQuery.isNullOrBlank() -> {
@@ -11399,7 +11409,7 @@ class PlaybackService : MediaLibraryService() {
                         } else {
                             try {
                                 withTimeoutOrNull(3000L) {
-                                    com.music.bitchord.data.innertube.Innertube.asListener(innertubeStamp(owner)) {
+                                    com.music.bitchord.data.innertube.Innertube.asListener(bound) {
                                         YtMusicRepository.search(searchQuery, SearchFilter.SONGS).getOrNull()
                                     }?.mapNotNull { if (it is SearchResult.Track) it.song else null }
                                 } ?: emptyList()
@@ -11408,49 +11418,45 @@ class PlaybackService : MediaLibraryService() {
                             }
                         }
                         cacheSongs(owner, songs)
-                        // Read for a session that has since ended: not queued.
-                        if (songs.isNotEmpty() && owner == listenerStamp()) {
-                            resolved.addAll(songs.map { it.toMediaItem() })
-                        }
+                        resolved.addForSession(itemIndex, songs.map { it.toMediaItem() })
                     }
                     id.startsWith("playlist:") -> {
                         val playlistId = id.removePrefix("playlist:")
                         val songs = try {
                             withTimeoutOrNull(3000L) {
-                                YtMusicRepository.browseSongs("VL$playlistId").getOrNull()?.songs
-                                    ?: YtMusicRepository.browseSongs(playlistId).getOrNull()?.songs
+                                com.music.bitchord.data.innertube.Innertube.asListener(bound) {
+                                    YtMusicRepository.browseSongs("VL$playlistId").getOrNull()?.songs
+                                        ?: YtMusicRepository.browseSongs(playlistId).getOrNull()?.songs
+                                }
                             } ?: emptyList()
                         } catch (_: Exception) {
                             emptyList()
                         }
                         cacheSongs(owner, songs)
-                        resolved.addAll(songs.map { it.toMediaItem() })
+                        resolved.addForSession(itemIndex, songs.map { it.toMediaItem() })
                     }
                     id.startsWith("browse:") -> {
                         val browseId = id.removePrefix("browse:")
                         val songs = try {
                             withTimeoutOrNull(3000L) {
-                                YtMusicRepository.browseSongs(browseId).getOrNull()?.songs
+                                com.music.bitchord.data.innertube.Innertube.asListener(bound) {
+                                    YtMusicRepository.browseSongs(browseId).getOrNull()?.songs
+                                }
                             } ?: emptyList()
                         } catch (_: Exception) {
                             emptyList()
                         }
                         cacheSongs(owner, songs)
-                        resolved.addAll(songs.map { it.toMediaItem() })
+                        resolved.addForSession(itemIndex, songs.map { it.toMediaItem() })
                     }
                     id == MEDIA_ROOT_ID || id == MEDIA_RECENTS_ID -> {
-                        val songs = cachedRecentsSongs()
-                        resolved.addAll(songs.map { it.toMediaItem() })
+                        resolved.addForSession(itemIndex, cachedRecentsSongs().map { it.toMediaItem() })
                     }
                     id == MEDIA_QUICK_PICKS_ID -> {
-                        val songs = cachedQuickPicksSongs()
-                        resolved.addAll(songs.map { it.toMediaItem() })
+                        resolved.addForSession(itemIndex, cachedQuickPicksSongs().map { it.toMediaItem() })
                     }
                     id == MEDIA_LIKED_ID -> {
-                        val songs = cachedLikedSongs()
-                        if (songs.isNotEmpty()) {
-                            resolved.addAll(songs.map { it.toMediaItem() })
-                        }
+                        resolved.addForSession(itemIndex, cachedLikedSongs().map { it.toMediaItem() })
                     }
                     id == MEDIA_DOWNLOADS_ID -> {
                         val downloaded = Downloads.getDownloadedSongs(this@PlaybackService)
@@ -11460,24 +11466,28 @@ class PlaybackService : MediaLibraryService() {
                     id == MEDIA_PLAYLISTS_ID -> {
                         val songs = try {
                             withTimeoutOrNull(2500L) {
-                                val playlists = YtMusicRepository.userPlaylists().getOrNull() ?: emptyList()
-                                val first = playlists.firstOrNull()
-                                if (first != null) {
-                                    YtMusicRepository.browseSongs("VL${first.playlistId}").getOrNull()?.songs
-                                        ?: YtMusicRepository.browseSongs(first.playlistId).getOrNull()?.songs
-                                } else null
+                                com.music.bitchord.data.innertube.Innertube.asListener(bound) {
+                                    val playlists = YtMusicRepository.userPlaylists().getOrNull() ?: emptyList()
+                                    val first = playlists.firstOrNull()
+                                    if (first != null) {
+                                        YtMusicRepository.browseSongs("VL${first.playlistId}").getOrNull()?.songs
+                                            ?: YtMusicRepository.browseSongs(first.playlistId).getOrNull()?.songs
+                                    } else null
+                                }
                             } ?: emptyList()
                         } catch (_: Exception) {
                             emptyList()
                         }
                         cacheSongs(owner, songs)
-                        resolved.addAll(songs.map { it.toMediaItem() })
+                        resolved.addForSession(itemIndex, songs.map { it.toMediaItem() })
                     }
                     id == MEDIA_LOCAL_MUSIC_ID -> {
                         val local = LocalMediaRepository.getLocalMusic(this@PlaybackService)
                         cacheSharedSongs(local)
                         resolved.addAll(local.map { it.toMediaItem() })
                     }
+                    // The track the controller named, with what is known of it:
+                    // the controller asked for this very id.
                     cachedById != null -> {
                         resolved.add(cachedById.toMediaItem())
                     }
@@ -11510,26 +11520,18 @@ class PlaybackService : MediaLibraryService() {
                 }
             }
             if (startIndex >= mediaItems.size) resolvedStart = resolved.size
-            accountBound?.let { rows ->
-                // Checked again now that every item is resolved: an account
-                // switch while a later one was out takes back the rows accepted
-                // for the account that left. Rows of no account stay.
-                val switched = com.music.bitchord.data.innertube.Innertube.listenerGeneration != generation
-                val listenerNow = currentListener()
-                val revoked = rows.filter { (_, context) -> switched || !context.belongsTo(listenerNow) }
-                    .mapTo(HashSet()) { it.first }
-                if (revoked.isNotEmpty()) {
-                    val (kept, keptStart) = withoutRevoked(resolved, revoked, resolvedStart)
-                    resolved.clear()
-                    resolved.addAll(kept)
-                    resolvedStart = keptStart
-                }
-            }
-            if (resolved.isNotEmpty()) return resolved to resolvedStart
-            // A stale browse row has no track behind it; never hand it back
-            // to the player as if it were one.
-            val kept = mediaItems.withIndex().filterNot { AutoBrowseContexts.isAutoBrowseId(it.value.mediaId) }
-            return kept.map { it.value } to kept.count { it.index < startIndex }
+            // Checked again now that every item is resolved: rows read for a
+            // session that has since ended go, rows of no account stay.
+            val now = listenerStamp()
+            val (kept, keptStart) = resolved.finish(resolvedStart, now)
+            if (kept.isNotEmpty()) return kept to keptStart
+            // A stale browse row has no track behind it, and a request read
+            // for a session that has since ended is not this one's to play:
+            // neither goes back to the player as if it were a track.
+            val stale = resolved.staleRequests(now)
+            val fallback = mediaItems.withIndex()
+                .filterNot { AutoBrowseContexts.isAutoBrowseId(it.value.mediaId) || it.index in stale }
+            return fallback.map { it.value } to fallback.count { it.index < startIndex }
         }
     }
 
