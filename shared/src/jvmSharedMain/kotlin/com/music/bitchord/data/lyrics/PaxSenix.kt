@@ -244,6 +244,7 @@ object PaxSenix {
                 },
                 words = if (untimed) emptyList() else timed,
                 sungUntilMs = nextLine,
+                timed = true,
             )
         }
         return lines.withInstrumentalGaps().takeIf { it.any { line -> line.text.isNotBlank() } }
