@@ -2963,6 +2963,14 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_EXPORT_DOWNLOADS, value).apply()
     }
 
+    /**
+     * Whether the listener has ever set [downloadLikedSongs] themselves. A
+     * Liked Music record from before the setting existed carries the only
+     * choice there is; see [DownloadedPlaylistSync.reconcileLikedSwitch].
+     */
+    val downloadLikedSongsChosen: Boolean
+        get() = ::prefs.isInitialized && prefs.contains(KEY_DOWNLOAD_LIKED_SONGS)
+
     fun setDownloadLikedSongs(value: Boolean) {
         downloadLikedSongs.value = value
         prefs.edit().putBoolean(KEY_DOWNLOAD_LIKED_SONGS, value).apply()

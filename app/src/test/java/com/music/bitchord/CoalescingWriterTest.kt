@@ -47,6 +47,23 @@ class CoalescingWriterTest {
         assertEquals(listOf(mapOf("k" to "1")), writes)
     }
 
+    /**
+     * A payload carries only the keys it changed. A collection record landing
+     * on a pending saved-track write used to replace it, so the tracks' files
+     * were on disk but their records were gone after a restart.
+     */
+    @Test
+    fun `payloads for different keys merge instead of replacing each other`() = TestScope().run {
+        val writes = mutableListOf<Map<String, String>>()
+        val w = writer(writes, this)
+        w.submit(mapOf("saved" to "a", "meta" to "a"))
+        w.submit(mapOf("collections" to "c"))
+        w.submit(mapOf("saved" to "b"))
+        advanceUntilIdle()
+        assertEquals(1, writes.size)
+        assertEquals(mapOf("saved" to "b", "meta" to "a", "collections" to "c"), writes.single())
+    }
+
     @Test
     fun `a burst coalesces down to the final state`() = TestScope().run {
         val writes = mutableListOf<Map<String, String>>()

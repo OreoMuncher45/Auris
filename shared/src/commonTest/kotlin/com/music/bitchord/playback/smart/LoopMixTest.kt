@@ -5,6 +5,7 @@ import kotlin.math.ceil
 import kotlin.math.roundToInt
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -538,5 +539,19 @@ class LoopMixTest {
         val why = StringBuilder()
         assertNull(LoopMix.plan(out, 200.0, analysis(120.0, 180.0), 180.0, 0.0, clear, clear, why = why))
         assertTrue("no level" in why.toString(), why.toString())
+    }
+
+    @Test
+    fun aBarMeasuredByOneLoudFrameIsNotAMeasuredBar() {
+        // A two-second bar (120 BPM) with a single 100 ms frame measured in it.
+        val sparse = CurveWindow(1.0, LEVEL_FRAME_RATE, floatArrayOf(0.9f))
+        assertTrue(LoopMix.meanRms(listOf(sparse), 0.0, 2.0).isNaN())
+    }
+
+    @Test
+    fun aFullyMeasuredBarOffTheFrameGridStillCounts() {
+        // Frames every 100 ms from 0.05 s: the bar 0..2 s loses a part-frame at each end.
+        val window = CurveWindow(0.05, LEVEL_FRAME_RATE, FloatArray(25) { 0.5f })
+        assertFalse(LoopMix.meanRms(listOf(window), 0.0, 2.0).isNaN())
     }
 }
