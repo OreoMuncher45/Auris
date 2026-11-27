@@ -182,6 +182,31 @@ internal class PlaybackStreamResolver(
         val fullMediaId = mediaIdIn(dataSpec.uri)
         val trackParam = dataSpec.uri.getQueryParameter("t")
         val configId = dataSpec.uri.getQueryParameter("s")
+        // The analyser's read of a recording only a source holds (no YouTube
+        // match to measure instead), at a lossless or immersive playback tier:
+        // answered with a capped lossy copy, without the upgrade or the pin,
+        // as for a catalogue row. See [AutomixAnalysisSource.analysisRead].
+        val playbackRequest = SourceResolver.requestForNow()
+        if (!directYouTube &&
+            AutomixAnalysisSource.isAnalysisRead(
+                dataSpec.uri.getQueryParameter(AutomixAnalysisSource.ANALYSIS_READ_PARAMETER),
+            ) &&
+            (playbackRequest.wantsLossless || playbackRequest.wantsAtmos)
+        ) {
+            val light = try {
+                runBlocking(about) {
+                    withTimeout(RESOLVE_TIMEOUT_MS) {
+                        SourceResolver.resolve(dataSpec.uri, StreamRequest.Capped(AutomixAnalysisSource.ANALYSIS_KBPS))
+                    }
+                }
+            } catch (e: TimeoutCancellationException) {
+                throw java.io.IOException("Source resolution timed out for an analysis read", e)
+            } ?: throw java.io.IOException("No enabled source could serve an analysis read")
+            return dataSpec.buildUpon()
+                .setUri(Uri.parse(light.url))
+                .setHttpRequestHeaders(light.headers)
+                .build()
+        }
         if (!directYouTube) {
             // An upgraded item carries a marker and its stream has
             // already been found — see [QualityUpgrade]. Answered

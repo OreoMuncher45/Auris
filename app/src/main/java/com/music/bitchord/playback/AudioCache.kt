@@ -2512,7 +2512,10 @@ object AudioCache {
      * whether it can be measured is that source's own switch, read where the
      * row is resolved — not YouTube's.
      */
-    private fun isCatalogueRow(videoId: String): Boolean = videoId.startsWith(SPOTIFY_ROW_PREFIX)
+    private fun isCatalogueRow(videoId: String): Boolean =
+        // A Spotify catalogue row, or a source's own track (`<source>|<track>`,
+        // a key no YouTube id can take).
+        videoId.startsWith(SPOTIFY_ROW_PREFIX) || '|' in videoId
 
     /** The base key of a source-backed track's own entry — see [keyFactory]. */
     private fun sourceBaseKey(uri: Uri): String? {
@@ -2788,8 +2791,12 @@ object AudioCache {
         //
         // Read defensively: [Uri.getQueryParameter] throws on an opaque URI,
         // and a source-backed track's URI is whatever the addon handed over.
+        // A recording only a source holds (no YouTube match to measure
+        // instead) is measured on its own audio, under its own source key, like
+        // a catalogue row: see [isCatalogueRow].
         val videoId = runCatching { uri.getQueryParameter("v") }.getOrNull()
-        if (videoId == null) return false
+            ?: sourceBaseKey(uri)
+            ?: return false
         // The head is a YouTube copy, fetched under the analysis-only marker —
         // see [AutomixAnalysisSource] — and read to measure a tempo rather
         // than to be played. The YouTube *source* switch is about what the
@@ -3037,7 +3044,7 @@ object AudioCache {
                     // tagged it, because it is fetched outside the player's own
                     // data source, and a whole song per analysed track is how a
                     // phone fills up.
-                    tagAnalysisCopy(filled, videoId, uri)
+                    tagAnalysisCopy(filled, mediaIdIn(uri) ?: videoId, uri)
                     val after = cachedBytesOf(filled, target)
                     // A copy shorter than a size-unknown round's guess is whole too.
                     complete = (after >= target || (measured > 0L && after >= measured)) && tailHeld

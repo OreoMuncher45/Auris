@@ -152,13 +152,14 @@ object SourceResolver {
      * @param uri a `bitchord://source?...` URI as built by [SourceRegistry.trackUri].
      * @return the stream, or null when nothing enabled could serve the track.
      */
-    suspend fun resolve(uri: Uri): SourceStream? {
+    suspend fun resolve(uri: Uri, request: StreamRequest = requestForNow()): SourceStream? {
         val configId = uri.getQueryParameter("s") ?: return null
         val trackId = uri.getQueryParameter("t") ?: return null
         return resolve(
             configId = configId,
             trackId = trackId,
             target = targetIn(uri),
+            request = request,
         )
     }
 
@@ -188,8 +189,8 @@ object SourceResolver {
         configId: String,
         trackId: String,
         target: TrackMatcher.Target,
+        request: StreamRequest = requestForNow(),
     ): SourceStream? {
-        val request = requestForNow()
         val active = SourceRegistry.activeForPlayback()
         // A pin identifies where the row originally came from; it does not
         // override the source switch. Looking the instance up directly used to

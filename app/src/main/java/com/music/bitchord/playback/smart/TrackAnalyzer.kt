@@ -1108,6 +1108,12 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      * same title/artist/runtime matching hints as a YouTube item. Resolve that
      * identity once, then keep playback on its original URI while analysis
      * fills and reads the separately pinned YouTube Opus entry.
+     *
+     * A recording with no YouTube match is measured on its own audio, read
+     * through the analyser's own light copy of it (see
+     * [AudioCache.requestAnalysisHead]), rather than left unmeasured for the
+     * session: every track is analysed. So is one whose search keeps failing,
+     * after [SOURCE_SEARCH_ATTEMPTS] tries.
      */
     private fun analysisUriFor(trackId: String, playbackUri: Uri): Uri? {
         if (playbackUri.getQueryParameter("v") != null || playbackUri.authority != "source") return playbackUri
@@ -1139,7 +1145,8 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                     sourceAnalysisUris[trackId] = Uri.parse(AutomixAnalysisSource.opusUri(match.videoId))
                     Log.d(TAG, "Automix analysis for $trackId will use YouTube Opus ${match.videoId}")
                 } else {
-                    Log.d(TAG, "No YouTube match for Automix analysis of $trackId")
+                    sourceAnalysisUris[trackId] = playbackUri
+                    Log.d(TAG, "No YouTube match for $trackId; analysing its own audio")
                 }
             } catch (error: Throwable) {
                 if (error is CancellationException) throw error
@@ -1151,6 +1158,10 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                     sourceResolutionRetryAt.remove(trackId)
                 } else {
                     val failures = sourceResolutionFailures.merge(trackId, 1, Int::plus)!!
+                    if (failures >= SOURCE_SEARCH_ATTEMPTS) {
+                        // Still asked for later; measured on its own audio meanwhile.
+                        sourceAnalysisUris.putIfAbsent(trackId, playbackUri)
+                    }
                     val delayMs = (SOURCE_RETRY_BASE_MS shl (failures - 1).coerceAtMost(5))
                     sourceResolutionRetryAt[trackId] = SystemClock.elapsedRealtime() + delayMs
                 }
@@ -2059,6 +2070,9 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
 
         /** First wait before a failed catalogue search is retried; doubles per failure, to 16 minutes. */
         const val SOURCE_RETRY_BASE_MS = 30_000L
+
+        /** Failed searches after which a source track is measured on its own audio. */
+        const val SOURCE_SEARCH_ATTEMPTS = 3
 
         /**
          * What an unmeasured instant reads as. Below the policy's VOCAL_ACTIVE_THRESHOLD by
