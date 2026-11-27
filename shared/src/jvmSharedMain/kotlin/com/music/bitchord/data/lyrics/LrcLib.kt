@@ -121,6 +121,7 @@ object LrcLib {
                     text = plain,
                     words = words.shiftedBy(timeMs - firstMs),
                     alignment = alignment,
+                    timed = true,
                 )
             }
         }.sortedBy { it.timeMs }.toList()
@@ -136,7 +137,7 @@ object LrcLib {
         // word — so give the run-up its own break when it's long enough.
         val first = kept.firstOrNull() ?: return kept
         return if (!first.isGap && first.timeMs >= MIN_GAP_MS) {
-            listOf(LyricLine(0L, "")) + kept
+            listOf(LyricLine(0L, "", timed = true)) + kept
         } else {
             kept
         }

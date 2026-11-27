@@ -19,7 +19,7 @@ internal fun List<LyricLine>.withInstrumentalGaps(): List<LyricLine> {
     if (isEmpty()) return this
     val out = ArrayList<LyricLine>(size + 4)
     // Nothing stands for the intro, so give the run-up its own break.
-    if (first().timeMs >= MIN_GAP_MS) out += LyricLine(0L, "")
+    if (first().timeMs >= MIN_GAP_MS) out += LyricLine(0L, "", timed = true)
     forEachIndexed { index, line ->
         out += line
         val next = getOrNull(index + 1) ?: return@forEachIndexed
@@ -28,7 +28,7 @@ internal fun List<LyricLine>.withInstrumentalGaps(): List<LyricLine> {
         // A marker sharing its line's stamp could never be reached: the cursor
         // takes the last line whose stamp has passed, so the note would sit on
         // top of the line it belongs to and the words would never light up.
-        if (silence >= MIN_GAP_MS && line.endMs > line.timeMs) out += LyricLine(line.endMs, "")
+        if (silence >= MIN_GAP_MS && line.endMs > line.timeMs) out += LyricLine(line.endMs, "", timed = true)
     }
     return out
 }
