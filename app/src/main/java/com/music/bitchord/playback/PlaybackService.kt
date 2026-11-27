@@ -90,6 +90,7 @@ import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.SettableFuture
 import com.google.common.util.concurrent.MoreExecutors
 import kotlinx.coroutines.guava.future
+import com.music.bitchord.playback.audio.SleepFadeLevel
 import com.music.bitchord.playback.audio.ContainerBitrate
 import com.music.bitchord.playback.audio.BitPerfectMixer
 import com.music.bitchord.playback.audio.ExclusiveSession
@@ -8127,6 +8128,9 @@ class PlaybackService : MediaLibraryService() {
                             val left = (deadline - SystemClock.elapsedRealtime()).coerceAtLeast(0L)
                             val gain = SleepTimer.fadeVolume(left, span)
                             sleepFadeGain = gain
+                            // Under bit-perfect the player's volume is held at
+                            // unity: the sinks fade the samples from this instead.
+                            SleepFadeLevel.gain = gain
                             player?.let {
                                 it.volume = gain
                                 faded = it
@@ -8147,6 +8151,7 @@ class PlaybackService : MediaLibraryService() {
                 } finally {
                     SleepTimer.fadingOut = false
                     sleepFadeGain = null
+                    SleepFadeLevel.gain = 1f
                     // The player the fade last turned down: after a rebuild, the
                     // replacement (see [rebuildPlayers]), never a released one.
                     (player?.takeIf { faded != null } ?: faded)?.volume = 1f
