@@ -1765,10 +1765,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     ) {
         if (!requireSignIn() || playlists.isEmpty()) return
         // The account the picker's playlists belong to: every read and edit
-        // below goes out as it, or not at all.
-        val startedAs = com.music.bitchord.data.innertube.Innertube.listenerStamp()
+        // below goes out as it, or not at all (see [addingAs]).
+        val transitions = com.music.bitchord.data.innertube.Innertube.accountTransitionCount()
         viewModelScope.launch {
-            val outcomes = playlists.map { addOne(it, song, startedAs) }
+            val startedAs = addingAs(transitions)
+            val outcomes = playlists.map { if (startedAs == null) AddOutcome.FAILED else addOne(it, song, startedAs) }
             onResult(
                 outcomes.count { it == AddOutcome.ADDED },
                 outcomes.count { it == AddOutcome.ALREADY_THERE },
@@ -1778,6 +1779,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private enum class AddOutcome { ADDED, ALREADY_THERE, FAILED }
+
+    /**
+     * The session a playlist add goes out as, taken once the session scope is
+     * in (see [settleCredentials]): reading it in can move the generation
+     * without changing whose session it is, and a stamp taken before that
+     * would refuse the add for nothing. Null when an actual account
+     * transition (a sign-in, sign-out or profile switch) landed since the
+     * add was asked for, at [transitions]: the playlists picked belong to the
+     * account that left.
+     */
+    private suspend fun addingAs(transitions: Long): com.music.bitchord.data.innertube.Innertube.ListenerStamp? {
+        settleCredentials()
+        return com.music.bitchord.data.innertube.Innertube.listenerStamp()
+            .takeIf { com.music.bitchord.data.innertube.Innertube.accountTransitionCount() == transitions }
+    }
 
     /**
      * Adds every track of a release — an album, a playlist — to the playlists
@@ -1800,9 +1816,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     ) {
         if (!requireSignIn() || playlists.isEmpty() || songs.isEmpty()) return
         // As [addToPlaylists]: the add goes out as the account it started under.
-        val startedAs = com.music.bitchord.data.innertube.Innertube.listenerStamp()
+        val transitions = com.music.bitchord.data.innertube.Innertube.accountTransitionCount()
         viewModelScope.launch {
-            val outcomes = playlists.map { addReleaseTo(it, songs, startedAs) }
+            val startedAs = addingAs(transitions)
+            val outcomes = playlists.map {
+                if (startedAs == null) AddOutcome.FAILED to 0 else addReleaseTo(it, songs, startedAs)
+            }
             onResult(
                 outcomes.count { it.first == AddOutcome.ADDED },
                 outcomes.sumOf { it.second },
@@ -1817,7 +1836,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      *
      * Every read and edit is bound to [startedAs], the account the playlist
      * was picked under: after a switch the edit fails with nothing sent,
-     * rather than go out signed as another account.
+     * rather than go out signed as another account. Bound recoverably: a
+     * rejection for stale credentials refreshes that account's scope and is
+     * retried once as it, and only the batch that was rejected is resent.
      */
     private suspend fun addReleaseTo(
         playlist: UserPlaylist,
@@ -1835,7 +1856,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             ?.data?.mapNotNullTo(HashSet()) { it.videoId }.orEmpty()
         val unseen = songs.mapNotNull { it.videoId }.filter { it !in visible }.distinct()
         val listed = if (unseen.isEmpty()) emptySet() else {
-            com.music.bitchord.data.innertube.Innertube.asListener(startedAs) { YtMusicRepository.allSongs(playlist.browseId) }
+            com.music.bitchord.data.innertube.Innertube.asListenerRecoverably(startedAs) { YtMusicRepository.allSongs(playlist.browseId) }
                 .getOrNull()?.mapNotNullTo(HashSet()) { it.videoId }
         }
         val ids = unseen.filter { id -> listed == null || id !in listed }
@@ -1843,7 +1864,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         var failed = false
         val addedIds = mutableListOf<String>()
         ids.chunked(ADD_TO_PLAYLIST_BATCH).forEach { batch ->
-            val result = com.music.bitchord.data.innertube.Innertube.asListener(startedAs) {
+            val result = com.music.bitchord.data.innertube.Innertube.asListenerRecoverably(startedAs) {
                 YtMusicRepository.addToPlaylist(playlist.playlistId, batch)
             }
             if (result.isFailure) {
@@ -1881,11 +1902,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // prevention is best effort (see addReleaseTo).
         val visible = (_detailStack.value.latestOpening(playlist.browseId)?.songs as? UiState.Success)?.data
         if (visible?.any { it.videoId == song.videoId } == true) return AddOutcome.ALREADY_THERE
-        val known = com.music.bitchord.data.innertube.Innertube.asListener(startedAs) {
+        val known = com.music.bitchord.data.innertube.Innertube.asListenerRecoverably(startedAs) {
             YtMusicRepository.allSongs(playlist.browseId)
         }.getOrNull()
         if (known?.any { it.videoId == song.videoId } == true) return AddOutcome.ALREADY_THERE
-        return com.music.bitchord.data.innertube.Innertube.asListener(startedAs) {
+        return com.music.bitchord.data.innertube.Innertube.asListenerRecoverably(startedAs) {
             YtMusicRepository.addToPlaylist(playlist.playlistId, listOf(song.videoId))
         }.fold(
             onSuccess = { added ->
@@ -5546,7 +5567,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // Every resolver verdict and personalised page belongs to the
             // identity that was active before validation succeeded.
             StreamResolver.onSessionChanged()
-            if (wasSignedIn) clearListenerState()
+            // A first sign-in retires the guest's YouTube pages too: their
+            // continuations are bound to the guest session and would refuse
+            // every further page. Device and Spotify pages stay.
+            if (wasSignedIn) clearListenerState() else dropListenerPages()
             onSearchListenerChanged()
             reloadForAccount()
             loadChannels(force = true)

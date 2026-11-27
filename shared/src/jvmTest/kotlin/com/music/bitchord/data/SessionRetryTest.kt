@@ -133,6 +133,61 @@ class SessionRetryTest {
     }
 
     @Test
+    fun `a playlist add bound recoverably to A is refreshed and retried once as A`() = runBlocking {
+        Innertube.cookie = "SID=A"
+        answer { index -> if (index == 0) 401 else 200 }
+        Innertube.ensureSessionScope()
+        val a = Innertube.listenerStamp()
+        val result = Innertube.asListenerRecoverably(a) { YtMusicRepository.addToPlaylist("PL1", listOf("vvvvvvvvvvv")) }
+        assertTrue(result.isSuccess, "${result.exceptionOrNull()}")
+        assertEquals(listOf("SID=A", "SID=A"), writes.map { it.cookie })
+        assertEquals(listOf("shell", "edit", "shell", "edit"), order())
+    }
+
+    @Test
+    fun `a recoverable add is never retried as another account`() = runBlocking {
+        Innertube.cookie = "SID=A"
+        var shells = 0
+        answer(
+            shell = { _ ->
+                // The second shell read is the rejection's refresh; a switch lands during it.
+                if (++shells == 2) Innertube.cookie = "SID=B"
+                shellFor()
+            },
+        ) { 401 }
+        Innertube.ensureSessionScope()
+        val a = Innertube.listenerStamp()
+        val result = Innertube.asListenerRecoverably(a) { YtMusicRepository.addToPlaylist("PL1", listOf("vvvvvvvvvvv")) }
+        assertTrue(result.isFailure)
+        assertEquals(listOf("SID=A"), writes.map { it.cookie })
+    }
+
+    @Test
+    fun `only the rejected batch of a recoverable add is sent again`() = runBlocking {
+        Innertube.cookie = "SID=A"
+        // The first batch is accepted, the second rejected once.
+        answer { index -> if (index == 1) 401 else 200 }
+        Innertube.ensureSessionScope()
+        val a = Innertube.listenerStamp()
+        Innertube.asListenerRecoverably(a) {
+            assertTrue(YtMusicRepository.addToPlaylist("PL1", listOf("aaaaaaaaaaa")).isSuccess)
+            assertTrue(YtMusicRepository.addToPlaylist("PL1", listOf("bbbbbbbbbbb")).isSuccess)
+        }
+        assertEquals(3, writes.size)
+    }
+
+    @Test
+    fun `reading the session scope in is not an account transition, a profile switch is`() = runBlocking {
+        Innertube.cookie = "SID=A"
+        answer { 200 }
+        val before = Innertube.accountTransitionCount()
+        Innertube.ensureSessionScope()
+        assertEquals(before, Innertube.accountTransitionCount())
+        Innertube.selectChannel("brand", null, "0")
+        assertTrue(Innertube.accountTransitionCount() > before)
+    }
+
+    @Test
     fun `a rejected request bound to its session refreshes nothing, so the caller's stamp stays current`() = runBlocking {
         Innertube.cookie = "SID=A"
         answer { 401 }
