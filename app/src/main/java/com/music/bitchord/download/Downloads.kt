@@ -363,6 +363,18 @@ object Downloads {
     private val confirmed = HashMap<String, Long>()
     private var startGeneration = 0L
 
+    /**
+     * Ids a worker took off the queue while their start was still unanswered,
+     * to that attempt. A file already on disk can be prepared and finished
+     * before the start returns, leaving the id in neither [pending] nor
+     * [running]; it was admitted all the same. Under [lock].
+     */
+    private val takenWhileStarting = HashMap<String, Long>()
+
+    /** Whether [id] counts as admitted under [generation]. Under [lock]. */
+    private fun admittedUnder(id: String, generation: Long): Boolean =
+        id in pending || id in running || takenWhileStarting[id] == generation
+
     /** Joins [id]'s unanswered start, or begins one; returns the attempt waited on. Under [lock]. */
     private fun waitOnStart(id: String, fresh: Boolean): Long {
         val attempt = starting[id]
@@ -372,6 +384,7 @@ object Downloads {
         }
         val created = StartAttempt(++startGeneration, 1)
         starting[id] = created
+        takenWhileStarting.remove(id)
         return created.generation
     }
 
@@ -396,13 +409,13 @@ object Downloads {
                     // Already confirmed by another waiter's successful answer to this
                     // same attempt: admitted, whatever this call's own start did,
                     // as long as [confirmed] still records this attempt for the id.
-                    if (confirmed[id] == generation && (id in pending || id in running)) kept += id
+                    if (confirmed[id] == generation && admittedUnder(id, generation)) kept += id
                     continue
                 }
                 if (started) {
                     starting.remove(id)
                     confirmed[id] = generation
-                    if (id in pending || id in running) kept += id
+                    if (admittedUnder(id, generation)) kept += id
                 } else if (attempt.waiters > 1) {
                     attempt.waiters--
                 } else {
@@ -651,6 +664,10 @@ object Downloads {
                     already += id
                     continue
                 }
+                // Read here, under the queue's lock, rather than trusted from
+                // the caller's earlier read: a track the listener deleted
+                // while a sync pass was browsing must not come back.
+                if (automatic && id in _deletedByHand.value) continue
                 if (!AppSettings.downloadsAllowedNow && id !in fromCache) {
                     refused += song
                     continue
@@ -730,6 +747,7 @@ object Downloads {
             // start's answer settles nothing.
             starting.remove(videoId)
             confirmed.remove(videoId)
+            takenWhileStarting.remove(videoId)
             if (videoId !in running) return@synchronized null
             running.remove(videoId)
         }
@@ -1022,13 +1040,23 @@ object Downloads {
         }
         // A track still downloading has no file to delete yet, and would
         // arrive after the release is gone.
-        val inFlight = synchronized(lock) { record.videoIds.filter { it in pending || it in running } }
+        // Its job is waited out after the cancel: a worker already past its
+        // last suspension point still commits, and would record a file the
+        // deletes below had not found yet.
+        val (inFlight, jobs) = synchronized(lock) {
+            val ids = record.videoIds.filter { it in pending || it in running }
+            ids to ids.mapNotNull { running[it] }
+        }
         inFlight.forEach(::cancel)
+        kotlinx.coroutines.withTimeoutOrNull(FINISHING_JOIN_MS) { jobs.forEach { it.join() } }
         var any = false
         record.videoIds.forEach { videoId -> if (delete(context, videoId)) any = true }
         forgetCollection(id)
         return any
     }
+
+    /** How long [deleteCollection] waits for a cancelled download to wind down. */
+    private const val FINISHING_JOIN_MS = 5_000L
 
     /**
      * How one downloaded playlist is addressed as a page of its own.
@@ -1670,6 +1698,7 @@ object Downloads {
         val entry = pending.entries.firstOrNull() ?: return null
         pending.remove(entry.key)
         running[entry.key] = null
+        starting[entry.key]?.let { takenWhileStarting[entry.key] = it.generation }
         entry.value
     }
 
