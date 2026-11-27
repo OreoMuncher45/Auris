@@ -164,7 +164,7 @@ object TtmlLyrics {
             // The paragraph's own end is the only thing that says when the
             // singing stops, so carry it — a break can't be found without it.
             val end = time(paragraph.getAttribute("end"))?.takeIf { it > begin }
-            return LyricLine(timeMs = begin, text = text, sungUntilMs = end)
+            return LyricLine(timeMs = begin, text = text, sungUntilMs = end, timed = true)
         }
 
         // Prefer the paragraph's own stamp: Apple sets it a hair before the
@@ -176,6 +176,7 @@ object TtmlLyrics {
             text = words.joinToString(" ") { it.text },
             words = words,
             background = backing,
+            timed = true,
         )
     }
 
