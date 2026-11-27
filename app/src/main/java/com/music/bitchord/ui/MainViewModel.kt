@@ -659,6 +659,25 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** The session each open page was opened under, by opening; see [loadMoreDetail]. Main thread. */
     private val openingStamps = HashMap<Long, Innertube.ListenerStamp>()
 
+    /**
+     * [request] for the page opened as [opened], sent as its session [stamp]:
+     * never as another listener, its token being that session's. Bound
+     * recoverably: a rejection for stale credentials refreshes that same
+     * listener's scope and is retried once under it, and the refreshed
+     * session becomes the page's own (in [openingStamps]), so its later pages
+     * go out under it rather than being refused for the generation the
+     * refresh moved. Called on the main thread.
+     */
+    private suspend fun <T> asOpening(opened: Long, stamp: Innertube.ListenerStamp, request: suspend () -> T): T =
+        Innertube.asListenerRecoverably(stamp) {
+            request().also {
+                val adopted = Innertube.boundStamp()
+                if (adopted != null && adopted != stamp && adopted.listener == stamp.listener && openingStamps[opened] == stamp) {
+                    openingStamps[opened] = adopted
+                }
+            }
+        }
+
     private data class SearchCacheEntry(
         val rows: List<SearchResult>,
         val continuation: String?,
@@ -1861,10 +1880,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val failed = result.failed
         val addedIds = result.added.keys
         libraryStale = true
-        // The playlist's own page may be open behind the picker.
+        // The playlist's own page may be open behind the picker. Each row
+        // carries the entry id this playlist gave it, or none: never the
+        // source's, which names a row of another playlist (see Song.setVideoId).
         appendToOpenPlaylist(
             playlist.browseId,
-            songs.filter { it.videoId in addedIds.toSet() },
+            result.rowsOf(songs),
         )
         // A playlist that was downloaded whole is a promise about a moving
         // thing: these tracks are now part of it, so they belong on the device
@@ -5213,8 +5234,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // credentials too: validating another account swaps them before the
         // listener key moves. And only into the page instance it was started
         // for: closed, or closed and opened again, ends it.
+        // The page's session moves to a same-listener refresh one of its
+        // requests recovered through (see [asOpening]): the walk goes on
+        // under it, and stops for anything else.
         fun stillOurs() = listenerKey() == listener &&
-            Innertube.listenerGeneration == credentials &&
+            Innertube.listenerGeneration == (openingStamps[opened]?.generation ?: credentials) &&
             isDetailOpen(browseId, opened)
         viewModelScope.launch {
             followContinuations(
@@ -5229,7 +5253,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         if (opening == null) {
                             YtMusicRepository.moreSongs(next).getOrNull()
                         } else {
-                            Innertube.asListener(opening) { YtMusicRepository.moreSongs(next) }.getOrNull()
+                            asOpening(opened, opening) { YtMusicRepository.moreSongs(next) }.getOrNull()
                         }
                     }?.takeIf { stillOurs() }
                 },
@@ -5319,8 +5343,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             // Refused where the request's credentials are taken if the session
             // is no longer that one (Innertube.asListener).
-            val fetched = Innertube.asListener(stamp) { YtMusicRepository.moreSongs(token) }.getOrNull()
-                ?.takeIf { listenerKey() == listener && Innertube.listenerStamp() == stamp }
+            val fetched = asOpening(opened, stamp) { YtMusicRepository.moreSongs(token) }.getOrNull()
+                ?.takeIf { listenerKey() == listener && Innertube.listenerStamp() == (openingStamps[opened] ?: stamp) }
             val stack = _detailStack.value
             val index = stack.indexOfFirst { it.browseId == browseId && it.opening == opened }
             // Closed while its rows were out: nothing to grow or reopen. With

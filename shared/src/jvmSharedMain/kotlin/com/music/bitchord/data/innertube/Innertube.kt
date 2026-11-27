@@ -580,6 +580,9 @@ object Innertube {
      * under it, rather than being refused for a generation the refresh moved.
      * Does nothing for a strict binding, or none.
      */
+    /** The session the caller's requests are bound to now, if any: a recoverable binding's may have moved. */
+    suspend fun boundStamp(): ListenerStamp? = kotlinx.coroutines.currentCoroutineContext()[ExpectedListener]?.stamp
+
     suspend fun adoptRefreshedBinding(refreshed: ListenerStamp) {
         val binding = kotlinx.coroutines.currentCoroutineContext()[ExpectedListener] ?: return
         if (!binding.recoverable || binding.stamp.listener != refreshed.listener) return

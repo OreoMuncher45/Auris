@@ -1163,7 +1163,18 @@ object YtMusicRepository {
         val alreadyThere: Boolean,
         /** Whether a batch was refused; the tracks in [added] went in regardless. */
         val failed: Boolean,
-    )
+    ) {
+        /**
+         * The rows of [songs] that went in, once each, as the playlist now
+         * holds them: with the entry id it gave each one, or none where the
+         * answer named none. Never a source entry id, which names a row of
+         * another playlist and would make removing it a no-op or wrong.
+         */
+        fun rowsOf(songs: List<Song>): List<Song> =
+            songs.filter { it.videoId in added }.distinctBy { it.videoId }.map { song ->
+                song.copy(setVideoId = added[song.videoId]?.takeIf { it.isNotEmpty() })
+            }
+    }
 
     /**
      * Adds those of [videoIds] that playlist [playlistId] (browsed as
