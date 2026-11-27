@@ -234,12 +234,12 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             modelless.release(trackId, headAttempts) { results[it] }
             // A head result measured with the models gives its prefix claim
             // back too, so the same prefix can rebuild it.
-            headClaims.remove(trackId)?.let { (key, prefix) -> headAttempts.remove(key, prefix) }
+            headClaims.release(trackId, headAttempts)
         }
     }
 
-    /** The head claim each published head result was measured under: (copy key, prefix). */
-    private val headClaims = ConcurrentHashMap<String, Pair<String, Long>>()
+    /** The head claim each published head result was measured under. */
+    private val headClaims = HeadClaims()
 
     /**
      * This result as planning should see one measured without the models: its
@@ -655,7 +655,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                     if (whole != null && released) return@execute
                     if (whole != null) {
                         if (measuredOn != null) measuredCopies[trackId] = measuredOn
-                        headClaims.remove(trackId)
+                        headClaims.drop(trackId)
                         remember(trackId, whole)
                         provisional.remove(trackId)
                         shortDecodes.remove(trackId)
@@ -711,7 +711,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                         val published = head.copy(measuredOn = headRendition.key)
                             .let { if (withModels) it else it.withoutBeatMatch() }
                         // Its claim, so an eviction can hand it back: see [forget].
-                        headClaims[trackId] = headRendition.key to headRendition.cachedPrefix
+                        headClaims.record(trackId, headRendition.key, headRendition.cachedPrefix)
                         remember(trackId, published)
                         if (withModels) {
                             modelless.forget(trackId)
@@ -2134,6 +2134,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         headAttempts.clear()
         headSkipLogged.clear()
         provisional.clear()
+        headClaims.clear()
         restoreAttempted.clear()
         shortDecodes.clear()
         badRenditions.clear()
@@ -2141,7 +2142,6 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         triedRenditions.clear()
         discarded.clear()
         modelless.clear()
-        headClaims.clear()
         tracker.release()
         vocals.release()
     }
@@ -2426,4 +2426,29 @@ internal fun loopDeckCopy(measured: String?, playing: String, plannedOn: String?
         return LoopDeckCopy(null, "planned on $plannedOn, now measured on $measured")
     }
     return LoopDeckCopy(measured, null)
+}
+
+/**
+ * The prefix claim each published head result was measured under, so an
+ * eviction can hand it back: a claim left held after its result is gone keeps
+ * the head pass from rebuilding it until the prefix grows.
+ */
+internal class HeadClaims {
+    private val claims = ConcurrentHashMap<String, Pair<String, Long>>()
+
+    fun record(trackId: String, copyKey: String, prefix: Long) {
+        claims[trackId] = copyKey to prefix
+    }
+
+    /** Gives [trackId]'s claim back to [headAttempts]: only that exact claim, never a newer one. */
+    fun release(trackId: String, headAttempts: MutableMap<String, Long>) {
+        claims.remove(trackId)?.let { (key, prefix) -> headAttempts.remove(key, prefix) }
+    }
+
+    /** A result that superseded the head: nothing to give back. */
+    fun drop(trackId: String) {
+        claims.remove(trackId)
+    }
+
+    fun clear() = claims.clear()
 }
