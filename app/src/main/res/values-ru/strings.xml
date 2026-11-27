@@ -1730,4 +1730,22 @@
     <string name="addon_backup_read_failed_message">Check the file is still there and try again.</string>
     <string name="addon_backup_restore_signins">Restore sign-ins</string>
     <string name="addon_backup_export_too_large">These add-ons are too large for one backup file.</string>
+    <string name="auto_made_for_you">Made for you</string>
+    <string name="auto_jump_back_in">Jump back in</string>
+    <string name="auto_recommended">Recommended</string>
+    <string name="auto_recent_and_downloads">Recent &amp; Downloads</string>
+    <string name="auto_playlists_and_albums">Playlists &amp; Albums</string>
+    <string name="auto_spotify_playlists">Spotify playlists</string>
+    <string name="auto_youtube_playlists">YouTube Music playlists</string>
+    <string name="auto_daylist">Daylist</string>
+    <string name="auto_album">Album</string>
+    <string name="auto_artist">Artist</string>
+    <string name="auto_spotify_login_title">Sign in to Spotify</string>
+    <string name="auto_spotify_login_subtitle">Connect Spotify in %1$s on your phone</string>
+    <string name="auto_empty_spotify_title">No Spotify playlists</string>
+    <string name="auto_empty_spotify_subtitle">Open Spotify in %1$s on your phone to refresh</string>
+    <string name="auto_empty_spotify_tracks_title">No tracks found</string>
+    <string name="auto_empty_spotify_tracks_subtitle">Open this playlist on your phone and retry</string>
+    <string name="auto_empty_spotify_album_title">No album tracks found</string>
+    <string name="auto_empty_spotify_album_subtitle">Check your Spotify connection in %1$s</string>
 </resources>
