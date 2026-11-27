@@ -187,6 +187,21 @@ object AutomixModels {
 
     private fun fileFor(model: Model): File? = filesDir?.let { File(it, model.fileName) }
 
+    /** Where an extracted model records the digest of the weights it was unpacked from. */
+    private fun digestFileOf(file: File): File = File(file.parentFile, "${file.name}.sha256")
+
+    /**
+     * Whether [file] is [model] as this build ships it. The size alone is not
+     * enough: an update can ship new weights of the same size, and the stale
+     * extracted file was kept. So the digest recorded beside it has to match
+     * the bundled model's too.
+     */
+    internal fun extractedIsCurrent(file: File, model: Model): Boolean {
+        if (file.length() != model.bytes) return false
+        val recorded = digestFileOf(file)
+        return recorded.isFile && runCatching { recorded.readText().trim() }.getOrNull() == model.sha256
+    }
+
     /**
      * A file of exactly the published size is taken as the model. Every copy
      * this class writes is checked against its SHA-256 before it is renamed
