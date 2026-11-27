@@ -74,6 +74,7 @@ import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -237,8 +238,13 @@ fun LocalMusicScreen(
     // "artwork" is just whichever of its rows happened to be first.
     var drillDownArt by remember { mutableStateOf<String?>(null) }
     // The order the list was opened in: a sort picked while it is open
-    // reorders it, the one it opened under leaves its order as it was.
-    var drillDownSort by remember { mutableStateOf(sortOrder) }
+    // reorders it, the one it opened under leaves its order as it was. Null
+    // once another sort has been picked: from then on the list follows the
+    // sort, so going back to the first one sorts by it too.
+    var drillDownSort by remember { mutableStateOf<LocalMusicSort?>(sortOrder) }
+    LaunchedEffect(sortOrder) {
+        if (drillDownSort != null && drillDownSort != sortOrder) drillDownSort = null
+    }
     val shownDrillDownSongs = remember(drillDownSongs, drillDownSort, sortOrder) {
         if (sortOrder == drillDownSort) drillDownSongs else drillDownSongs.sortedForLibrary(sortOrder)
     }
@@ -1540,6 +1546,9 @@ internal fun List<Song>.sortedForLibrary(order: LocalMusicSort): List<Song> = wh
     LocalMusicSort.TRACK_NUMBER -> sortedWith(
         compareBy<Song> { it.albumName == null }
             .thenBy(String.CASE_INSENSITIVE_ORDER) { it.albumName.orEmpty() }
+            // Two releases can share a name ("Greatest Hits"); their folders
+            // keep them apart, or their tracks interleave A1, B1, A2, B2.
+            .thenBy { it.localPath?.substringBeforeLast('/').orEmpty() }
             .thenBy { it.discNumber ?: 1 }
             .thenBy { it.trackNumber ?: Int.MAX_VALUE }
             .thenBy(String.CASE_INSENSITIVE_ORDER) { it.title },

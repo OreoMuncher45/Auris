@@ -135,9 +135,17 @@ object MixWaveform {
                 val at = position + done
                 if (total >= 0 && at >= total) break
                 val index = at / BLOCK_BYTES
-                val block = blocks[index] ?: load(index) ?: break
+                val block = blocks[index] ?: load(index)
                 val within = (at - index * BLOCK_BYTES).toInt()
-                if (within >= block.size) break
+                if (block == null || within >= block.size) {
+                    // A block that could not be read in full (a gap at its
+                    // start, or bytes missing part way) is not the end of the
+                    // stream: read here directly, as the source would answer.
+                    val n = source.readAt(at, buffer, offset + done, size - done)
+                    if (n <= 0) break
+                    done += n
+                    continue
+                }
                 val n = minOf(size - done, block.size - within)
                 System.arraycopy(block, within, buffer, offset + done, n)
                 done += n
@@ -154,6 +162,12 @@ object MixWaveform {
                 filled += n
             }
             if (filled == 0) return null
+            // Only a whole block, or the last one, is kept: a short block read
+            // across a gap or an error would answer "end of stream" for the rest
+            // of it for as long as it stayed cached.
+            val total = length
+            val ends = total >= 0 && index * BLOCK_BYTES + filled >= total
+            if (filled < BLOCK_BYTES && !ends) return block.copyOf(filled)
             val loaded = if (filled == BLOCK_BYTES) block else block.copyOf(filled)
             blocks[index] = loaded
             return loaded

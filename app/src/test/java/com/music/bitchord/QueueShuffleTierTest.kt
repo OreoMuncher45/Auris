@@ -5,13 +5,42 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.playback.QueueShuffle
 import com.music.bitchord.playback.queueEntryId
 import com.music.bitchord.playback.toMediaItem
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 
 class QueueShuffleTierTest {
+
+    // Both are process-wide singletons: what a test changes in them is put
+    // back, so no other test class inherits a discarding prefs store or a
+    // shuffle state it never set.
+    private val prefsField = com.music.bitchord.data.settings.AppSettings::class.java
+        .getDeclaredField("prefs").apply { isAccessible = true }
+    private val shuffleFields = listOf("_enabled", "original", "requestedForNextQueue").map { name ->
+        QueueShuffle::class.java.getDeclaredField(name).apply { isAccessible = true }
+    }
+    private var savedPrefs: Any? = null
+    private var savedEnabled = false
+    private var savedShuffle: List<Any?> = emptyList()
+
+    @Before
+    fun saveSingletons() {
+        savedPrefs = runCatching { prefsField.get(com.music.bitchord.data.settings.AppSettings) }.getOrNull()
+        savedEnabled = QueueShuffle.enabled.value
+        savedShuffle = shuffleFields.drop(1).map { it.get(QueueShuffle) }
+    }
+
+    @After
+    fun restoreSingletons() {
+        prefsField.set(com.music.bitchord.data.settings.AppSettings, savedPrefs)
+        @Suppress("UNCHECKED_CAST")
+        (shuffleFields[0].get(QueueShuffle) as kotlinx.coroutines.flow.MutableStateFlow<Boolean>).value = savedEnabled
+        shuffleFields.drop(1).zip(savedShuffle).forEach { (field, value) -> field.set(QueueShuffle, value) }
+    }
 
     private fun testSong(
         id: String,

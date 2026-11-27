@@ -149,9 +149,19 @@ object AutomixModels {
      * Automix off first; with it off, only Download / Retry fetches them again
      * (see [fetchGate]).
      */
+    /**
+     * Bumped each time the models are deleted. A pass that reads the models as
+     * ready before and after but saw this change in between ran (part of the
+     * way) without them, and is treated as model-less.
+     */
+    @Volatile
+    var generation: Int = 0
+        private set
+
     fun delete(): Boolean {
         val left = synchronized(lock) {
             if (job?.isActive == true) return false
+            generation++
             val left = deleteAll(
                 ALL.flatMap { model ->
                     listOfNotNull(fileFor(model), fileFor(model)?.let { File(it.parentFile, "${model.fileName}.part") })
@@ -202,7 +212,12 @@ object AutomixModels {
                 fetchGate(
                     explicit = explicit,
                     automixOn = AppSettings.smartFadeEnabled.value,
-                    offline = AppSettings.effectiveOffline.value,
+                    // The manual switch read directly as well: it is restored
+                    // as AppSettings starts, but [AppSettings.effectiveOffline]
+                    // reads false until its combine first runs, and the
+                    // install-time request at launch came in before that and
+                    // fetched the models with offline mode on.
+                    offline = AppSettings.offlineMode.value || AppSettings.effectiveOffline.value,
                     downloadsAllowedNow = { AppSettings.downloadsAllowedNow },
                 )
             ) {

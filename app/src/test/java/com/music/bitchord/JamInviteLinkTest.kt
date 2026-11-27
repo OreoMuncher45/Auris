@@ -27,8 +27,15 @@ class JamInviteLinkTest {
     @Test
     fun `each manifest invite pattern before Android 12 reaches the parser`() {
         val manifest = java.io.File("src/main/AndroidManifest.xml").readText()
-        val patterns = Regex("""android:pathPattern="(/[A-Za-z]+/\.{6})"""")
+        // Only the invite host's own filters: a pattern moved under another
+        // host's filter would not route an invite, so it must not count.
+        val inviteFilters = Regex("""<intent-filter\b[\s\S]*?</intent-filter>""")
             .findAll(manifest)
+            .map { it.value }
+            .filter { it.contains("""android:host="bitchord.kushagrasingh.in"""") }
+            .joinToString("\n")
+        val patterns = Regex("""android:pathPattern="(/[A-Za-z]+/\.{6})"""")
+            .findAll(inviteFilters)
             .map { it.groupValues[1] }
             .filter { it.lowercase().startsWith("/invite/") }
             .toList()

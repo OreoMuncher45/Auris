@@ -2,6 +2,8 @@ package com.music.bitchord.data.model
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class ModelsTest {
     @Test
@@ -142,5 +144,14 @@ class ModelsTest {
             "https://i.ytimg.com:443/vi/abc/maxresdefault.jpg",
             "https://i.ytimg.com:443/vi/abc/hqdefault.jpg".artworkAt(1200),
         )
+    }
+
+    @Test
+    fun thumbnailHostIsReadFromTheAuthorityNotTheQuery() {
+        assertTrue(isYouTubeThumbnailHost("https://i.ytimg.com/vi/x/hqdefault.jpg"))
+        assertTrue(isYouTubeThumbnailHost("//i.ytimg.com/vi/x/hqdefault.jpg"))
+        // A CDN URL that merely carries a YouTube URL in its query is the CDN's.
+        assertFalse(isYouTubeThumbnailHost("//cdn.example.test/img?u=https://i.ytimg.com/vi/x/hqdefault.jpg"))
+        assertFalse(isYouTubeThumbnailHost("https://cdn.example.test/img?u=https://i.ytimg.com/vi/x/hqdefault.jpg"))
     }
 }

@@ -232,4 +232,13 @@ class QueueEditsTest {
         val after = listOf("now", "c", "d").map { song(it) }
         assertEquals(listOf("now", "c", "a", "b", "d"), ids(apply(after, QueueEdits.restorePlan(removal, after, 1))))
     }
+
+    @Test
+    fun eachRemovedRowIsAnchoredOnTheRowAfterItsRun() {
+        val timeline = listOf("a", "b", "c", "d", "e", "f").map { song(it) }
+        val removal = QueueEdits.capture(timeline, listOf(1, 2, 3, 5))
+        // b, c and d all follow e, the first kept row after their run; f is last.
+        val e = QueueEdits.identity(timeline[4])
+        assertEquals(listOf(e, e, e, null), removal.rows.map { it.anchor })
+    }
 }

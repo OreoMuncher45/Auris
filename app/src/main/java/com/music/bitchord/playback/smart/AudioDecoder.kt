@@ -207,14 +207,25 @@ object AudioDecoder {
         val right = SampleBuffer(endSeconds - startSeconds)
         var leftScratch = FloatArray(0)
         var rightScratch = FloatArray(0)
+        // The extractor seeks to the sync sample before the start, which in a
+        // file with sparse sync points can be minutes early: everything from
+        // there on was kept, so a late window could hold most of the track.
+        // Whole chunks ending more than [PRE_ROLL_SECONDS] before the start
+        // are dropped, and the start reported is the first chunk kept.
+        val keepFrom = startSeconds - PRE_ROLL_SECONDS
+        var firstKept = Double.NaN
         val decoded = decodeRaw(source, startSeconds, endSeconds, abort) { buffer, info, channels, rate ->
             leftScratch = scratchFor(leftScratch, info, channels)
             rightScratch = scratchFor(rightScratch, info, channels)
             val frames = toStereo(buffer, info, channels, leftScratch, rightScratch)
+            val chunkStart = info.presentationTimeUs / 1_000_000.0
+            if (rate > 0 && chunkStart + frames.toDouble() / rate < keepFrom) return@decodeRaw
+            if (firstKept.isNaN()) firstKept = chunkStart
             left.add(leftScratch, frames, rate)
             right.add(rightScratch, frames, rate)
         } ?: return null
-        return StereoPcm(left.toArray(), right.toArray(), decoded.first) to decoded.second
+        val start = if (firstKept.isNaN()) decoded.second else firstKept
+        return StereoPcm(left.toArray(), right.toArray(), decoded.first) to start
     }
 
     /**

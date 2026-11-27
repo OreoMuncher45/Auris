@@ -593,7 +593,7 @@ private fun LazyListScope.queueSection(
                 val checked by remember(track.key) { derivedStateOf { track.key in scope.selection.keys } }
                 InlineQueueRow(
                     song = track.song,
-                    onClick = { scope.selection.toggle(track.key) },
+                    onClick = { scope.selection.toggle(track) },
                     selectionChecked = checked,
                     locked = scope.locked,
                     modifier = motion,
