@@ -161,6 +161,13 @@ internal class PlayerArtwork(
     private var shown: MemoryCache.Key? = null
 
     /**
+     * This cover's entry, decoded while an Automix reveal hid the painter: not
+     * on screen yet, so not what the next cover stands on until it is
+     * ([noteVisible]) or the reveal hands it over ([noteDisplayedCover]).
+     */
+    private var decodedHidden: MemoryCache.Key? = null
+
+    /**
      * The decoded cover, for an Automix reveal to start from: the pixels on
      * screen when the mix began, rather than a fresh load. [decodedDuringMix]
      * keeps a decode that only landed once a mix was already under way from
@@ -175,6 +182,28 @@ internal class PlayerArtwork(
     /** The reveal's finished cover is on screen in this one's place: the next track stands on it. */
     fun noteDisplayedCover(cover: DecodedAutoMixCover) {
         shown = cover.cacheKey
+        decodedHidden = null
+    }
+
+    /**
+     * A decode landed: on screen when [displayed], otherwise behind a reveal
+     * that still shows the cover before it, which a skip past this one must
+     * stand on instead.
+     */
+    internal fun noteDecoded(key: MemoryCache.Key?, displayed: Boolean) {
+        if (displayed) {
+            shown = key
+            decodedHidden = null
+        } else {
+            decodedHidden = key
+        }
+    }
+
+    /** The painter is drawn again: a cover decoded behind the reveal is now the one on screen. */
+    fun noteVisible() {
+        val key = decodedHidden ?: return
+        shown = key
+        decodedHidden = null
     }
 
     /**
@@ -218,8 +247,11 @@ internal class PlayerArtwork(
             .build()
     }
 
-    /** Fed from each painter drawing [request]. */
-    fun onState(state: AsyncImagePainter.State) {
+    /**
+     * Fed from each painter drawing [request]; [displayed] is false while an
+     * Automix reveal draws in the painter's place.
+     */
+    fun onState(state: AsyncImagePainter.State, displayed: Boolean = true) {
         loaded = state is AsyncImagePainter.State.Success
         if (state is AsyncImagePainter.State.Success) {
             val image = state.result.image
@@ -233,7 +265,7 @@ internal class PlayerArtwork(
         // through Loading.
         if (state is AsyncImagePainter.State.Success) {
             failed = false
-            shown = state.result.memoryCacheKey
+            noteDecoded(state.result.memoryCacheKey, displayed)
             decodedCover = state.result.decodedAutoMixCover()
             decodedDuringMix = PlayerPlatform.host.autoMixVisualState?.value?.takeIf { it.mixActive }?.generation
         }
