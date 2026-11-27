@@ -186,6 +186,23 @@ class AutoContinuationTest {
     }
 
     @Test
+    fun `A's stale answer delivered after B started its continuation leaves B's continuation running`() {
+        val records = PendingAutoInstalls()
+        val forA = PendingAutoInstall(startEntryId = "a1", startIndex = 0, size = 2, owner = ListenerStamp("A", 4))
+        val forB = PendingAutoInstall(startEntryId = "b1", startIndex = 0, size = 2, owner = ListenerStamp("B", 5))
+        records.add(forA)
+        records.following = forA
+        records.add(forB)
+        records.following = forB
+        // A's answer is handed over late, under B: refused, and B's continuation is not A's to end.
+        assertFalse(records.refused(forA))
+        assertTrue(records.following === forB)
+        // B's own refusal would end it.
+        assertTrue(records.refused(forB))
+        assertNull(records.following)
+    }
+
+    @Test
     fun `a newer build for the same entry replaces the older record, and the oldest goes past capacity`() {
         val records = PendingAutoInstalls(capacity = 2)
         val first = PendingAutoInstall(startEntryId = "x", startIndex = 0, size = 1, owner = ListenerStamp("A", 4))
