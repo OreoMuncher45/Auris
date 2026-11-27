@@ -87,4 +87,17 @@ class ListenerScopedCacheTest {
         put(session, "download")
         assertEquals(false, cache.entry("download")?.shared)
     }
+
+    @Test
+    fun `playlist cards read for profile A are not served after a switch to profile B under the same cookie`() {
+        val cards = ListenerScopedCache<ListenerStamp, Pair<Long, List<String>>> { session }
+        val a = session
+        cards.put(a, "cards", 1L to listOf("A's playlist"))
+        // Same cookie, another profile: another listener, another generation.
+        session = ListenerStamp("A|profile-B", 2)
+        assertNull(cards["cards"])
+        // A fetch for A that lands now files nothing under B.
+        cards.put(a, "cards", 1L to listOf("A's playlist"))
+        assertNull(cards["cards"])
+    }
 }
