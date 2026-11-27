@@ -1,3 +1,5 @@
+// Includes changes from LastWave-Native (https://github.com/Clash-Projects/LastWave-Native, GPL-3.0-only), modified for Auris/BitChord. See NOTICE.
+
 /**
  * @file usb-audio-output.h
  * @brief Direct USB audio output context for bit-perfect playback.
