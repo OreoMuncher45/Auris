@@ -158,3 +158,50 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+================================================================================
+LastWave-Native (C) 2026 LastWave Authors — GPL-3.0-only
+================================================================================
+Source:  https://github.com/Clash-Projects/LastWave-Native
+License: GPL-3.0-only
+
+BitChord's bit-perfect USB output is ported from LastWave-Native and modified
+for this app. Each ported file keeps LastWave's copyright and licence header,
+followed by a line noting that it was modified. These files stay under
+GPL-3.0-only.
+
+Ported files (under app/src/main/java/com/music/bitchord/playback/usb/)
+-----------------------------------------------------------------------
+  ExclusiveUsbOutput.kt
+      LastWave's exclusive usbdevfs USB output.
+
+  UacFeatureVolume.kt
+      LastWave's UAC Feature Unit (hardware) volume control.
+
+  UsbDacMonitor.kt
+      LastWave's USB DAC attach/detach and permission monitor.
+
+  UsbDacInfo.kt
+      The DAC info type from LastWave's SignalPath.kt, kept the same shape so
+      the ported monitor stays a direct copy.
+
+  ExclusivePcmGain.kt
+      LastWave's software gain for the exclusive USB queue.
+
+USB audio driver
+----------------
+audio/decent-usb-audio-driver/ was taken from LastWave's copy of the
+decent-player driver (see the entry below), which includes LastWave's changes
+on top of the original: isochronous feedback endpoint support, playback clock
+source and clock selector resolution, UAC version detection, and per-device
+quirks. The files that carry those changes have a header line saying so.
+
+================================================================================
+decent-player USB audio driver (C) 2026 Marcelo Silva — MIT License
+================================================================================
+Source:  https://github.com/Ma145/decent-player
+License: MIT (full text at audio/decent-usb-audio-driver/LICENSE)
+
+audio/decent-usb-audio-driver/ is the userspace USB Audio Class driver from
+decent-player (libs/decent-usb-audio-driver), with LastWave's changes and
+BitChord's own changes on top.
