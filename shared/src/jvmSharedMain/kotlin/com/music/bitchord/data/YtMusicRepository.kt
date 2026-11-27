@@ -1245,6 +1245,9 @@ object YtMusicRepository {
                     Log.w(TAG, "$label not retried: the account changed during the refresh")
                     throw failure
                 }
+                // A recoverable binding goes on under the refreshed session of
+                // the same listener: the requests after this one belong to it.
+                Innertube.adoptRefreshedBinding(refreshed)
                 // Bound to the refreshed session, checked where the retry's
                 // credentials are taken, under the same lock: a switch after the
                 // line above, even away and back, can't slip in.

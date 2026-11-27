@@ -63,9 +63,10 @@ class SessionRetryTest {
         )
     }
 
-    private fun shellFor(index: String = "0", pageId: String? = null): String =
+    private fun shellFor(index: String = "0", pageId: String? = null, dataSyncId: String? = null): String =
         """<script>ytcfg.set({"LOGGED_IN":true,"SESSION_INDEX":"$index",""" +
             (pageId?.let { """"DELEGATED_SESSION_ID":"$it",""" } ?: "") +
+            (dataSyncId?.let { """"DATASYNC_ID":"$it",""" } ?: "") +
             """"INNERTUBE_CLIENT_VERSION":"1.20261126.00.00"});</script>"""
 
     @AfterTest
@@ -142,6 +143,43 @@ class SessionRetryTest {
         assertTrue(result.isSuccess, "${result.exceptionOrNull()}")
         assertEquals(listOf("SID=A", "SID=A"), writes.map { it.cookie })
         assertEquals(listOf("shell", "edit", "shell", "edit"), order())
+    }
+
+    @Test
+    fun `after a recovered request, the next one in the same add goes out under the refreshed session`() = runBlocking {
+        Innertube.cookie = "SID=A"
+        // The shell names a dataSyncId, so clearing and re-reading the scope moves the generation.
+        answer(shell = { shellFor(dataSyncId = "sync-A") }) { index -> if (index == 0) 401 else 200 }
+        Innertube.ensureSessionScope()
+        val a = Innertube.listenerStamp()
+        Innertube.asListenerRecoverably(a) {
+            // The lookup's stand-in, recovered, then the write.
+            assertTrue(YtMusicRepository.addToPlaylist("PL1", listOf("aaaaaaaaaaa")).isSuccess)
+            assertTrue(Innertube.listenerStamp() != a, "the refresh did not move the generation")
+            assertTrue(YtMusicRepository.addToPlaylist("PL1", listOf("bbbbbbbbbbb")).isSuccess)
+        }
+        // The rejected one, its retry, and the next: nothing accepted was sent twice.
+        assertEquals(3, writes.size)
+        assertEquals(listOf("SID=A", "SID=A", "SID=A"), writes.map { it.cookie })
+    }
+
+    @Test
+    fun `a recovered batch is followed by the next batch, and a strict binding still refuses after a refresh`() = runBlocking {
+        Innertube.cookie = "SID=A"
+        answer(shell = { shellFor(dataSyncId = "sync-A") }) { index -> if (index == 1) 401 else 200 }
+        Innertube.ensureSessionScope()
+        val a = Innertube.listenerStamp()
+        Innertube.asListenerRecoverably(a) {
+            assertTrue(YtMusicRepository.addToPlaylist("PL1", listOf("aaaaaaaaaaa")).isSuccess)
+            assertTrue(YtMusicRepository.addToPlaylist("PL1", listOf("bbbbbbbbbbb")).isSuccess)
+            assertTrue(YtMusicRepository.addToPlaylist("PL1", listOf("ccccccccccc")).isSuccess)
+        }
+        assertEquals(4, writes.size)
+        // The stamp taken before the refresh is stale now, and a strict binding to it sends nothing.
+        val before = writes.size
+        val strict = Innertube.asListener(a) { YtMusicRepository.addToPlaylist("PL1", listOf("ddddddddddd")) }
+        assertIs<Innertube.ListenerChangedException>(strict.exceptionOrNull())
+        assertEquals(before, writes.size)
     }
 
     @Test
