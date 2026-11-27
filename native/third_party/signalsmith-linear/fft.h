@@ -883,6 +883,7 @@ struct SimpleRealFFT {
 	}
 	
 	void fft(const Sample *time, Complex *freq) {
+		if (tmpFreq.empty()) return; // Auris patch: a size-0 transform has no bin 0
 		for (size_t i = 0; i < tmpTime.size(); ++i) {
 			tmpTime[i] = time[i];
 		}
@@ -896,6 +897,7 @@ struct SimpleRealFFT {
 		};
 	}
 	void fft(const Sample *inR, Sample *outR, Sample *outI) {
+		if (tmpFreq.empty()) return; // Auris patch: a size-0 transform has no bin 0
 		Sample *tmpFreqR = (Sample *)tmpFreq.data(), *tmpFreqI = tmpFreqR + tmpFreq.size();
 		for (size_t i = 0; i < tmpTime.size()/2; ++i) {
 			tmpTime[i] = 0;
@@ -909,6 +911,7 @@ struct SimpleRealFFT {
 	}
 
 	void ifft(const Complex *freq, Sample *time) {
+		if (tmpFreq.empty()) return; // Auris patch: a size-0 transform has no bin 0
 		tmpFreq[0] = freq[0].real();
 		tmpFreq[tmpFreq.size()/2] = freq[0].imag();
 		for (size_t i = 1; i < tmpFreq.size()/2; ++i) {
@@ -921,6 +924,7 @@ struct SimpleRealFFT {
 		}
 	}
 	void ifft(const Sample *inR, const Sample *inI, Sample *outR) {
+		if (tmpFreq.empty()) return; // Auris patch: a size-0 transform has no bin 0
 		Sample *tmpFreqR = (Sample *)tmpFreq.data(), *tmpFreqI = tmpFreqR + tmpFreq.size();
 		tmpFreqR[0] = inR[0];
 		tmpFreqR[tmpFreq.size()/2] = inI[0];
@@ -1007,6 +1011,7 @@ struct RealFFT {
 		}
 	}
 	void fft(size_t step, const Sample *time, Complex *freq) {
+		if (tmpFreq.empty()) return; // Auris patch: a size-0 transform has no bin 0
 		if (complexPrefersSplit) {
 			size_t hSize = complexFft.size();
 			Sample *tmpTimeR = (Sample *)tmpTime.data(), *tmpTimeI = tmpTimeR + hSize;
@@ -1118,6 +1123,7 @@ struct RealFFT {
 		}
 	}
 	void fft(size_t step, const Sample *inR, Sample *outR, Sample *outI) {
+		if (tmpFreq.empty()) return; // Auris patch: a size-0 transform has no bin 0
 		size_t hSize = complexFft.size();
 		Sample *tmpTimeR = (Sample *)tmpTime.data(), *tmpTimeI = tmpTimeR + hSize;
 		Sample *tmpFreqR = (Sample *)tmpFreq.data(), *tmpFreqI = tmpFreqR + hSize;
@@ -1179,6 +1185,7 @@ struct RealFFT {
 		}
 	}
 	void ifft(size_t step, const Complex *freq, Sample *time) {
+		if (tmpFreq.empty()) return; // Auris patch: a size-0 transform has no bin 0
 		if (complexPrefersSplit) {
 			size_t hSize = complexFft.size();
 			Sample *tmpTimeR = (Sample *)tmpTime.data(), *tmpTimeI = tmpTimeR + hSize;
@@ -1293,6 +1300,7 @@ struct RealFFT {
 		}
 	}
 	void ifft(size_t step, const Sample *inR, const Sample *inI, Sample *outR) {
+		if (tmpFreq.empty()) return; // Auris patch: a size-0 transform has no bin 0
 		size_t hSize = complexFft.size();
 		Sample *tmpTimeR = (Sample *)tmpTime.data(), *tmpTimeI = tmpTimeR + hSize;
 		Sample *tmpFreqR = (Sample *)tmpFreq.data(), *tmpFreqI = tmpFreqR + hSize;
