@@ -1115,6 +1115,52 @@ object YtMusicRepository {
     ): Result<Map<String, String>> =
         call("playlist:add") { Innertube.addToPlaylist(playlistId, videoIds) }
 
+    /** What [addMissingTracks] did to one playlist. */
+    class AddedTracks(
+        /** The tracks added, each with the entry id the playlist gave it (see [Song.setVideoId]). */
+        val added: Map<String, String>,
+        /** Whether every track asked for was already in the playlist, so nothing was sent. */
+        val alreadyThere: Boolean,
+        /** Whether a batch was refused; the tracks in [added] went in regardless. */
+        val failed: Boolean,
+    )
+
+    /**
+     * Adds those of [videoIds] that playlist [playlistId] (browsed as
+     * [browseId]) does not already list, in batches of [batchSize].
+     *
+     * The playlist is read whole first (see [allSongs]): a partial list never
+     * says a track is absent. When it can't be read, the tracks are added
+     * anyway, since duplicate prevention is best effort and a failed lookup
+     * must not lose the add asked for. One batch at a time, each its own
+     * request: a refused batch is not resent, and a later one still goes.
+     *
+     * Every request here goes out as the session the caller bound. Run the
+     * whole operation, every playlist of it, inside one
+     * [Innertube.asListenerRecoverably] block: a refresh that one request
+     * recovers from then carries on to the requests after it.
+     */
+    suspend fun addMissingTracks(
+        browseId: String,
+        playlistId: String,
+        videoIds: List<String>,
+        batchSize: Int,
+    ): AddedTracks {
+        val wanted = videoIds.distinct()
+        if (wanted.isEmpty()) return AddedTracks(emptyMap(), alreadyThere = true, failed = false)
+        val listed = allSongs(browseId).getOrNull()?.mapTo(HashSet()) { it.videoId }
+        val ids = wanted.filter { listed == null || it !in listed }
+        if (ids.isEmpty()) return AddedTracks(emptyMap(), alreadyThere = true, failed = false)
+        val added = LinkedHashMap<String, String>()
+        var failed = false
+        ids.chunked(batchSize).forEach { batch ->
+            addToPlaylist(playlistId, batch)
+                .onSuccess { entries -> batch.forEach { id -> added[id] = entries[id].orEmpty() } }
+                .onFailure { failed = true }
+        }
+        return AddedTracks(added, alreadyThere = false, failed = failed)
+    }
+
     /** [entries] are (setVideoId, videoId) pairs — see [Song.setVideoId]. */
     suspend fun removeFromPlaylist(
         playlistId: String,
