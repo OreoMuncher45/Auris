@@ -54,18 +54,23 @@ object SongCreditsRepository {
 
     private suspend fun fetchCredits(videoId: String): List<SongCredit> {
         // The credits page directly: reliable for catalogue tracks.
+        var directFailure: Exception? = null
         val direct = try {
             parseCreditsPage(Innertube.browse("MPTC$videoId"))
         } catch (e: CancellationException) {
             throw e
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            directFailure = e
             emptyList()
         }
         if (direct.isNotEmpty()) return direct
-        // Otherwise the endpoint the watch queue's own menu links to.
+        // Otherwise the endpoint the watch queue's own menu links to. With
+        // nothing there either, a direct request that *failed* makes this a
+        // failed lookup, not "no credits": [load] must not cache it as empty.
+        val noCredits = { directFailure?.let { throw it } ?: emptyList<SongCredit>() }
         val next = Innertube.next(videoId)
-        val endpoint = findCreditsEndpoint(next, videoId) ?: return emptyList()
-        val browseId = (endpoint["browseId"] as? JsonPrimitive)?.contentOrNull ?: return emptyList()
+        val endpoint = findCreditsEndpoint(next, videoId) ?: return noCredits()
+        val browseId = (endpoint["browseId"] as? JsonPrimitive)?.contentOrNull ?: return noCredits()
         val params = (endpoint["params"] as? JsonPrimitive)?.contentOrNull
         return parseCreditsPage(Innertube.browse(browseId, params))
     }
