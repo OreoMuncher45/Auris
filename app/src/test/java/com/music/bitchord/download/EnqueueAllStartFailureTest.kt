@@ -118,4 +118,25 @@ class EnqueueAllStartFailureTest {
         assertEquals(emptySet<String>(), admitted)
         assertEquals(1, failing.startAttempts)
     }
+
+    /** A context whose start succeeds, after [during] has run while it is unanswered. */
+    private class StartsAfter(base: Context, private val during: () -> Unit) : ContextWrapper(base) {
+        override fun getApplicationContext(): Context = this
+        override fun startForegroundService(service: Intent?): ComponentName? {
+            during()
+            return null
+        }
+    }
+
+    @Test
+    fun `a track finished before its start answered is still admitted`() {
+        val context = StartsAfter(app) {
+            // A file already on disk: a worker takes it and finishes it
+            // before the service start returns.
+            val taken = Downloads.takeNext()
+            assertEquals("p1", taken?.videoId)
+            Downloads.onIdle("p1")
+        }
+        assertEquals(setOf("p1"), Downloads.enqueueAll(context, listOf(song("p1")), automatic = true))
+    }
 }
