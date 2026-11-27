@@ -192,10 +192,17 @@ object AutomixModels {
                 source.open(model.fileName).use { input ->
                     staging.outputStream().use { output -> input.copyTo(output) }
                 }
-                if (!staging.renameTo(file) && file.length() != model.bytes) {
+                if (staging.renameTo(file)) {
+                    // Only once these weights are the file in place: written
+                    // after a failed move, the new digest would vouch for the
+                    // old weights of the same size, and they would never be
+                    // unpacked again.
+                    digestFileOf(file).writeText(model.sha256)
+                } else if (file.length() != model.bytes) {
                     throw java.io.IOException("could not move ${model.fileName} into place")
                 }
-                digestFileOf(file).writeText(model.sha256)
+                // A failed move over a file of the right size (another call's,
+                // most likely) leaves no digest, so the next call checks again.
             } finally {
                 staging.delete()
             }
