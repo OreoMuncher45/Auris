@@ -26,6 +26,7 @@ import coil3.compose.AsyncImagePainter
 import coil3.memory.MemoryCache
 import coil3.request.ImageRequest
 import coil3.size.Precision
+import coil3.size.Scale
 import com.music.bitchord.data.canvas.CanvasArtwork
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.artworkAt
@@ -261,6 +262,10 @@ internal fun playerCoverRequest(context: PlatformContext, url: String?, artPx: I
         .data(url)
         .size(artPx)
         .precision(Precision.INEXACT)
+        // Said outright: the sleeve draws it cropped, which Coil turns into
+        // FILL, while a prefetch with no content scale would decode FIT. A
+        // non-square cover then missed the memory cache and decoded twice.
+        .scale(Scale.FILL)
 
 @Composable
 internal fun rememberPlayerArtwork(remoteArt: String?, artPx: Int): PlayerArtwork {

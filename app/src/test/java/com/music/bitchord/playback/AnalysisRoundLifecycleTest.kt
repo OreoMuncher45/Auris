@@ -55,6 +55,11 @@ class AnalysisRoundLifecycleTest {
 
     @After fun tearDown() {
         writerDone.complete(Unit)
+        AudioCache.wipeWaiting = null
+        // A wipe still running would touch the cache released below.
+        (field("lastWipe") as Job?)?.let { wipe ->
+            kotlinx.coroutines.runBlocking { kotlinx.coroutines.withTimeoutOrNull(5_000) { wipe.join() } }
+        }
         scope.cancel()
         cache.release()
         AudioCache::class.java.getDeclaredField("cache").apply { isAccessible = true }.set(AudioCache, null)
@@ -101,10 +106,15 @@ class AnalysisRoundLifecycleTest {
         liveRound()
         var first = false
         var second = false
+        val waiting = java.util.concurrent.CountDownLatch(2)
+        AudioCache.wipeWaiting = { waiting.countDown() }
         AudioCache.clear { first = true }
         // The registry is already empty for this one.
         AudioCache.clear { second = true }
 
+        // Both wipes are in their wait while the writer is still held: the
+        // race is exercised, not just given time to not happen.
+        assertTrue(waiting.await(5, TimeUnit.SECONDS))
         assertFalse(idleMainUntil(timeoutMs = 300) { first || second })
 
         writerDone.complete(Unit)
@@ -127,6 +137,8 @@ class AnalysisRoundLifecycleTest {
 
         writerDone.complete(Unit)
         assertTrue(idleMainUntil { removal.isCompleted })
+        // Completed normally: a removal that threw would pass isCompleted too.
+        kotlinx.coroutines.runBlocking { removal.await() }
         assertFalse(heads.containsKey(id))
         assertTrue(round.isCompleted)
         assertFalse(removing.contains(id))

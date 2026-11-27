@@ -257,7 +257,7 @@
     <string name="library_empty_segment">Nothing here yet</string>
     <string name="home_chip_all">All</string>
     <string name="best_part">Best Part</string>
-    <string name="best_part_description">Skip to the best part</string>
+    <string name="best_part_description">Перейти к лучшему моменту</string>
     <string name="queue_select">Выбрать</string>
     <string name="queue_select_all">Выбрать все</string>
     <string name="queue_selected_count">Выбрано: %1$d</string>

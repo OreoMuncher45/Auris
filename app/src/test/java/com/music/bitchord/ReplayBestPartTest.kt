@@ -142,6 +142,25 @@ class ReplayBestPartTest {
     }
 
     @Test
+    fun theWalkBackStopsAtABreak() {
+        // Chorus x3, verse x2: the verse line before the break recurs often
+        // enough to look like the chorus's own, but the gap ends the block.
+        val song = listOf(
+            LyricLine(10_000, "Verse line repeated here"),
+            LyricLine(14_000, ""),
+            LyricLine(20_000, "Chorus line one"),
+            LyricLine(24_000, "Chorus line two"),
+            LyricLine(40_000, "Verse line repeated here"),
+            LyricLine(44_000, ""),
+            LyricLine(50_000, "Chorus line one"),
+            LyricLine(54_000, "Chorus line two"),
+            LyricLine(80_000, "Chorus line one"),
+            LyricLine(84_000, "Chorus line two"),
+        )
+        assertEquals(20_000L, BestPart.chorusMs(song, durationMs = 180_000))
+    }
+
+    @Test
     fun wordsThatNeverRepeatHaveNoChorus() {
         val verses = lyrics.filterNot { it.text.contains("Hold") || it.text.contains("Never") }
         assertNull(BestPart.chorusMs(verses, durationMs = 180_000))

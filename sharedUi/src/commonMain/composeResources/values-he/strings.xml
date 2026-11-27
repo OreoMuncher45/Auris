@@ -257,7 +257,7 @@
     <string name="library_empty_segment">Nothing here yet</string>
     <string name="home_chip_all">All</string>
     <string name="best_part">Best Part</string>
-    <string name="best_part_description">Skip to the best part</string>
+    <string name="best_part_description">דילוג לחלק הכי טוב</string>
     <string name="queue_select">בחירה</string>
     <string name="queue_select_all">בחירת הכול</string>
     <string name="queue_selected_count">%1$d נבחרו</string>
