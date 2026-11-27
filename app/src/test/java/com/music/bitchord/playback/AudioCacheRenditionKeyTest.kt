@@ -39,6 +39,8 @@ class AudioCacheRenditionKeyTest {
 
     @After fun tearDown() {
         AutomixAnalysisSource.rendition = { null }
+        // The cache's own background work first, so none of it runs on a released cache.
+        AudioCache.cancelBackgroundWorkForTest()
         cache.release()
         AudioCache::class.java.getDeclaredField("cache").apply { isAccessible = true }.set(AudioCache, null)
         AudioCache::class.java.getDeclaredField("appContext").apply { isAccessible = true }.set(AudioCache, null)
