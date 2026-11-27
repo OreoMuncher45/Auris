@@ -107,4 +107,16 @@ class DownloadedPlaylistSyncTest {
         // hand, or not on the device at all: left alone.
         assertEquals(listOf("refused"), unrecorded)
     }
+
+    @Test
+    fun `a track admitted on a later pass keeps its place in the playlist`() {
+        val remote = listOf(song("A"), song("B"), song("C"))
+        // B was refused on the first fill; A is recorded; now B arrives.
+        assertEquals(
+            listOf("A", "B"),
+            recordOrder(remote, recorded = listOf("A"), added = listOf(song("B")), refused = emptySet()).map { it.videoId },
+        )
+        // A refused track is not handed over, and with nothing added nothing is.
+        assertTrue(recordOrder(remote, listOf("A"), listOf(song("B")), refused = setOf("B")).isEmpty())
+    }
 }
