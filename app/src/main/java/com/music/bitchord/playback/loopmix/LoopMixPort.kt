@@ -95,6 +95,24 @@ class LoopMixPort {
         true
     }
 
+    /**
+     * The sink calling off the arm it read as [generation] (a flush, a format
+     * it can't splice): refused when that arm was replaced since, so a sink
+     * still finishing a buffer for the old arm never marks the new one over.
+     */
+    fun interrupt(generation: Int): Boolean = synchronized(lock) {
+        if (armed.generation != generation) return@synchronized false
+        interrupted = true
+        true
+    }
+
+    /** A sink adopting [generation]: its status starts clean, unless that arm was replaced meanwhile. */
+    fun resetStatus(generation: Int) = synchronized(lock) {
+        if (armed.generation != generation) return@synchronized
+        tookOver = false
+        interrupted = false
+    }
+
     // ---- What the sink publishes ---------------------------------------------------------
 
     /** The sink's format, as last configured: a loop mix needs linear PCM, stereo. */
@@ -109,9 +127,11 @@ class LoopMixPort {
 
     /** True from the block where the outgoing sink switched to the renderer. */
     @Volatile var tookOver: Boolean = false
+        private set
 
-    /** Set by a flush or a reset: whatever was armed is gone (a seek, a stop). */
+    /** Set by a flush or a reset: whatever was armed is gone (a seek, a stop). Only for the arm still armed ([interrupt]). */
     @Volatile var interrupted: Boolean = false
+        private set
 
     /**
      * The last position reading, in track µs, and when it was taken
