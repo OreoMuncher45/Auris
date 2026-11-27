@@ -85,4 +85,18 @@ class ShiftTimelineTest {
         assertEquals(1_000L, t.trackPositionUs(0L))
         assertEquals(2_005L, t.trackPositionUs(5L))
     }
+
+    @Test
+    fun theSteadySpanEndsAtTheNextShiftAndIsZeroInsideSilence() {
+        val t = ShiftTimeline()
+        assertEquals(Long.MAX_VALUE, t.steadyUs(1_000_000L))
+        t.insertSilence(boundaryUs = 2_000_000L, durationUs = 40_000L)
+        t.trackPositionUs(1_980_000L)
+        assertEquals(20_000L, t.steadyUs(1_980_000L))
+        t.trackPositionUs(2_010_000L)
+        assertEquals(0L, t.steadyUs(2_010_000L))
+        // Past the silence: nothing ahead.
+        t.trackPositionUs(2_050_000L)
+        assertEquals(Long.MAX_VALUE, t.steadyUs(2_050_000L))
+    }
 }

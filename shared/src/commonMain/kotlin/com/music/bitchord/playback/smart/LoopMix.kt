@@ -439,10 +439,16 @@ object LoopMix {
      * RMS over [from]..[to]. Windows overlap at their seams: each instant is
      * counted once, from the first window (by start) that measured it, so a
      * seam isn't weighted twice.
+     *
+     * NaN unless the frames counted cover the span, give or take two frames
+     * at its edges (a span offset from the frame grid loses up to one at each
+     * end): a bar with a single loud frame in it is not a measured loud bar.
      */
     internal fun meanRms(windows: List<CurveWindow>, from: Double, to: Double): Double {
         var sumSquares = 0.0
         var count = 0
+        var coveredSec = 0.0
+        var longestFrameSec = 0.0
         var coveredUntil = Double.NEGATIVE_INFINITY
         // Already in order as the analyzer stores them: no copy then (this runs per bar per candidate).
         val ordered = if ((1 until windows.size).all { windows[it - 1].startTime <= windows[it].startTime }) {
@@ -459,9 +465,14 @@ object LoopMix {
                 sumSquares += rms * rms
                 count++
             }
-            if (b > a) coveredUntil = max(coveredUntil, window.startTime + b / window.frameRate)
+            if (b > a) {
+                coveredUntil = max(coveredUntil, window.startTime + b / window.frameRate)
+                coveredSec += (b - a) / window.frameRate
+                longestFrameSec = max(longestFrameSec, 1 / window.frameRate)
+            }
         }
-        return if (count == 0) Double.NaN else sqrt(sumSquares / count)
+        if (count == 0 || coveredSec + 2 * longestFrameSec < (to - from) - 1e-9) return Double.NaN
+        return sqrt(sumSquares / count)
     }
 
     data class MaskStats(val share: Double, val longestRunSec: Double)
