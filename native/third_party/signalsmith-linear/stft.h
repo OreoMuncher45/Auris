@@ -47,7 +47,7 @@ struct DynamicSTFT {
 
 		_analysisWindow.resize(_blockSamples);
 		_synthesisWindow.resize(_blockSamples);
-		setInterval(intervalSamples ? intervalSamples : blockSamples/4, acg, asymmetry);
+		setInterval(intervalSamples ? intervalSamples : std::max<size_t>(1, blockSamples/4), acg, asymmetry); // Auris patch: never a zero interval
 
 		reset();
 	}
@@ -81,6 +81,7 @@ struct DynamicSTFT {
 	}
 
 	void reset(Sample productWeight=1) {
+		_samplesSinceAnalysis = _samplesSinceSynthesis = 0; // Auris patch: both counters restart with the buffers
 		input.pos = _blockSamples;
 		output.pos = 0;
 		for (auto &v : input.buffer) v = 0;
@@ -219,6 +220,7 @@ struct DynamicSTFT {
 			}
 			output.windowProducts[output.pos] = almostZero;
 			if (++output.pos >= _blockSamples) output.pos = 0;
+			++_samplesSinceSynthesis; // Auris patch: the fast path counts its sample too
 			return;
 		}
 		// Zero the output buffer as we cross it
@@ -663,7 +665,7 @@ private:
 		template<typename Data>
 		void fill(Data &&data, size_t size, double warp, bool isForSynthesis) const {
 			double invSize = 1.0/size;
-			double offsetScale = gaussian(1)/(gaussian(3) + gaussian(-1));
+			double offsetScale = 1/(std::exp(-8*gaussianFactor) + 1); // Auris patch: g(1)/(g(3)+g(-1)) without dividing two underflowed values
 			double norm = 1/(gaussian(0) - 2*offsetScale*(gaussian(2)));
 			size_t offsetI = (size&1) ? 1 : (isForSynthesis ? 0 : 2);
 			for (size_t i = 0; i < size; ++i) {
