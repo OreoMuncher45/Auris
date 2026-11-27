@@ -287,6 +287,9 @@ struct DynamicSTFT {
 	}
 	
 	void setInterval(size_t defaultInterval, WindowShape windowShape=WindowShape::ignore, Sample asymmetry=0) {
+		// Auris patch: a hop is at least one sample and at most one block, so
+		// reset()'s moveOutput never runs past the output ring.
+		defaultInterval = std::max<size_t>(1, std::min(defaultInterval, _blockSamples));
 		_defaultInterval = defaultInterval;
 		if (windowShape == WindowShape::ignore) return;
 

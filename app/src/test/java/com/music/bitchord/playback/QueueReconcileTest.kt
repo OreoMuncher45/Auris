@@ -90,4 +90,34 @@ class QueueReconcileTest {
         // Nothing to refresh when the history plays what it did.
         assertEquals(emptyList<Int>(), QueueReconcile.historyRefresh(held, held, 1, same, samePlayable))
     }
+
+    /** An entry: its queue identity and the title the queue shows. */
+    private data class Row(val id: String, val title: String)
+
+    @Test
+    fun aRetitledUpcomingEntryIsReplacedNotKept() {
+        val held = listOf(Row("a", "A"), Row("b", "B"), Row("c", "C"))
+        val live = listOf(Row("a", "A"), Row("b", "B"), Row("c", "C (Remastered)"))
+        val plan = QueueReconcile.plan(
+            live, 1, held, 1,
+            same = { x, y -> x.id == y.id },
+            samePlayable = { x, y -> x.id == y.id },
+            sameRow = { x, y -> x == y },
+        )
+        assertEquals(QueueReconcile.ReplaceFrom(2), plan)
+    }
+
+    @Test
+    fun theIncomingEntryIsStillComparedOnlyOnWhatItPlays() {
+        // A retitled incoming entry plays the same thing: the handoff goes ahead.
+        val held = listOf(Row("a", "A"), Row("b", "B"))
+        val live = listOf(Row("a", "A"), Row("b", "B (Live)"))
+        val plan = QueueReconcile.plan(
+            live, 1, held, 1,
+            same = { x, y -> x.id == y.id },
+            samePlayable = { x, y -> x.id == y.id },
+            sameRow = { x, y -> x == y },
+        )
+        assertEquals(QueueReconcile.Same, plan)
+    }
 }

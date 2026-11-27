@@ -957,6 +957,13 @@ object Downloads {
     ) {
         if (songs.isEmpty()) return
         val ids = songs.map { it.videoId }.distinct()
+        // Liked Music downloaded with the page's own button: the listener
+        // asked for it kept, which the sync reads from the setting.
+        if (!keepSwitch && switchOn() && samePlaylist(target.id, YtMusicRepository.LIKED_MUSIC) &&
+            !AppSettings.downloadLikedSongs.value
+        ) {
+            AppSettings.setDownloadLikedSongs(true)
+        }
         recordCollections { current ->
             val existing = current[target.id]
             // The sync only grows a record that is still there: one deleted
@@ -2601,9 +2608,10 @@ data class DownloadedCollection(
  *
  * **Coalesce.** A batch download finishes dozens of tracks in a row, and each
  * completion used to encode the entire library and write it. Now a payload that
- * arrives while a write is in flight replaces the pending one instead of
- * queueing behind it, so a burst costs one write of the final state — which is
- * the only state anyone will ever read.
+ * arrives while a write is in flight is merged into the pending one, key by
+ * key with the newer value winning, instead of queueing behind it, so a burst
+ * costs one write of the final state — which is the only state anyone will
+ * ever read.
  *
  * **Never lose the last one.** [drain] reads the pending payload until there is
  * none, and re-checks for a late arrival before clearing [draining]. A payload
@@ -2625,7 +2633,10 @@ internal class CoalescingWriter(
 
     fun submit(payload: Map<String, String>) {
         val start = synchronized(lock) {
-            pending = payload
+            // Merged by key, newest value winning: a payload carries only the
+            // keys it changed, so a collection write landing on a pending
+            // saved-track write must not replace it.
+            pending = pending?.let { it + payload } ?: payload
             if (draining) return
             draining = true
             true
