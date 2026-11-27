@@ -110,6 +110,29 @@ class SessionRetryTest {
     }
 
     @Test
+    fun `the first account picked explicitly keeps index 0 through a refresh whose shell defaults to another`() = runBlocking {
+        Innertube.installSession(
+            Innertube.CandidateSession("SID=A", pageId = null, dataSyncId = null, authUser = "0", visitorData = null, clientVersion = null),
+        )
+        answer(shell = { shellFor(index = "2") }) { index -> if (index == 0) 401 else 200 }
+        assertTrue(YtMusicRepository.renamePlaylist("PL1", "new name").isSuccess)
+        assertTrue(YtMusicRepository.renamePlaylist("PL1", "newer name").isSuccess)
+        assertEquals(listOf("0", "0", "0"), writes.map { it.authUser })
+    }
+
+    @Test
+    fun `a sign-in that names no index takes the shell's`() = runBlocking {
+        Innertube.installSession(
+            Innertube.CandidateSession("SID=A", pageId = null, dataSyncId = null, authUser = null, visitorData = null, clientVersion = null),
+        )
+        answer(shell = { shellFor(index = "2") }) { 200 }
+        // The installed scope names index 0 until a refresh: drop it so the shell is read.
+        assertTrue(Innertube.refreshSessionScope(Innertube.listenerStamp()) != null)
+        assertTrue(YtMusicRepository.renamePlaylist("PL1", "new name").isSuccess)
+        assertEquals(listOf("2"), writes.map { it.authUser })
+    }
+
+    @Test
     fun `a rejected request bound to its session refreshes nothing, so the caller's stamp stays current`() = runBlocking {
         Innertube.cookie = "SID=A"
         answer { 401 }
