@@ -5,10 +5,47 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.playback.QueueShuffle
 import com.music.bitchord.playback.queueEntryId
 import com.music.bitchord.playback.toMediaItem
+import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 
 class QueueShuffleTierTest {
+
+    // Both are process-wide singletons: what a test changes in them is put
+    // back, so no other test class inherits a discarding prefs store or a
+    // shuffle state it never set.
+    private val prefsField = com.music.bitchord.data.settings.AppSettings::class.java
+        .getDeclaredField("prefs").apply { isAccessible = true }
+    private val shuffleFields = listOf("_enabled", "original", "requestedForNextQueue").map { name ->
+        QueueShuffle::class.java.getDeclaredField(name).apply { isAccessible = true }
+    }
+    private var savedPrefs: Any? = null
+    private var savedEnabled = false
+    private var savedSettingEnabled = false
+    private var savedShuffle: List<Any?> = emptyList()
+
+    @Before
+    fun saveSingletons() {
+        savedPrefs = runCatching { prefsField.get(com.music.bitchord.data.settings.AppSettings) }.getOrNull()
+        savedEnabled = QueueShuffle.enabled.value
+        // Set on the flow directly in teardown: setShuffleEnabled would write
+        // through whatever prefs store is installed by then.
+        savedSettingEnabled = com.music.bitchord.data.settings.AppSettings.shuffleEnabled.value
+        savedShuffle = shuffleFields.drop(1).map { it.get(QueueShuffle) }
+    }
+
+    @After
+    fun restoreSingletons() {
+        prefsField.set(com.music.bitchord.data.settings.AppSettings, savedPrefs)
+        @Suppress("UNCHECKED_CAST")
+        (shuffleFields[0].get(QueueShuffle) as kotlinx.coroutines.flow.MutableStateFlow<Boolean>).value = savedEnabled
+        shuffleFields.drop(1).zip(savedShuffle).forEach { (field, value) -> field.set(QueueShuffle, value) }
+        com.music.bitchord.data.settings.AppSettings.shuffleEnabled.value = savedSettingEnabled
+    }
 
     private fun testSong(
         id: String,
@@ -22,6 +59,62 @@ class QueueShuffleTierTest {
         queueTier = tier,
         queueEntryId = entryId,
     )
+
+    @Test
+    fun `header play button builds the next queue in order with shuffle left on`() {
+        installDiscardingPrefs()
+        QueueShuffle.enableForNextQueue() // shuffle left on from the last queue
+
+        QueueShuffle.disableForNextQueue()
+
+        // playSongs reads this flag for the queue it is about to build (PlayerConnection).
+        assertFalse(QueueShuffle.enabled.value)
+    }
+
+    @Test
+    fun `a refused play leaves shuffle and its saved order alone`() {
+        installDiscardingPrefs()
+        QueueShuffle.enableForNextQueue()
+        QueueShuffle.rememberStartingOrder(listOf(testSong("a"), testSong("b")))
+
+        // Play asks for shuffle off; the play takes the request, then is refused
+        // (no controller, or the host holds the controls) and never applies it.
+        QueueShuffle.requestForNextQueue(false)
+        QueueShuffle.takeRequestForNextQueue()
+
+        assertTrue(QueueShuffle.enabled.value)
+        assertEquals(listOf("entry-a", "entry-b"), QueueShuffle.savedOrder)
+    }
+
+    @Test
+    fun `an accepted play applies the shuffle its button asked for`() {
+        installDiscardingPrefs()
+        QueueShuffle.enableForNextQueue()
+        QueueShuffle.requestForNextQueue(false)
+
+        QueueShuffle.applyForNextQueue(QueueShuffle.takeRequestForNextQueue())
+
+        assertFalse(QueueShuffle.enabled.value)
+    }
+
+    @Test
+    fun `a request is taken once, so it never reaches a later play`() {
+        QueueShuffle.requestForNextQueue(true)
+
+        assertEquals(true, QueueShuffle.takeRequestForNextQueue())
+        assertNull(QueueShuffle.takeRequestForNextQueue())
+    }
+
+    @Test
+    fun `a superseded build's starting order does not replace the saved order`() {
+        val installed = listOf(testSong("a"), testSong("b"))
+        QueueShuffle.rememberStartingOrder(installed)
+
+        // A build that loses to a newer request computes its order but never installs it.
+        QueueShuffle.startingOrder(listOf(testSong("x"), testSong("y")), startIndex = 0)
+
+        assertEquals(listOf("entry-a", "entry-b"), QueueShuffle.savedOrder)
+    }
 
     @Test
     fun `startingOrder preserves USER_QUEUE items at front and shuffles context`() {
@@ -63,21 +156,7 @@ class QueueShuffleTierTest {
 
     @Test
     fun `reproduce album alternating skip and shuffle toggle`() {
-        val editor = java.lang.reflect.Proxy.newProxyInstance(
-            android.content.SharedPreferences.Editor::class.java.classLoader,
-            arrayOf(android.content.SharedPreferences.Editor::class.java),
-        ) { proxy, method, args ->
-            if (method.returnType == android.content.SharedPreferences.Editor::class.java) proxy else null
-        }
-        val prefs = java.lang.reflect.Proxy.newProxyInstance(
-            android.content.SharedPreferences::class.java.classLoader,
-            arrayOf(android.content.SharedPreferences::class.java),
-        ) { _, method, _ ->
-            if (method.name == "edit") editor else null
-        } as android.content.SharedPreferences
-        val field = com.music.bitchord.data.settings.AppSettings::class.java.getDeclaredField("prefs")
-        field.isAccessible = true
-        field.set(com.music.bitchord.data.settings.AppSettings, prefs)
+        installDiscardingPrefs()
 
         val albumSongs = (1..10).map { testSong("track-$it", QueueTier.CONTEXT, "entry-$it") }
         val items = albumSongs.map { it.toMediaItem() }.toMutableList()
@@ -131,5 +210,23 @@ class QueueShuffleTierTest {
             assertEquals("All queue entry IDs must remain unique at step $step", items.size, entryIds.toSet().size)
         }
     }
-}
 
+    /** AppSettings writes through to prefs; these tests only read the flows, so writes go nowhere. */
+    private fun installDiscardingPrefs() {
+        val editor = java.lang.reflect.Proxy.newProxyInstance(
+            android.content.SharedPreferences.Editor::class.java.classLoader,
+            arrayOf(android.content.SharedPreferences.Editor::class.java),
+        ) { proxy, method, args ->
+            if (method.returnType == android.content.SharedPreferences.Editor::class.java) proxy else null
+        }
+        val prefs = java.lang.reflect.Proxy.newProxyInstance(
+            android.content.SharedPreferences::class.java.classLoader,
+            arrayOf(android.content.SharedPreferences::class.java),
+        ) { _, method, _ ->
+            if (method.name == "edit") editor else null
+        } as android.content.SharedPreferences
+        val field = com.music.bitchord.data.settings.AppSettings::class.java.getDeclaredField("prefs")
+        field.isAccessible = true
+        field.set(com.music.bitchord.data.settings.AppSettings, prefs)
+    }
+}

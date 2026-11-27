@@ -56,7 +56,7 @@ class PageInputsEqualityTest {
         val composition = Composition(NoTreeApplier(), recomposer)
         composition.setContent {
             tick.intValue // read, so a tick recomposes this scope like a root recomposition
-            val (state, setPeriod) = rememberReplayState(active = false)
+            val (state, setPeriod) = rememberReplayState(active = false, pageOpen = false)
             states += state
             setters += setPeriod
         }

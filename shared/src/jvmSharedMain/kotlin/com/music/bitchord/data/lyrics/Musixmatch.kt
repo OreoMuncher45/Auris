@@ -186,6 +186,7 @@ object Musixmatch {
                 text = text,
                 words = words,
                 sungUntilMs = lineEnd.takeIf { it > lineStart },
+                timed = true,
             )
         }.sortedBy { it.timeMs }.withInstrumentalGaps()
     }

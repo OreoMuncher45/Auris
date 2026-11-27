@@ -625,11 +625,7 @@ internal fun rememberPlayerInk(
     val currentDarkTheme = rememberUpdatedState(darkTheme)
     val currentHeaderOnCover = rememberUpdatedState(headerOnCover)
     val ink = remember {
-        val first = Snapshot.withoutReadObservation { palette.value }
-        Animatable(
-            if (fromClip && first != null) first.palette.fg else sleeve.themedFg(darkTheme),
-            Color.VectorConverter(sleeve.fg.colorSpace),
-        )
+        Animatable(sleeve.themedFg(darkTheme), Color.VectorConverter(sleeve.fg.colorSpace))
     }
     val headerInk = remember {
         Animatable(sleeve.accent.at(sleeve.accent.lightL), Color.VectorConverter(sleeve.fg.colorSpace))
@@ -662,6 +658,9 @@ internal fun rememberPlayerInk(
             .mapLatest { withContext(Dispatchers.Default) { inkOutcome(it, fromClip) } }
             .distinctUntilChanged()
             .collectLatest { out ->
+                com.music.bitchord.data.PerfCounters.bump(
+                    com.music.bitchord.data.PerfCounters.Counter.INK_CHANGE,
+                )
                 coroutineScope {
                     launch { ink.animateTo(out.fg, inkSpec) }
                     launch { mainBlack.animateTo(out.mainBlack, washSpec) }
@@ -705,7 +704,7 @@ private fun NowPlayingPalette.themedFg(darkTheme: Boolean): Color =
     if (darkTheme && !fg.isLightInk()) accent.at(accent.lightL) else fg
 
 /** Everything the ink is decided from, read together so it is judged once per change. */
-private data class InkInputs(
+internal data class InkInputs(
     val live: LivePalette?,
     val sleeve: NowPlayingPalette,
     val main: InkSurface?,
@@ -718,7 +717,7 @@ private data class InkInputs(
 )
 
 /** The ink and the grades, settled. */
-private data class InkOutcome(
+internal data class InkOutcome(
     val fg: Color,
     val mainBlack: Float,
     val mainWhite: Float,
@@ -740,17 +739,27 @@ private data class InkOutcome(
  * Until a backdrop has published its colours the ink is the palette's own
  * sleeve-judged answer, as it always was.
  */
-private fun inkOutcome(inputs: InkInputs, fromClip: Boolean): InkOutcome {
+internal fun inkOutcome(inputs: InkInputs, fromClip: Boolean): InkOutcome {
     val live = inputs.live
-    val owner = if (fromClip && live != null) live.palette else inputs.sleeve
+    // A clip that owns the screen — a Canvas — is judged on its frames but
+    // wears the record's own colour: the frames' accent swings from warm to
+    // blue to grey as the clip cuts, and an ink that followed it re-themed the
+    // whole deck several times a second. The sleeve's accent and alphas hold
+    // for the whole track; only how light the ink goes, and the grade under
+    // it, answer the frame.
+    val owner = inputs.sleeve
     // Dark theme keeps the ink light on the main view and on the full-cover
     // blur behind lyrics and the queue — see [resolveInk]'s allowDark.
     val allowDark = !inputs.darkTheme
     val main = inputs.main?.let { resolveInk(owner.accent, it, owner.alphas, allowDark = allowDark) }
     val panel = inputs.panel?.let { resolveInk(owner.accent, it, owner.alphas, allowDark = allowDark) }
-    // A Canvas that owns the screen is its own surface, graded over its deck scrim.
+    // A Canvas that owns the screen is its own surface, graded over its deck
+    // scrim. Dark theme keeps its ink light there too: a bright frame is
+    // answered with more of the scrim's black, never with dark ink on a white
+    // grade, which turned the deck into a light-theme one for as long as the
+    // frame stayed bright.
     val canvas = if (fromClip && live != null) {
-        live.surface?.let { resolveInk(live.palette.accent, it, live.palette.alphas) }
+        live.surface?.let { resolveInk(owner.accent, it, owner.alphas, allowDark = allowDark) }
     } else {
         null
     }
@@ -765,7 +774,7 @@ private fun inkOutcome(inputs: InkInputs, fromClip: Boolean): InkOutcome {
         null
     }
     val fg = when {
-        fromClip && live != null -> canvas?.fg ?: live.palette.fg
+        fromClip && live != null -> canvas?.fg ?: owner.themedFg(inputs.darkTheme)
         inputs.surface == InkSurfaceKind.PANEL -> panel?.fg ?: owner.fg
         portrait != null -> portrait.fg
         else -> main?.fg ?: owner.themedFg(inputs.darkTheme)
@@ -774,7 +783,7 @@ private fun inkOutcome(inputs: InkInputs, fromClip: Boolean): InkOutcome {
     // screen: its own band, its own scrim, judged on its own — see
     // [resolveHeaderInk].
     val header = if (fromClip && live != null) {
-        live.header?.let { resolveHeaderInk(live.palette.accent, it, live.palette.alphas) }
+        live.header?.let { resolveHeaderInk(owner.accent, it, owner.alphas) }
     } else {
         inputs.header?.let { resolveHeaderInk(owner.accent, it, owner.alphas) }
     }
@@ -1204,6 +1213,20 @@ private fun SlidingPlayerDeck(
                         // No second translation: the weighted sibling above moves
                         // this component's origin as its reported height changes.
                         placeable.placeRelative(0, 0)
+                    }
+                }
+                // A hit target across the whole deck, gaps included. The queue
+                // and the lyrics are laid out full height, running on behind
+                // the deck, and Compose hands a touch nothing on top claims to
+                // whatever sits under it — so a tap in the space round the
+                // transport went straight through to a queue row hidden there
+                // and played a song five or six places down. Only observed,
+                // never consumed: the glyphs and sliders inside still take
+                // their own taps, and the player's tap and swipe handlers
+                // further up still see every gesture that starts here.
+                .pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        while (true) awaitPointerEvent()
                     }
                 },
         ) {

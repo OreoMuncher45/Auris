@@ -96,7 +96,7 @@ object KuGou {
         val decoded = runCatching {
             Base64.getDecoder().decode(response.content).toString(Charsets.UTF_8)
         }.getOrNull() ?: return null
-        return decoded.stripCredits()
+        return decoded.stripCredits().takeUnless { it.isInstrumentalNotice() }
     }
 
     private fun keyword(title: String, artist: String, album: String?) = Keyword(
@@ -133,6 +133,34 @@ object KuGou {
         return body.dropLast(tailCut).joinToString("\n")
     }
 
+    /**
+     * For a song it has no words for, KuGou still hands back a "lyric" — a
+     * single stamped "纯音乐，请欣赏" ("pure music, please enjoy") or a longer
+     * variant of it. Treat a file made of nothing but that notice as no lyrics
+     * at all, so the next source gets a turn instead of the notice being sung.
+     */
+    fun String.isInstrumentalNotice(): Boolean {
+        val lines = lineSequence().map { it.replace(STAMP, "").trim() }.filter { it.isNotEmpty() }.toList()
+        return lines.isNotEmpty() && lines.all { INSTRUMENTAL.matches(it) }
+    }
+
+    /**
+     * The same notice once parsed, from whichever source relays KuGou's or
+     * QQ's catalogue (BetterLyrics Portato is QQ's): [LyricsRepository] asks
+     * this of every answer, so none of them sings it.
+     */
+    fun isInstrumentalNotice(lines: List<LyricLine>): Boolean {
+        val sung = lines.map { it.text.trim() }.filter { it.isNotEmpty() }
+        return sung.isNotEmpty() && sung.all { INSTRUMENTAL.matches(it) }
+    }
+
+    private val STAMP = Regex("""\[\d{2}:\d{2}\.\d{2,3}]""")
+    /**
+     * The whole line is the notice: it ends at "欣赏" (punctuation aside) and
+     * does not deny itself, so a sung line such as "这不是纯音乐，请欣赏我的歌声"
+     * ("this is not pure music, enjoy my singing") is kept.
+     */
+    private val INSTRUMENTAL = Regex("""^[^不]*纯音乐[，,、\s]*请?[您你]?欣赏[。．.!！~～\s]*$""")
     private val STAMPED = Regex("""\[\d{2}:\d{2}\.\d{2,3}].*""")
     private val CREDIT = Regex(""".+][^\[]+[:：].+""")
 

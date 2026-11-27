@@ -151,10 +151,24 @@ data class LyricLine(
     val alignment: LyricAlignment = LyricAlignment.Start,
     /** Display-only translation: drive its sweep and bloom from the original vocal. */
     val timingSource: LyricLine? = null,
+    /**
+     * Set by every timed source for each line it reads with a stamp of its
+     * own. A synced line may start at 0 with no end and no words, which the
+     * values alone can't tell from a plain line; see [isTimed].
+     */
+    val timed: Boolean = false,
 ) {
     val isGap: Boolean get() = text.isEmpty()
 
     val isWordSynced: Boolean get() = words.isNotEmpty()
+
+    /**
+     * Whether this line carries any timing: read from a timed source
+     * ([timed]), or a start past zero, word timings, or a stated end. A synced
+     * line can start at 0 with nothing else, so its values alone can't tell
+     * it from a plain line: the source says.
+     */
+    val isTimed: Boolean get() = timed || timeMs > 0L || isWordSynced || sungUntilMs != null
 
     /**
      * Where each of [words] sits in [text], as character ranges.

@@ -139,6 +139,17 @@ object InnertubeParser {
             }
             .distinct()
 
+    /**
+     * The songs, artists and albums a `music/get_search_suggestions` response
+     * lists under its query strings — YouTube Music's own live cards for a
+     * half-typed query. Asked signed in, YouTube ranks them by what the
+     * account listens to, and the call is not filed in the account's search
+     * history the way a `search` is. Music videos are left out, as on the
+     * All tab.
+     */
+    fun parseSearchSuggestionEntities(response: JsonObject): List<SearchResult> =
+        parseSearchPage(response).rows
+
     /** Depth-first collection of a named renderer, preserving document order. */
     private fun collectRenderers(root: JsonElement, name: String): List<JsonObject> {
         val out = mutableListOf<JsonObject>()
@@ -572,7 +583,44 @@ object InnertubeParser {
     }
 
     /** A playlist page's own tracks, the ones YouTube suggests adding, and the token for the rest. */
-    data class PlaylistShelfPage(val songs: List<Song>, val suggested: List<Song>, val continuation: String?)
+    data class PlaylistShelfPage(
+        val songs: List<Song>,
+        val suggested: List<Song>,
+        val continuation: String?,
+        /** What the page turned out to be; see [Kind]. */
+        val kind: Kind = Kind.ROWS,
+        /**
+         * For an [Kind.UNREADABLE] appended page: its own items, the
+         * Suggestions shelves taken out, for a caller that can read them the
+         * general way (a page on screen) rather than give up (a reorder).
+         */
+        val unreadItems: JsonArray? = null,
+        /**
+         * Whether every row in the page's own playlist scope was read. A row
+         * that can't be (no video id, a blank title) is left out of [songs],
+         * and a reorder built on what is left would move entries past one it
+         * never saw.
+         */
+        val complete: Boolean = true,
+    ) {
+        enum class Kind {
+            /** The playlist's own rows were recognised (possibly none: an empty last page). */
+            ROWS,
+
+            /**
+             * A continuation holding nothing but "Suggestions" shelves — the
+             * shape an owned playlist's chain ends on. Ends the playlist.
+             */
+            SUGGESTIONS_ONLY,
+
+            /**
+             * A page whose own rows could not be read as the playlist's: an
+             * appended page with an episode among its rows, or with no rows
+             * at all beside its Suggestions. Not evidence the playlist ended.
+             */
+            UNREADABLE,
+        }
+    }
 
     /**
      * A playlist page's own track list, scoped rather than walked — plus
@@ -597,23 +645,46 @@ object InnertubeParser {
      * songs the user added. Returns null off a page with nothing
      * playlist-shaped in scope (an album, say), so callers fall back to the
      * generic walk.
+     *
+     * [byEntry] keeps one row per playlist entry (its `playlistSetVideoId`)
+     * rather than per recording, so a song added twice comes back twice: a
+     * reorder has to name every entry.
      */
-    fun parsePlaylistShelf(root: JsonElement): PlaylistShelfPage? {
+    fun parsePlaylistShelf(root: JsonElement, byEntry: Boolean = false): PlaylistShelfPage? {
+        // A later page of the playlist's own rows can also come appended by an
+        // action, with no `continuationContents` at all: the shape a long
+        // playlist's second page now has. Read as nothing, a reorder saw only
+        // the first 100 rows (#947).
+        val appended = root.a("onResponseReceivedActions")?.firstNotNullOfOrNull { it.o("appendContinuationItemsAction") }
         val scope: JsonElement = root.o("continuationContents")
+            ?: appended
             ?: root.o("contents").o("twoColumnBrowseResultsRenderer").o("secondaryContents")
             ?: return null
-        val playlistScope = scope.o("musicPlaylistShelfContinuation")
+        // An appended page's own rows are its direct items: a "Suggestions"
+        // shelf nested among them is read below as suggestions, not as rows.
+        val appendedItems: JsonArray? = appended?.takeIf { scope === it }?.let { action ->
+            JsonArray(action.a("continuationItems").orEmpty().filterNot { it.o("musicShelfRenderer") != null })
+        }
+        val playlistScope: JsonElement? = scope.o("musicPlaylistShelfContinuation")
+            ?: appendedItems
+                // Only track rows and the next-page token: anything else (a
+                // podcast episode) is left to the general reading. An appended
+                // page with no rows at all beside its shelves is not a shape the
+                // playlist is known to end on, so it isn't read as rows either.
+                ?.takeIf { items ->
+                    items.isNotEmpty() &&
+                        items.all { it.o("musicResponsiveListItemRenderer") != null || it.o("continuationItemRenderer") != null }
+                }
             ?: collectRenderers(scope, "musicPlaylistShelfRenderer").firstOrNull()
         val suggestionShelves = collectRenderers(scope, "musicShelfRenderer")
             .filter { it.o("title").runs() == "Suggestions" }
         if (playlistScope == null && suggestionShelves.isEmpty()) return null
 
         val pageCredit = pageCredit(root)
-        val songs = playlistScope?.let { playlist ->
-            collectRenderers(playlist, "musicResponsiveListItemRenderer")
-                .mapNotNull { parseResponsiveListItem(it, pageCredit) }
-                .distinctBy { it.videoId }
-        }.orEmpty()
+        val rowRenderers = playlistScope?.let { collectRenderers(it, "musicResponsiveListItemRenderer") }.orEmpty()
+        val parsedRows = rowRenderers.mapNotNull { parseResponsiveListItem(it, pageCredit) }
+        val complete = parsedRows.size == rowRenderers.size
+        val songs = parsedRows.distinctBy { if (byEntry) it.setVideoId ?: it.videoId else it.videoId }
         val knownSongs = songs.mapTo(HashSet()) { it.videoId }
         val suggested = suggestionShelves
             .flatMap { collectRenderers(it, "musicResponsiveListItemRenderer") }
@@ -625,7 +696,31 @@ object InnertubeParser {
         // `reloadContinuationData` token). Only the playlist shelf's own
         // continuation means more real tracks.
         val token = playlistScope?.let { continuationToken(it) }
-        return PlaylistShelfPage(songs, suggested, token)
+        val kind = when {
+            // Rows only when every one of them was read.
+            playlistScope != null && complete -> PlaylistShelfPage.Kind.ROWS
+            playlistScope != null -> PlaylistShelfPage.Kind.UNREADABLE
+            // The documented end of an owned playlist: a plain continuation
+            // whose only rows are inside its Suggestions shelves.
+            // Nothing but Suggestions shelves, item for item: any other item (an
+            // episode, a row of any renderer) means rows that weren't read.
+            appendedItems == null &&
+                root.o("continuationContents").o("sectionListContinuation").a("contents")
+                    ?.takeIf { it.isNotEmpty() }
+                    ?.all { it.o("musicShelfRenderer")?.o("title").runs() == "Suggestions" } == true ->
+                PlaylistShelfPage.Kind.SUGGESTIONS_ONLY
+            else -> PlaylistShelfPage.Kind.UNREADABLE
+        }
+        return PlaylistShelfPage(
+            songs, suggested, token, kind,
+            // Only an appended page whose rows weren't recognised as tracks is
+            // read the general way; one with a row that failed to parse keeps
+            // its parsed rows for display and fails a reorder.
+            unreadItems = appendedItems?.takeIf {
+                kind == PlaylistShelfPage.Kind.UNREADABLE && playlistScope == null && it.isNotEmpty()
+            },
+            complete = complete,
+        )
     }
 
     /**

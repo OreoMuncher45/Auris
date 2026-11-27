@@ -230,6 +230,7 @@ class ArtistPageInteractionTest {
                     onSongLongPress = {},
                     onSongSwipe = {},
                     onShuffle = {},
+                    onPlay = {},
                     onSectionItemClick = {},
                     onArtistClick = { _, _ -> },
                     onAddSuggested = {},

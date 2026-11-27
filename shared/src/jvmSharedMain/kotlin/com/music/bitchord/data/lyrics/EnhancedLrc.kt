@@ -36,7 +36,7 @@ object EnhancedLrc {
         return rows.mapIndexedNotNull { index, row ->
             if (row.words.isEmpty()) {
                 val text = decodeEntities(row.plain)
-                return@mapIndexedNotNull if (text.isEmpty()) null else LyricLine(row.timeMs, text)
+                return@mapIndexedNotNull if (text.isEmpty()) null else LyricLine(row.timeMs, text, timed = true)
             }
             // A word runs until the next one starts; the last runs until the
             // next line does. Without a next line — the closing word of the
@@ -57,6 +57,7 @@ object EnhancedLrc {
                 timeMs = minOf(row.timeMs, words.first().startMs),
                 text = words.joinToString(" ") { it.text },
                 words = words,
+                timed = true,
             )
         }.withInstrumentalGaps()
     }
@@ -80,8 +81,8 @@ object EnhancedLrc {
     fun decodeEntities(text: String): String {
         if ('&' !in text) return text
         return text
-            .replace(Regex("&#x([0-9a-fA-F]+);")) { it.groupValues[1].toInt(16).toChar().toString() }
-            .replace(Regex("&#(\\d+);")) { it.groupValues[1].toInt().toChar().toString() }
+            .replace(Regex("&#x([0-9a-fA-F]+);")) { codePoint(it, 16) }
+            .replace(Regex("&#(\\d+);")) { codePoint(it, 10) }
             .replace("&apos;", "'")
             .replace("&quot;", "\"")
             .replace("&nbsp;", " ")
@@ -89,6 +90,15 @@ object EnhancedLrc {
             .replace("&gt;", ">")
             // Last, so "&amp;#x27;" doesn't decode twice into an apostrophe.
             .replace("&amp;", "&")
+    }
+
+    /**
+     * The character a numeric entity names, emoji included (a Char holds only
+     * half of one); an entity naming no character is left as written.
+     */
+    private fun codePoint(match: MatchResult, radix: Int): String {
+        val value = match.groupValues[1].toIntOrNull(radix)
+        return if (value != null && Character.isValidCodePoint(value)) String(Character.toChars(value)) else match.value
     }
 
     private const val TAIL_MS = 800L

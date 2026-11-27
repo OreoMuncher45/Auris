@@ -109,6 +109,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import com.music.bitchord.ui.LocalPageHidden
 import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
@@ -191,6 +192,7 @@ import com.music.bitchord.data.model.SearchHistoryEntity
 import com.music.bitchord.ui.onboarding.OnboardingState
 import com.music.bitchord.ui.onboarding.SetupWizard
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.withContext
 import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.scrobbling.LastFM
@@ -1517,6 +1519,9 @@ internal fun BitChordApp(
     val visibleTabDefs = tabDefs.filter { it.first != TAB_PODCASTS || podcastsEnabled }
 
     val scope = rememberCoroutineScope()
+    // The running scroll-to-top, so a second tap restarts it instead of
+    // racing it. A plain holder, not state: nothing draws from it.
+    val tabScrollJob = remember { arrayOfNulls<Job>(1) }
 
     // Copies tracks to the WebDAV server, leaving the local files alone.
     // A clash suspends the batch on WebDavUploads.conflict until the dialog
@@ -1712,12 +1717,14 @@ internal fun BitChordApp(
     }
 
     val playFrom: (List<Song>, Int, QueueSource) -> Unit = playFrom@{ allSongs, allIndex, source ->
+        // Taken before anything can turn this play away, applied only once it is accepted.
+        val shuffle = QueueShuffle.takeRequestForNextQueue()
         // A Spotify page lists songs it has not found on YouTube Music yet (or
         // never will); those can't be queued, so play the rest in their order.
         if (allSongs.getOrNull(allIndex)?.isUnresolvedSpotify == true) return@playFrom
         val songs = allSongs.filterNot { it.isUnresolvedSpotify }
         val index = songs.indexOf(allSongs.getOrNull(allIndex)).coerceAtLeast(0)
-        playRequestGeneration++
+        val request = ++playRequestGeneration
         activeRadioSeed = null
         scope.launch {
             if (refusedByHost()) return@launch
@@ -1741,7 +1748,7 @@ internal fun BitChordApp(
                     source = source,
                     upcomingPartyTracks = upcomingPartyTracks,
                 )
-                c.playSongs(timeline, 0)
+                c.playSongs(timeline, 0, shuffleRequest = shuffle) { request == playRequestGeneration }
             } else {
                 val result = QueueCoordinator.buildContextQueue(
                     currentTimeline = currentTimeline,
@@ -1750,7 +1757,9 @@ internal fun BitChordApp(
                     selectedIndex = index,
                     contextSource = source,
                 )
-                c.playSongs(result.timeline, result.startIndex)
+                c.playSongs(result.timeline, result.startIndex, shuffleRequest = shuffle) {
+                    request == playRequestGeneration
+                }
             }
             // Start playback in the mini-player; the user opens the full view by tapping it.
         }
@@ -1784,7 +1793,11 @@ internal fun BitChordApp(
     val playBrowsePage: (DetailPage, List<Song>, Int?) -> Unit = browse@{ page, songs, index ->
         val source = QueueSource(page.title, PlaybackSourceType.BROWSE, page.browseId)
         val ready = songs.asSpotifyQueueRows()
-        if (ready.isEmpty()) return@browse
+        if (ready.isEmpty()) {
+            // Nothing to play: drop the shuffle a Play button asked for with it.
+            QueueShuffle.takeRequestForNextQueue()
+            return@browse
+        }
         val at = index?.coerceIn(0, (ready.size - 1).coerceAtLeast(0)) ?: 0
         playFrom(ready, at, source)
     }
@@ -1802,7 +1815,7 @@ internal fun BitChordApp(
         if (ready.isEmpty()) return@browse
         // Shuffle goes on first so the queue is built shuffled as it is
         // set — the random pick here only decides which track leads it.
-        QueueShuffle.enableForNextQueue()
+        setShuffleForNextQueue(true)
         playFrom(ready, ready.indices.random(), source)
     }
 
@@ -1931,7 +1944,7 @@ internal fun BitChordApp(
      * where the surrounding list *is* the thing the user asked for.
      */
     val playRadio: (Song, QueueSource) -> Unit = { song, source ->
-        playRequestGeneration++
+        val request = ++playRequestGeneration
         activeRadioSeed = null
         scope.launch {
             if (refusedByHost()) return@launch
@@ -1945,7 +1958,7 @@ internal fun BitChordApp(
                 tappedSong = song,
                 source = source,
             )
-            c.playSongs(oneOffQueue, 0)
+            c.playSongs(oneOffQueue, 0) { request == playRequestGeneration }
             // Start radio in the mini-player; the user opens the full view by tapping it.
         }
     }
@@ -1960,7 +1973,7 @@ internal fun BitChordApp(
      * shows: the shelf is what fits on a screen, the queue is what plays.
      */
     val playOfflineLibrary: (Song, QueueSource) -> Unit = { song, source ->
-        playRequestGeneration++
+        val request = ++playRequestGeneration
         activeRadioSeed = null
         scope.launch {
             if (refusedByHost()) return@launch
@@ -1981,7 +1994,7 @@ internal fun BitChordApp(
                     playbackSourceId = source.id,
                 ).asQueueEntry(QueueTier.CONTEXT)
             }
-            c.playSongs(queue, 0)
+            c.playSongs(queue, 0) { request == playRequestGeneration }
         }
     }
 
@@ -2060,7 +2073,13 @@ internal fun BitChordApp(
                     activeRadioSeed = seed.videoId to song.title
                 } else {
                     activeRadioSeed = null
-                    activeController.playSongs(listOf(seed) + related, 0)
+                    // Superseded: the newer request owns the queue, so claim no
+                    // station. beginRadioQueue already erased the snapshot, though,
+                    // so re-commit what still plays or a cold start restores nothing.
+                    if (!activeController.playSongs(listOf(seed) + related, 0) { request == playRequestGeneration }) {
+                        activeController.commitRadioQueue()
+                        return@launch
+                    }
                 }
                 // Make this station — never the queue from before it — what a
                 // fresh process restores, even if it is killed immediately.
@@ -2114,7 +2133,11 @@ internal fun BitChordApp(
                     return@launch
                 }
                 activeController.beginRadioQueue()
-                activeController.playSongs(tracks, 0)
+                if (!activeController.playSongs(tracks, 0) { request == playRequestGeneration }) {
+                    // The snapshot is already erased; keep what still plays restorable.
+                    activeController.commitRadioQueue()
+                    return@launch
+                }
                 activeController.commitRadioQueue()
                 Toast.makeText(
                     context,
@@ -2480,7 +2503,7 @@ internal fun BitChordApp(
     val playQuickPicks: (Boolean) -> Unit = { shuffled ->
         val songs = quickPicksSongsState.value
         if (songs.isNotEmpty()) {
-            playRequestGeneration++
+            val request = ++playRequestGeneration
             activeRadioSeed = null
             scope.launch {
                 if (refusedByHost()) return@launch
@@ -2498,7 +2521,7 @@ internal fun BitChordApp(
                         playbackSourceType = source.type,
                     ).asQueueEntry(QueueTier.CONTEXT)
                 }
-                c.playSongs(queue, 0)
+                c.playSongs(queue, 0) { request == playRequestGeneration }
             }
         }
     }
@@ -3015,7 +3038,8 @@ internal fun BitChordApp(
     // See [rememberReplayState].
     val replayOpen = nav.showReplay || nav.replayStory != null || nav.showReplayShare ||
         (libraryReplayVisible && nav.selectedTab == TAB_LIBRARY && detail == null && !nav.showSettings)
-    val (replay, setReplayPeriod) = rememberReplayState(replayOpen)
+    val replayPageOpen = nav.showReplay || nav.replayStory != null || nav.showReplayShare
+    val (replay, setReplayPeriod) = rememberReplayState(replayOpen, replayPageOpen)
     val replayCards = remember(replay.summary) {
         replay.summary?.takeUnless { it.isEmpty }?.cards(context).orEmpty()
     }
@@ -3763,9 +3787,14 @@ internal fun BitChordApp(
                 ?.takeIf { !fromPlayer && song.setVideoId != null }
             // The folder this page is, when it is one. A track on a folder's
             // page can be taken back out of it; a track anywhere else cannot.
-            val openFolder = detail?.browseId
+            val openLocal = detail?.browseId
                 ?.let { com.music.bitchord.data.spotify.LocalPlaylistStore.getPlaylist(it) }
-                ?.takeIf { it.isFolder && !fromPlayer }
+                ?.takeIf { !fromPlayer }
+            val openFolder = openLocal?.takeIf { it.isFolder }
+            // A playlist imported onto this device (signed out, or one YouTube
+            // refused to create) is the listener's to edit as well, account or
+            // not — its rows come out of the local store, not YouTube.
+            val openImported = openLocal?.takeIf { !it.isFolder && it.browseId == detail?.browseId }
             // Asked of the cache's index off the main thread as the menu opens,
             // so "Remove from cache" is only offered for a track it holds.
             // Re-asked when the cache changes, which is what drops the row
@@ -3839,6 +3868,12 @@ internal fun BitChordApp(
                     {
                         sheets.songMenu.song = null
                         viewModel.removeFromPlaylist(it.browseId, song)
+                    }
+                } ?: openImported?.let { imported ->
+                    {
+                        sheets.songMenu.song = null
+                        com.music.bitchord.data.spotify.LocalPlaylistStore.removeSong(imported.browseId, song)
+                        viewModel.reloadLocalDetail(imported.browseId)
                     }
                 },
                 onRemoveFromCache = if (inCache) {
@@ -4867,6 +4902,28 @@ internal fun BitChordApp(
                 // second tab is not always the second tab.
                 val onTabSelected: (Int) -> Unit = { index ->
                     val tab = visibleTabDefs.getOrNull(index)?.first ?: TAB_HOME
+                    // Tapping the tab already showing takes its list back to
+                    // the top — but only when the tab's own list is what is on
+                    // screen. With a page, a mood or a settings screen over it,
+                    // the tap just closes that, as it always has. Read before
+                    // the lines below clear them.
+                    val scrollToTop = tab == nav.selectedTab && tab != TAB_SEARCH &&
+                        detail == null && selectedMoodGenre == null &&
+                        !nav.showSettings && !nav.showAccountScrobbling && !nav.showSources &&
+                        !nav.showListenTogether && !nav.showEqualizer && !nav.showReplay &&
+                        !nav.showAudiobooks && sheets.openAudiobook == null &&
+                        nav.itunesPodcastId == null && !nav.showGenres &&
+                        !sheets.showSpotify && !sheets.showDiscord &&
+                        !sheets.showHistory && !sheets.showFlow && sheets.libraryShowAll == null &&
+                        !sheets.showQuickPicks && !podcastUi.showContinueListening
+                    if (scrollToTop) {
+                        val list = currentListState
+                        tabScrollJob[0]?.cancel()
+                        tabScrollJob[0] = scope.launch {
+                            // Reduce animation: straight to the top, no scroll to follow.
+                            if (reducePlayerMotion) list.scrollToItem(0) else list.scrollToTopSmoothly()
+                        }
+                    }
                     viewModel.clearDetail()
                     viewModel.closeMoodGenre()
                     nav.showSettings = false
@@ -5142,6 +5199,8 @@ internal fun BitChordApp(
                 download = startDownload,
                 downloadFromCache = downloadFromCache,
                 withBrowseSongs = withBrowseSongs,
+                beginPlayRequest = { ++playRequestGeneration },
+                currentPlayRequest = { playRequestGeneration },
             ),
             smartDownloadPodcast = ::smartDownloadPodcast,
         )
@@ -5757,7 +5816,7 @@ private fun RootPage(
             onSongLongPress = pageActions.openSongMenu,
             onSongSwipe = pageActions.onSongSwipe,
             onShuffle = { songs ->
-                QueueShuffle.enableForNextQueue()
+                setShuffleForNextQueue(true)
                 pageActions.playFrom(
                     songs,
                     songs.indices.random(),
@@ -5837,6 +5896,14 @@ private fun RootPage(
             },
             onSongLongPress = { pageActions.openSongMenu(withAlbum(it)) },
             onSongSwipe = pageActions.onSongSwipe,
+            onPlay = { songs ->
+                if (songs.isNotEmpty()) {
+                    // Play is the release in order, so a shuffle left on
+                    // from the last queue goes off before this one is built.
+                    setShuffleForNextQueue(false)
+                    pageActions.playBrowsePage(page, songs, 0)
+                }
+            },
             onShuffle = { songs ->
                 pageActions.playBrowsePageShuffled(page, songs)
             },
@@ -6596,6 +6663,17 @@ private data class PageActions(
 )
 
 /**
+ * A release's Play or Shuffle button asking for shuffle on the queue it is
+ * about to start. Call it right before that play: `playFrom` takes the request
+ * and applies it only once the play is accepted, so a play refused because
+ * the party host has the controls, or because there is no controller yet,
+ * leaves the listener's shuffle and its saved order as they were.
+ */
+private fun setShuffleForNextQueue(on: Boolean) {
+    QueueShuffle.requestForNextQueue(on)
+}
+
+/**
  * What [RootOverlays]' menus can do with a list of tracks: play it, queue it
  * next or last, download it, or first fetch the tracks behind an album or
  * playlist. They travel together from [BitChordApp], which owns them.
@@ -6614,6 +6692,10 @@ private data class TrackListActions(
     /** The Cached songs folder's download: the cache's own copies, saved from disk. */
     val downloadFromCache: (List<Song>) -> Unit,
     val withBrowseSongs: (BrowseTarget, (List<Song>) -> Unit) -> Unit,
+    /** Claims a new play request, invalidating earlier ones; see [latestPlayRequestOnly]. */
+    val beginPlayRequest: () -> Int,
+    /** The newest play request's token. */
+    val currentPlayRequest: () -> Int,
 )
 
 /**
@@ -6988,6 +7070,18 @@ private fun RootOverlays(
                 tracks.withBrowseSongs(target, action)
             }
         }
+        // Play and Shuffle claim the play request at the tap: a fetch that
+        // lands after something else started playing is dropped, rather than
+        // flipping shuffle and replacing the newer queue.
+        val actPlay: ((List<Song>) -> Unit) -> () -> Unit = { action ->
+            {
+                sheets.browseMenu.target = null
+                tracks.withBrowseSongs(
+                    target,
+                    latestPlayRequestOnly(tracks.beginPlayRequest, tracks.currentPlayRequest, action),
+                )
+            }
+        }
         // Whose playlist this is, asked here rather than carried in by
         // whatever opened the sheet.
         //
@@ -7013,17 +7107,19 @@ private fun RootOverlays(
         val remote = target.browseId?.startsWith("local:") == false
         val pinnedPlaylists by AppSettings.pinnedPlaylists.collectAsStateWithLifecycle()
         val pinnableId = target.browseId?.takeIf { target.type == BrowseType.PLAYLIST }
-        // A folder of the listener's own: renamed and deleted here, on the
-        // device, rather than on an account that may not exist.
+        // A folder of the listener's own, or a playlist imported onto this
+        // device: renamed and deleted here, on the device, rather than on an
+        // account that may not exist.
         val localFolder = target.browseId
             ?.let { com.music.bitchord.data.spotify.LocalPlaylistStore.getPlaylist(it) }
-            ?.takeIf { it.isFolder }
+            ?.takeIf { it.isFolder || it.browseId == target.browseId }
         BrowseActionsSheet(
             // The live answer, not the one the target was built with.
             target = target.copy(playlist = playlist),
             localCollection = localFolder?.let { folder ->
                 com.music.bitchord.ui.components.LocalCollectionActions(
                     title = folder.title,
+                    isFolder = folder.isFolder,
                     onRename = { name ->
                         sheets.browseMenu.target = null
                         com.music.bitchord.data.spotify.LocalPlaylistStore.renamePlaylist(folder.id, name)
@@ -7045,12 +7141,15 @@ private fun RootOverlays(
             },
             onPlayNext = act(tracks.playNext),
             onAddToQueue = act(tracks.addToQueue),
-            onPlay = act { songs -> tracks.play(songs, 0) }.takeIf { target.fromCard },
-            onShuffle = act { songs ->
+            onPlay = actPlay { songs ->
+                setShuffleForNextQueue(false)
+                tracks.play(songs, 0)
+            }.takeIf { target.fromCard },
+            onShuffle = actPlay { songs ->
                 // As on a release page: shuffle goes on before the queue
                 // is built, so it is built shuffled rather than played
                 // out of order.
-                QueueShuffle.enableForNextQueue()
+                setShuffleForNextQueue(true)
                 tracks.play(songs, songs.indices.random())
             }.takeIf { target.fromCard },
             // The whole release into one of the account's playlists — an
@@ -7707,6 +7806,10 @@ private fun WebSessionHost(
 ) {
     if (mode == null) return
     BackHandler(onBack = onDismiss)
+    // However the sheet goes away — Back, Close, another screen taking over —
+    // a validation still running goes with it. Its candidate never touched the
+    // shared session, so there is nothing else to undo.
+    DisposableEffect(Unit) { onDispose { viewModel.cancelWebSession() } }
     // Raised by "Use this channel", read by the browser as "take the
     // session from the page as it now stands". A counter rather than a
     // flag so a second tap, after a failed first one, is still a new
@@ -8722,3 +8825,20 @@ private const val VIDEO_UPGRADE_WAIT_MS = 20_000L
 
 /** How often that question is asked while the controller catches up. */
 private const val VIDEO_UPGRADE_POLL_MS = 150L
+
+/** How many rows above the top a scroll-to-top animates; anything further is jumped to first. */
+private const val SCROLL_TO_TOP_ANIMATED_ROWS = 6
+
+/**
+ * Back to the top of a tab's list, as a scroll the eye can follow.
+ *
+ * A long way down, the list first jumps to a few rows from the top and
+ * animates only the rest: animating the whole distance would compose and
+ * lay out every row in between, which is the frame cost the jump avoids,
+ * and a scroll that long reads as a blur anyway.
+ */
+private suspend fun LazyListState.scrollToTopSmoothly() {
+    if (firstVisibleItemIndex == 0 && firstVisibleItemScrollOffset == 0) return
+    if (firstVisibleItemIndex > SCROLL_TO_TOP_ANIMATED_ROWS) scrollToItem(SCROLL_TO_TOP_ANIMATED_ROWS)
+    animateScrollToItem(0)
+}

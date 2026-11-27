@@ -88,30 +88,50 @@ object LrcLib {
      * otherwise the line would blink out between two sung phrases. A stamp
      * with nothing after it closes the final line, so it always survives.
      */
+    /** Whether [lrc] holds line stamps at all: an LRC, even one [parseLrc] finds nothing sung in. */
+    fun isStamped(lrc: String): Boolean = STAMP.containsMatchIn(lrc)
+
     fun parseLrc(lrc: String): List<LyricLine> {
-        val all = lrc.lineSequence().mapNotNull { line ->
-            val match = STAMP.find(line) ?: return@mapNotNull null
-            val (minutes, seconds, fraction) = match.destructured
-            // Two digits mean centiseconds, three mean milliseconds.
-            val fractionMs = when (fraction.length) {
-                2 -> fraction.toLong() * 10
-                3 -> fraction.toLong()
-                else -> 0L
-            }
-            val body = line.substring(match.range.last + 1)
+        val all = lrc.lineSequence().flatMap { line ->
+            // `[00:12.00][00:45.00]Chorus` is one line sung at each stamp: the
+            // compressed form many LRC files use for a repeated chorus.
+            // Some writers put a space between the stamps; only words end the run.
+            val stamps = generateSequence(STAMP.find(line)) { previous ->
+                STAMP.find(line, previous.range.last + 1)?.takeIf {
+                    line.substring(previous.range.last + 1, it.range.first).isBlank()
+                }
+            }.toList()
+            if (stamps.isEmpty()) return@flatMap emptySequence()
+            val body = line.substring(stamps.last().range.last + 1)
             // Detect the RTL marker that was written by [toEnhancedLrc].
             val (text, alignment) = stripAlignmentMarker(body)
-            LyricLine(
-                timeMs = minutes.toLong() * 60_000 + seconds.toLong() * 1_000 + fractionMs,
-                // Stripped rather than rebuilt from the runs below: the spacing
-                // and punctuation between two words belong to the line, and
-                // re-joining the words with single spaces would quietly rewrite
-                // a line that never had them.
-                text = text.replace(WORD_STAMP, "").trim(),
-                words = parseWordRuns(text),
-                alignment = alignment,
-            )
+            // Stripped rather than rebuilt from the runs below: the spacing
+            // and punctuation between two words belong to the line, and
+            // re-joining the words with single spaces would quietly rewrite
+            // a line that never had them.
+            val plain = text.replace(WORD_STAMP, "").trim()
+            val words = parseWordRuns(text)
+            // Word stamps are absolute and written for the first line stamp, so
+            // each repeat moves them by its distance from that one.
+            val firstMs = msOf(stamps.first())
+            // Each repeat copies every word of the line, so a malformed entry
+            // with thousands of stamps would build thousands of copies. Real
+            // repeats of a chorus number a handful; the rest are dropped.
+            stamps.asSequence().take(MAX_STAMPS_PER_LINE).map { match ->
+                val timeMs = msOf(match)
+                LyricLine(
+                    timeMs = timeMs,
+                    text = plain,
+                    words = words.shiftedBy(timeMs - firstMs),
+                    alignment = alignment,
+                    timed = true,
+                )
+            }
         }.sortedBy { it.timeMs }.toList()
+        // Stamps with nothing sung at any of them are no lyrics, only breaks:
+        // nothing, so the caller tries the next source rather than offering a
+        // screen of gaps that outranks plain lyrics found elsewhere.
+        if (all.none { !it.isGap }) return emptyList()
 
         val kept = all.filterIndexed { index, line ->
             if (!line.isGap) return@filterIndexed true
@@ -124,7 +144,7 @@ object LrcLib {
         // word — so give the run-up its own break when it's long enough.
         val first = kept.firstOrNull() ?: return kept
         return if (!first.isGap && first.timeMs >= MIN_GAP_MS) {
-            listOf(LyricLine(0L, "")) + kept
+            listOf(LyricLine(0L, "", timed = true)) + kept
         } else {
             kept
         }
@@ -146,6 +166,9 @@ object LrcLib {
     }
 
     private const val ALIGNMENT_MARKER = "<R>"
+
+    /** The most times one LRC line is sung; see [parseLrc]. */
+    const val MAX_STAMPS_PER_LINE = 32
 
     /**
      * YouTube Music titles are noisy — "(From "Raees")", "| Official Video",
@@ -189,6 +212,16 @@ object LrcLib {
         )
     }
 
+    private fun List<LyricWord>.shiftedBy(deltaMs: Long): List<LyricWord> =
+        if (deltaMs == 0L || isEmpty()) this else map { word ->
+            word.copy(
+                startMs = word.startMs + deltaMs,
+                endMs = word.endMs + deltaMs,
+                syllables = word.syllables.map { it.copy(startMs = it.startMs + deltaMs, endMs = it.endMs + deltaMs) },
+            )
+        }
+
+    /** `[mm:ss.xx]` or `<mm:ss.xx>`: two fraction digits mean centiseconds, three mean milliseconds. */
     private fun msOf(mark: MatchResult): Long {
         val (minutes, seconds, fraction) = mark.destructured
         val fractionMs = when (fraction.length) {

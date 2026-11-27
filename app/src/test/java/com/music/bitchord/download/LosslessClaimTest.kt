@@ -125,6 +125,7 @@ class LosslessClaimTest {
             limit: Int,
             waitForAll: Boolean,
             request: StreamRequest?,
+            target: com.music.bitchord.data.sources.TrackMatcher.Target?,
         ) = listOf(Song(videoId = "$displayName-1", title = TITLE, artist = ARTIST, thumbnailUrl = null, durationText = "2:00"))
 
         override suspend fun stream(trackId: String, request: StreamRequest) = stream

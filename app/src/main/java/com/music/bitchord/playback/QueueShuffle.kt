@@ -65,18 +65,68 @@ object QueueShuffle {
     }
 
     /**
+     * The shuffle a release's Play or Shuffle button asked for, waiting for
+     * the play it goes with. Main thread only.
+     *
+     * Held rather than applied at the tap: that play can still be refused
+     * (the party host holds the controls, no controller yet), and a refused
+     * play must leave the listener's shuffle and its saved order as they were.
+     */
+    private var requestedForNextQueue: Boolean? = null
+
+    /** Asks for shuffle [on] for the queue the very next play builds; see [takeRequestForNextQueue]. */
+    fun requestForNextQueue(on: Boolean) {
+        requestedForNextQueue = on
+    }
+
+    /**
+     * The pending request, cleared — taken by a play as it starts, so a
+     * request never outlives the play it was made for.
+     */
+    fun takeRequestForNextQueue(): Boolean? = requestedForNextQueue.also { requestedForNextQueue = null }
+
+    /** Applies a request [takeRequestForNextQueue] returned, once its play is accepted. */
+    fun applyForNextQueue(on: Boolean?) {
+        when (on) {
+            true -> enableForNextQueue()
+            false -> disableForNextQueue()
+            null -> Unit
+        }
+    }
+
+    /**
+     * [enableForNextQueue]'s counterpart, for the Play button beside it: an
+     * album or playlist played from the top plays in its own order, whatever
+     * shuffle was left on from the last queue.
+     */
+    fun disableForNextQueue() {
+        original = emptyList()
+        _enabled.value = false
+        AppSettings.setShuffleEnabled(false)
+    }
+
+    /**
      * The order a queue should go in when it is started while shuffle is on:
-     * the track the user picked leads, the rest follow at random. The order it
-     * arrived in is remembered, so turning shuffle off restores it.
+     * the track the user picked leads, the rest follow at random. Pure: the
+     * caller saves the order it arrived in with [rememberStartingOrder] once
+     * that queue is actually installed, so a superseded build can't overwrite
+     * the order shuffle-off restores.
      */
     fun startingOrder(songs: List<Song>, startIndex: Int): List<Song> {
-        original = songs.map { it.queueEntryId ?: it.videoId }
         val rest = songs.filterIndexed { i, _ -> i != startIndex }
         val userQueue = rest.filter { it.queueTier == QueueTier.USER_QUEUE }
         val context = rest.filter { it.queueTier == QueueTier.CONTEXT }.shuffled()
         val autoplay = rest.filter { it.queueTier == QueueTier.AUTOPLAY }.shuffled()
         return listOf(songs[startIndex]) + userQueue + context + autoplay
     }
+
+    /** Remembers [songs]' own order as the one turning shuffle off restores. */
+    fun rememberStartingOrder(songs: List<Song>) {
+        original = songs.map { it.queueEntryId ?: it.videoId }
+    }
+
+    /** The saved pre-shuffle order, for tests. */
+    internal val savedOrder: List<String> get() = original
 
     /**
      * Rearranges everything after the playing track. That track keeps playing,
