@@ -166,6 +166,7 @@ object ExtensionLyrics {
                 text = plain,
                 sungUntilMs = endMs.takeIf { it > startMs },
                 background = backing,
+                timed = true,
             )
         }
         return LyricLine(
@@ -176,6 +177,7 @@ object ExtensionLyrics {
             words = timed,
             sungUntilMs = endMs.takeIf { it > timed.last().endMs },
             background = backing,
+            timed = true,
         )
     }
 
