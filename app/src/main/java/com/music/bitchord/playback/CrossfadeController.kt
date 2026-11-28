@@ -1296,7 +1296,7 @@ class CrossfadeController(
             // pair would otherwise have used against silence instead — see
             // [beginSleepFadeOut]. No arm-lead margin: nothing is buffering.
             if (remaining > fade) return
-            beginSleepFadeOut(fade)
+            beginSleepFadeOut(SleepFade.span(fade, remaining))
             return
         }
         // Bit-perfect: the sleep fade above is allowed, a blend into the next
@@ -1521,7 +1521,7 @@ class CrossfadeController(
             // timer means there is no next track, so run the same fade-out
             // against silence instead — see [beginSleepFadeOut].
             if (remaining > 0L) return
-            beginSleepFadeOut(fade)
+            beginSleepFadeOut(SleepFade.span(fade, duration - player.currentPosition))
             return
         }
         // Bit-perfect: the sleep fade above is allowed, an Automix blend is not.
@@ -2212,6 +2212,14 @@ class CrossfadeController(
     private fun driveFade() {
         val out = outgoing ?: return bail()
         val player = incoming ?: return bail()
+        // "Sleep after this song" set mid-blend, before the handoff: the song
+        // meant is the outgoing one, so the incoming track is ramped away and
+        // the next tick's planning runs the sleep fade-out on what is left of
+        // the outgoing one. See [SleepFade].
+        if (SleepFade.dropsBlend(SleepTimer.afterTrack.value, handedOff)) {
+            TrackLog.d(TAG, "sleep timer set mid-blend: dropping the incoming track")
+            return bail()
+        }
         // The incoming track gets the same say over the length as the outgoing
         // one did, so a long crossfade into a short track tightens rather than
         // swallowing it. Its duration is often still unknown when the fade
