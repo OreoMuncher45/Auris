@@ -89,12 +89,11 @@ class ExclusiveUsbOutput(
     @Volatile private var configuredChannelCount = 0
     @Volatile private var softwareGainValue = 1f
 
-    /**
-     * While the DAC refuses a lower level it is louder than asked: the writer
-     * scales every chunk it sends by this until a write lands. See
-     * [DacLevelFallback.pendingAttenuation].
-     */
-    @Volatile private var pendingAttenuation = 1f
+    /** Hardware-level writes and the writer's attenuation while one is refused: see [DacLevelState]. */
+    private val dacLevel = DacLevelState(
+        setDb = { db -> featureVolume?.setDb(db) == true },
+        nowMs = { SystemClock.elapsedRealtime() },
+    )
     @Volatile private var lastHardwareRate = 0
 
     /**
@@ -129,11 +128,6 @@ class ExclusiveUsbOutput(
      */
     @Volatile private var volumeDirty = false
 
-    /** After a DAC that took no level write, when to try again: not on every chunk the writer sends. */
-    @Volatile private var volumeRetryAtMs = 0L
-
-    /** The listener level the DAC last refused; a different one is tried at once. */
-    @Volatile private var refusedLevel = Float.NaN
 
     /** When the DAC's own level was last re-read. */
     @Volatile private var lastDacLevelCheckMs = 0L
@@ -964,20 +958,16 @@ class ExclusiveUsbOutput(
                 val needsWrite = !alreadyThere &&
                     (written == null || kotlin.math.abs(target - written) > 0.05)
                 if (needsWrite) {
-                    if (control.setDb(target)) {
+                    if (dacLevel.write(level, target, written ?: current)) {
                         lastWrittenDb = target
                         softwareGainValue = 1f
-                        pendingAttenuation = 1f
                         return
                     }
                     // Kept on the hardware path and written again shortly, never
-                    // switched to software gain mid-stream: see [DacLevelFallback].
+                    // switched to software gain mid-stream; louder than asked
+                    // meanwhile, the writer makes up the difference on every
+                    // chunk it sends: see [DacLevelState].
                     Log.w(TAG, "Feature Unit SET_CUR failed; keeping the level pending")
-                    // Louder than asked until the write lands: the writer makes up
-                    // the difference on every chunk it sends meanwhile.
-                    pendingAttenuation = DacLevelFallback.pendingAttenuation(target, written ?: current)
-                    refusedLevel = level
-                    volumeRetryAtMs = DacLevelFallback.retryAt(SystemClock.elapsedRealtime())
                     volumeDirty = true
                     return
                 } else {
@@ -986,7 +976,7 @@ class ExclusiveUsbOutput(
                     // written to it at all.
                     lastWrittenDb = target
                     softwareGainValue = 1f
-                    pendingAttenuation = 1f
+                    dacLevel.settled()
                     return
                 }
             } else {
@@ -996,7 +986,7 @@ class ExclusiveUsbOutput(
             }
         }
         softwareGainValue = ListenerVolumePolicy.perceptualGain(level)
-        pendingAttenuation = 1f
+        dacLevel.settled()
     }
 
     /**
@@ -1097,13 +1087,11 @@ class ExclusiveUsbOutput(
             try {
                 val floats = next.floats
                 val raw = next.raw
-                val attenuation = pendingAttenuation
-                if (attenuation < 1f - 1e-6f) {
-                    if (floats != null && next.encoding == 0) {
-                        ExclusivePcmGain.apply(floats, attenuation, next.count)
-                    } else if (raw != null) {
-                        scalePcmBytes(raw, next.encoding, attenuation, next.byteSize)
-                    }
+                if (floats != null && next.encoding == 0) {
+                    dacLevel.attenuate(floats, next.count)
+                } else if (raw != null) {
+                    val attenuation = dacLevel.pendingAttenuation
+                    if (attenuation < 1f - 1e-6f) scalePcmBytes(raw, next.encoding, attenuation, next.byteSize)
                 }
                 if (floats != null && next.encoding == 0) target.write(floats, next.count)
                 else if (raw != null) target.writeRaw(raw, next.encoding, next.count)
@@ -1140,12 +1128,7 @@ class ExclusiveUsbOutput(
 
     private fun maybeApplyVolume() {
         if (!volumeDirty) return
-        if (!DacLevelFallback.mayRetry(
-                volumeRetryAtMs,
-                SystemClock.elapsedRealtime(),
-                levelChanged = listenerLevel != refusedLevel,
-            )
-        ) return
+        if (!dacLevel.mayWrite(listenerLevel)) return
         withLockUnlessStopping {
             if (!volumeDirty) return
             volumeDirty = false
@@ -1258,7 +1241,7 @@ class ExclusiveUsbOutput(
         configuredChannelCount = 0
         active = false
         softwareGainValue = 1f
-        pendingAttenuation = 1f
+        dacLevel.settled()
         dacBaseDb = 0.0
         dacBaseKnown = false
         lastWrittenDb = null

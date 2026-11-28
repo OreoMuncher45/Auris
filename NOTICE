@@ -188,6 +188,10 @@ Ported files (under app/src/main/java/com/music/bitchord/playback/usb/)
   ExclusivePcmGain.kt
       LastWave's software gain for the exclusive USB queue.
 
+  DacLevelState.kt, DacLevelFallback.kt
+      The hardware-level write and refused-write handling taken out of
+      ExclusiveUsbOutput.kt, so the writer's path can be tested.
+
 USB audio driver
 ----------------
 audio/decent-usb-audio-driver/ was taken from LastWave's copy of the
