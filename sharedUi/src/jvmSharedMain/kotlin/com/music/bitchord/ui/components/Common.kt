@@ -330,28 +330,6 @@ fun SongRow(
     /** True while a Downloads row belongs to the current multi-selection. */
     selected: Boolean = false,
 ) {
-    val haptics = rememberHaptics()
-    val swipeStateHolder = remember { mutableStateOf<SwipeToDismissBoxState?>(null) }
-    var boxWidth by remember { mutableFloatStateOf(0f) }
-
-    val currentOnSwipeToQueue by rememberUpdatedState(onSwipeToQueue)
-
-    val swipeState = rememberSwipeToDismissBoxState(
-        confirmValueChange = { value ->
-            if (value != SwipeToDismissBoxValue.Settled && currentOnSwipeToQueue != null) {
-                val offset = try { swipeStateHolder.value?.requireOffset() ?: 0f } catch (e: Exception) { 0f }
-                // Only queue if the physical drag reached half the box width, ignoring short accidental flings.
-                if (abs(offset) >= boxWidth * 0.45f) {
-                    haptics.play(Haptic.Select)
-                    currentOnSwipeToQueue?.invoke()
-                }
-            }
-            false // never actually dismiss; snap back
-        },
-        positionalThreshold = { distance -> distance * 0.5f },
-    )
-    swipeStateHolder.value = swipeState
-
     if (onSwipeToQueue == null) {
         SongRowContent(
             song = song,
@@ -370,6 +348,63 @@ fun SongRow(
         )
         return
     }
+
+    SwipeToQueueBox(onSwipeToQueue = onSwipeToQueue, modifier = modifier) {
+        SongRowContent(
+            song = song,
+            onClick = onClick,
+            onLongPress = onLongPress,
+            onMore = onMore ?: onLongPress,
+            modifier = Modifier.background(rowBackground),
+            trackNumber = trackNumber,
+            subtitleColor = subtitleColor,
+            downloadedTint = downloadedTint,
+            isCurrent = isCurrent,
+            isPlaying = isPlaying,
+            activeTint = activeTint,
+            searchPlayingStyle = searchPlayingStyle,
+            selected = selected,
+        )
+    }
+}
+
+/**
+ * The swipe behind every track row: either way queues the track or plays it
+ * next, per [AppSettings.swipeToPlayNext], and the row springs back rather
+ * than dismissing. [content] is the row itself, and has to paint its own
+ * background so the reveal doesn't show through it.
+ *
+ * Shared by [SongRow] and the live-search rows, so a row typed into view
+ * swipes exactly like one in the full results.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SwipeToQueueBox(
+    onSwipeToQueue: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    val haptics = rememberHaptics()
+    val swipeStateHolder = remember { mutableStateOf<SwipeToDismissBoxState?>(null) }
+    var boxWidth by remember { mutableFloatStateOf(0f) }
+
+    val currentOnSwipeToQueue by rememberUpdatedState(onSwipeToQueue)
+
+    val swipeState = rememberSwipeToDismissBoxState(
+        confirmValueChange = { value ->
+            if (value != SwipeToDismissBoxValue.Settled) {
+                val offset = try { swipeStateHolder.value?.requireOffset() ?: 0f } catch (e: Exception) { 0f }
+                // Only queue if the physical drag reached half the box width, ignoring short accidental flings.
+                if (abs(offset) >= boxWidth * 0.45f) {
+                    haptics.play(Haptic.Select)
+                    currentOnSwipeToQueue()
+                }
+            }
+            false // never actually dismiss; snap back
+        },
+        positionalThreshold = { distance -> distance * 0.5f },
+    )
+    swipeStateHolder.value = swipeState
 
     // The row reveals "Queue" from the first pixel of the drag, but it only
     // *commits* past 45% of the width — so without this the label is a promise
@@ -400,21 +435,7 @@ fun SongRow(
         modifier = modifier.onSizeChanged { boxWidth = it.width.toFloat() },
         backgroundContent = { QueueSwipeBackground(swipeState) },
     ) {
-        SongRowContent(
-            song = song,
-            onClick = onClick,
-            onLongPress = onLongPress,
-            onMore = onMore ?: onLongPress,
-            modifier = Modifier.background(rowBackground),
-            trackNumber = trackNumber,
-            subtitleColor = subtitleColor,
-            downloadedTint = downloadedTint,
-            isCurrent = isCurrent,
-            isPlaying = isPlaying,
-            activeTint = activeTint,
-            searchPlayingStyle = searchPlayingStyle,
-            selected = selected,
-        )
+        content()
     }
 }
 

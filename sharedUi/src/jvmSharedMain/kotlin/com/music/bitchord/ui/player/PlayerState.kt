@@ -26,6 +26,7 @@ import coil3.compose.AsyncImagePainter
 import coil3.memory.MemoryCache
 import coil3.request.ImageRequest
 import coil3.size.Precision
+import coil3.size.Scale
 import com.music.bitchord.data.canvas.CanvasArtwork
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.artworkAt
@@ -160,6 +161,52 @@ internal class PlayerArtwork(
     private var shown: MemoryCache.Key? = null
 
     /**
+     * This cover's entry, decoded while an Automix reveal hid the painter: not
+     * on screen yet, so not what the next cover stands on until it is
+     * ([noteVisible]) or the reveal hands it over ([noteDisplayedCover]).
+     */
+    private var decodedHidden: MemoryCache.Key? = null
+
+    /**
+     * The decoded cover, for an Automix reveal to start from: the pixels on
+     * screen when the mix began, rather than a fresh load. [decodedDuringMix]
+     * keeps a decode that only landed once a mix was already under way from
+     * being taken for the outgoing cover of that same mix.
+     */
+    private var decodedCover: DecodedAutoMixCover? = null
+    private var decodedDuringMix: Long? = null
+
+    fun decodedCoverBefore(generation: Long): DecodedAutoMixCover? =
+        decodedCover?.takeIf { decodedDuringMix != generation }
+
+    /** The reveal's finished cover is on screen in this one's place: the next track stands on it. */
+    fun noteDisplayedCover(cover: DecodedAutoMixCover) {
+        shown = cover.cacheKey
+        decodedHidden = null
+    }
+
+    /**
+     * A decode landed: on screen when [displayed], otherwise behind a reveal
+     * that still shows the cover before it, which a skip past this one must
+     * stand on instead.
+     */
+    internal fun noteDecoded(key: MemoryCache.Key?, displayed: Boolean) {
+        if (displayed) {
+            shown = key
+            decodedHidden = null
+        } else {
+            decodedHidden = key
+        }
+    }
+
+    /** The painter is drawn again: a cover decoded behind the reveal is now the one on screen. */
+    fun noteVisible() {
+        val key = decodedHidden ?: return
+        shown = key
+        decodedHidden = null
+    }
+
+    /**
      * What the next cover should stand on while it loads: this one, or, if it
      * never got as far as the screen — a track skipped straight past — the one
      * it was standing on itself.
@@ -188,16 +235,7 @@ internal class PlayerArtwork(
      */
     val request: ImageRequest by derivedStateOf {
         val attempt = attempt
-        ImageRequest.Builder(context)
-            .data(url)
-            .size(artPx)
-            // The cover is decoded at the size the screen can show, and a
-            // source smaller than that is left at its own size rather than
-            // blown up to fill the request: an upscaled copy is more pixels to
-            // hold and no more picture to look at. Coil's painter asks for the
-            // same thing by default; said here so the request means it on its
-            // own.
-            .precision(Precision.INEXACT)
+        playerCoverRequest(context, url, artPx)
             // Not part of the cache key, so the mesh and the palette still share it.
             .placeholderMemoryCacheKey(holdOver)
             // What makes a retry a new request as far as Coil's model comparison
@@ -209,8 +247,11 @@ internal class PlayerArtwork(
             .build()
     }
 
-    /** Fed from each painter drawing [request]. */
-    fun onState(state: AsyncImagePainter.State) {
+    /**
+     * Fed from each painter drawing [request]; [displayed] is false while an
+     * Automix reveal draws in the painter's place.
+     */
+    fun onState(state: AsyncImagePainter.State, displayed: Boolean = true) {
         loaded = state is AsyncImagePainter.State.Success
         if (state is AsyncImagePainter.State.Success) {
             val image = state.result.image
@@ -224,7 +265,9 @@ internal class PlayerArtwork(
         // through Loading.
         if (state is AsyncImagePainter.State.Success) {
             failed = false
-            shown = state.result.memoryCacheKey
+            noteDecoded(state.result.memoryCacheKey, displayed)
+            decodedCover = state.result.decodedAutoMixCover()
+            decodedDuringMix = PlayerPlatform.host.autoMixVisualState?.value?.takeIf { it.mixActive }?.generation
         }
         if (state is AsyncImagePainter.State.Error) failed = true
     }
@@ -234,6 +277,27 @@ internal class PlayerArtwork(
         attempt++
     }
 }
+
+/**
+ * The full player's cover request, shared by the player and the Automix
+ * prepared cover, so a cover decoded ahead of a mix is the memory-cache entry
+ * the player then reads instead of a second decode at the track change.
+ *
+ * The cover is decoded at the size the screen can show, and a source smaller
+ * than that is left at its own size rather than blown up to fill the request:
+ * an upscaled copy is more pixels to hold and no more picture to look at.
+ * Coil's painter asks for the same thing by default; said here so the request
+ * means it on its own.
+ */
+internal fun playerCoverRequest(context: PlatformContext, url: String?, artPx: Int): ImageRequest.Builder =
+    ImageRequest.Builder(context)
+        .data(url)
+        .size(artPx)
+        .precision(Precision.INEXACT)
+        // Said outright: the sleeve draws it cropped, which Coil turns into
+        // FILL, while a prefetch with no content scale would decode FIT. A
+        // non-square cover then missed the memory cache and decoded twice.
+        .scale(Scale.FILL)
 
 @Composable
 internal fun rememberPlayerArtwork(remoteArt: String?, artPx: Int): PlayerArtwork {

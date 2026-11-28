@@ -256,4 +256,18 @@
     <string name="library_search_hint">Search this</string>
     <string name="library_empty_segment">Nothing here yet</string>
     <string name="home_chip_all">All</string>
+    <string name="best_part">Best Part</string>
+    <string name="best_part_description">ข้ามไปยังช่วงที่ดีที่สุด</string>
+    <string name="queue_select">เลือก</string>
+    <string name="queue_select_all">เลือกทั้งหมด</string>
+    <string name="queue_selected_count">เลือก %1$d รายการ</string>
+    <string name="queue_close_selection">ปิดโหมดเลือก</string>
+    <string name="queue_selection_remove">นำออก</string>
+    <string name="queue_selection_add_to_playlist">เพิ่มลงในเพลย์ลิสต์</string>
+    <string name="queue_download">ดาวน์โหลด</string>
+    <string name="queue_removed_song">นำ %1$s ออกแล้ว</string>
+    <string name="queue_removed_songs">นำ %1$d เพลงออกแล้ว</string>
+    <string name="queue_undo_action">เลิกทำ</string>
+    <string name="queue_cleared">ล้าง \"ถัดไปในคิว\" แล้ว</string>
+    <string name="mixes_yours">มิกซ์ของคุณ</string>
 </resources>

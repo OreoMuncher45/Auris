@@ -260,9 +260,9 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
             backgroundScope().launch { Innertube.ensureSessionScope() }
         }
         AppSettings.init(this, authStore)
-        // After AppSettings: with the model download switched on, fetches
-        // Automix's models as soon as Automix is on rather than waiting for the
-        // first song it would mix. Bundled, it only notes where they unpack to.
+        // After AppSettings: fetches Automix's models as soon as Automix is on
+        // (and the connection allows it) rather than waiting for the first
+        // song it would mix.
         com.music.bitchord.playback.smart.AutomixModels.install(this)
         com.music.bitchord.data.settings.MediaProgress.init(this)
         com.music.bitchord.data.settings.PodcastLibrary.init(this)

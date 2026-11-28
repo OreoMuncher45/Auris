@@ -1960,11 +1960,16 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
         searchState.scrollReset++
         searchState.loading = true
         searchState.error = null
+        val query = searchState.query
+        val filter = searchState.filter
+        // A Library answer is the account's; one asked as an account since left must not land.
+        val ticket = searchState.begin(filter)
         scope.launch {
             try {
-                DesktopMusicSources.search(searchState.query, searchState.filter).fold(
+                DesktopMusicSources.search(query, filter).fold(
                     onSuccess = { rows ->
-                        searchState.rows = rows
+                        if (!searchState.owns(ticket)) return@fold
+                        searchState.show(ticket, rows)
                         if (typedHit == null) {
                             rows.firstNotNullOfOrNull { row ->
                                 when (row) {
@@ -1975,15 +1980,17 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                             }?.let(::recordSongSearch)
                         }
                     },
-                    onFailure = { searchState.error = it.message ?: "Search failed" },
+                    onFailure = { if (searchState.owns(ticket)) searchState.error = it.message ?: "Search failed" },
                 )
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Throwable) {
-                searchState.error = failure.message ?: "Search failed"
+                if (searchState.owns(ticket)) searchState.error = failure.message ?: "Search failed"
             } finally {
                 // OBS and other desktop capture tools can briefly interrupt focus/coroutines.
-                searchState.loading = false
+                // A superseded search leaves the flag to the one that replaced it; one that only
+                // lost its credentials is still the newest and clears it, or nothing would.
+                searchState.finish(ticket)
             }
         }
     }
@@ -2289,6 +2296,18 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
     LaunchedEffect(account.youtubeSignedIn, account.activeAccountId) {
         val identity = "${DesktopYouTubeAuth.isSignedIn}/${DesktopAccounts.activeAccountId()}"
         if (homeIdentity != null && identity != homeIdentity) loadHome()
+    }
+
+    // A Library search is the account's own songs: signing out or switching account or channel
+    // drops it, in flight or on screen. Keyed on the identity alone, so a library reload (which
+    // bumps the session revision) leaves it be; the first run is the identity it was asked as.
+    var searchIdentity by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(account.youtubeSignedIn, account.activeAccountId, account.activeProfileId) {
+        val identity = "${account.youtubeSignedIn}/${account.activeAccountId}/${account.activeProfileId}"
+        if (searchIdentity != null && identity != searchIdentity) {
+            searchState.onListenerChanged(signedIn = account.youtubeSignedIn)
+        }
+        searchIdentity = identity
     }
 
     // The mark on a downloaded row, for the shared pages.

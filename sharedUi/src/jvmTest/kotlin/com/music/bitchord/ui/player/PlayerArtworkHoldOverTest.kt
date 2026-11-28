@@ -27,4 +27,24 @@ class PlayerArtworkHoldOverTest {
         assertNull(art.request.placeholderMemoryCacheKey)
         assertNull(art.lastCover)
     }
+
+    @Test
+    fun aCoverDecodedBehindTheRevealIsNotTheNextOnesPlaceholder() {
+        val b = PlayerArtwork("content://media/external/audio/albumart/2", PlatformContext.INSTANCE, 600, previous)
+        val bKey = MemoryCache.Key("content://media/external/audio/albumart/2")
+        // B decodes while the reveal still shows A in its place.
+        b.noteDecoded(bKey, displayed = false)
+        assertEquals(previous, b.lastCover, "a skip mid-reveal must stand on A")
+        // The reveal ends and B's painter is drawn: now B is what's on screen.
+        b.noteVisible()
+        assertEquals(bKey, b.lastCover)
+    }
+
+    @Test
+    fun aCoverDecodedOnScreenIsTheNextOnesPlaceholder() {
+        val b = PlayerArtwork("content://media/external/audio/albumart/2", PlatformContext.INSTANCE, 600, previous)
+        val bKey = MemoryCache.Key("content://media/external/audio/albumart/2")
+        b.noteDecoded(bKey, displayed = true)
+        assertEquals(bKey, b.lastCover)
+    }
 }

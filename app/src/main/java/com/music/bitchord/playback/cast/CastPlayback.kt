@@ -20,6 +20,7 @@ import com.google.android.gms.common.api.PendingResult
 import com.google.android.gms.common.api.Result
 import com.google.android.gms.common.images.WebImage
 import com.music.bitchord.R
+import com.music.bitchord.playback.StreamVolume
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -27,6 +28,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import kotlin.coroutines.resume
 
@@ -102,6 +104,19 @@ class CastPlayback(
 
     /** The listener wants sound; what [playWhenReady] reports. */
     private var wantsPlay = false
+        set(value) {
+            field = value
+            intentChanges++
+        }
+
+    /** Counts every change to [wantsPlay], so a failed pause can tell whether anything newer spoke since. */
+    private var intentChanges = 0
+
+    /**
+     * A stream volume the sleep timer could not put back, with the client it
+     * belongs to: applied on the next [play] on that same session only.
+     */
+    private var pendingRestore: Pair<RemoteMediaClient, Double>? = null
 
     /** A track is on its way to the receiver and nothing has come back yet. */
     private var loading = false
@@ -165,6 +180,10 @@ class CastPlayback(
         if (!active) return
         wantsPlay = true
         finished = false
+        pendingRestore?.let { (owner, level) ->
+            pendingRestore = null
+            if (owner === client) owner.setStreamVolume(level.coerceIn(0.0, 1.0))
+        }
         client?.play()
         sink?.onRemotePlaybackChanged()
     }
@@ -174,6 +193,74 @@ class CastPlayback(
         wantsPlay = false
         client?.pause()
         sink?.onRemotePlaybackChanged()
+    }
+
+    /**
+     * Pause, and wait for the receiver to confirm it: the sleep timer must not
+     * report a pause the receiver never took. False when it refused, timed
+     * out, or there is no session.
+     */
+    suspend fun pauseAndConfirm(): Boolean {
+        if (!active) return false
+        val client = client ?: return false
+        val before = wantsPlay
+        wantsPlay = false
+        val asked = intentChanges
+        val confirmed = try {
+            withTimeoutOrNull(STREAM_VOLUME_TIMEOUT_MS) { client.pause().awaitResult() }?.status?.isSuccess == true
+        } catch (_: IllegalArgumentException) {
+            false
+        }
+        if (confirmed) {
+            // A track still on its way to the receiver was asked for with
+            // autoplay: dropped here, so it cannot start after the pause the
+            // timer was promised. A load already handed over is paused again.
+            if (loading) {
+                loadJob?.cancel()
+                loadGeneration++
+                loading = false
+                if (this.client === client) client.pause()
+            }
+        } else if (this.client === client && intentChanges == asked) {
+            // Refused, and nothing newer since: the receiver is still playing,
+            // so the phone must not report it paused (a move back to the phone
+            // would then not resume).
+            wantsPlay = before
+        }
+        sink?.onRemotePlaybackChanged()
+        return confirmed
+    }
+
+    /**
+     * The receiver's stream volume for the sleep timer's fade, or null when
+     * this receiver can't set it. Never the device volume: that is the
+     * listener's speaker, and a fade must not leave it turned down.
+     */
+    fun streamVolume(): StreamVolume? {
+        if (!active) return null
+        val client = client ?: return null
+        val status = client.mediaStatus ?: return null
+        if (!status.isMediaCommandSupported(MediaStatus.COMMAND_SET_VOLUME)) return null
+        val start = status.streamVolume
+        return object : StreamVolume {
+            override val level = start
+
+            override suspend fun set(level: Double): Boolean {
+                // The session changed under the fade: this client is gone.
+                if (this@CastPlayback.client !== client) return false
+                return try {
+                    withTimeoutOrNull(STREAM_VOLUME_TIMEOUT_MS) {
+                        client.setStreamVolume(level.coerceIn(0.0, 1.0)).awaitResult()
+                    }?.status?.isSuccess == true
+                } catch (_: IllegalArgumentException) {
+                    false
+                }
+            }
+
+            override fun restoreLater(level: Double) {
+                if (this@CastPlayback.client === client) pendingRestore = client to level
+            }
+        }
     }
 
     fun seekTo(positionMs: Long) {
@@ -275,6 +362,7 @@ class CastPlayback(
 
     /** Lets go of the receiver without touching the phone's player. */
     fun release() {
+        pendingRestore = null
         loadJob?.cancel()
         reconcileJob?.cancel()
         client?.unregisterCallback(callback)
@@ -624,6 +712,9 @@ class CastPlayback(
 
     companion object {
         private const val TAG = "BitChordCast"
+
+        /** A stream-volume step not answered by then counts as refused. */
+        private const val STREAM_VOLUME_TIMEOUT_MS = 2_000L
         private const val KEY_MEDIA_ID = "mediaId"
 
         /** Tracks kept queued on the receiver after the playing one. */

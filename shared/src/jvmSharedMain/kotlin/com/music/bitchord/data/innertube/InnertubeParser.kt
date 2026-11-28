@@ -150,6 +150,14 @@ object InnertubeParser {
     fun parseSearchSuggestionEntities(response: JsonObject): List<SearchResult> =
         parseSearchPage(response).rows
 
+    /**
+     * Every card on a page of two-row items, wherever it sits: a carousel on
+     * Home, or the grid of a "More" page such as Mixed for you. For a caller
+     * that wants the cards and not the shelves they came in.
+     */
+    fun parseTwoRowItemsDeep(root: JsonElement): List<ShelfItem> =
+        collectRenderers(root, "musicTwoRowItemRenderer").mapNotNull(::parseTwoRowItem)
+
     /** Depth-first collection of a named renderer, preserving document order. */
     private fun collectRenderers(root: JsonElement, name: String): List<JsonObject> {
         val out = mutableListOf<JsonObject>()
