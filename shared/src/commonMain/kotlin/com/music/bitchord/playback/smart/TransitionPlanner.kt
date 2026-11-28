@@ -1882,6 +1882,9 @@ private fun mixPlan(
 
     val finalIncomingCueTime: Double
     val transitionStart: Double
+    // Where the incoming song is at the outgoing one's end: moved with the cue
+    // when the cue is put back on the incoming grid below.
+    var scheduledHandoffTime = incomingHandoffTime
 
     if (sameBeatBlend && beatSeconds > 0) {
         val introDropTime = incomingHandoffTime / max(0.8, incomingPlaybackRate)
@@ -1911,10 +1914,33 @@ private fun mixPlan(
                 alignedTransitionStart(analysis, latestStart, mixEnd - 0.05, preferEarlier = false, minimum = latestStart)
             else -> alignedStart
         }
-        finalIncomingCueTime = max(
-            rawIncomingCueTime,
-            incomingHandoffTime - (mixEnd - transitionStart) * incomingPlaybackRate,
-        )
+        val span = (mixEnd - transitionStart) * incomingPlaybackRate
+        val unsnappedCue = max(rawIncomingCueTime, incomingHandoffTime - span)
+        // The incoming beat at the cue has to meet the outgoing beat at the
+        // start. Neither edge is sure to be on a bar line (an Auto mix ends at
+        // the content end, which the start is placed back from, and the
+        // handoff cap moves the cue as well), so the cue takes the start's
+        // offset into its outgoing bar, on the grid the incoming song was
+        // trusted on: the opening's own, where the model measured one. The
+        // nearest such cue wins, never before the incoming song makes sound
+        // and never with its handoff past the clearance it needs.
+        val outgoingBar = 4 * beatSeconds
+        val incomingBar = if (alignedIncomingBpm > 0) 4 * 60 / alignedIncomingBpm else outgoingBar
+        val cueGrid = nextAnalysis.headBeats?.downbeats ?: nextAnalysis.downbeats
+        val outgoingBarLine = analysis.downbeats.lastOrNull { it.isFinite() && it <= transitionStart + 1e-6 }
+            ?.takeIf { transitionStart - it < outgoingBar + 1e-6 }
+        val phased = outgoingBarLine?.let { line ->
+            val offset = ((transitionStart - line) % outgoingBar) * incomingPlaybackRate
+            nearestValue(
+                cueGrid.filter { it.isFinite() }.map { it + offset }.filter {
+                    it >= rawIncomingCueTime - 0.05 && it + span <= maxIncomingHandoff + 0.05
+                },
+                unsnappedCue,
+                incomingBar / 2,
+            )
+        }
+        finalIncomingCueTime = phased ?: unsnappedCue
+        scheduledHandoffTime = incomingHandoffTime + (finalIncomingCueTime - unsnappedCue)
     } else {
         val clamped = clamp(overlap, min(handoffSeconds, maximumOverlap), maximumOverlap)
         val actualOverlap = if (traits != null) wholeBars(clamped, beatSeconds, maximumOverlap) else clamped
@@ -1938,9 +1964,9 @@ private fun mixPlan(
     // the audio that will really play in the overlap.
     val cappedCueTime = cappedIncomingCue(finalIncomingCueTime, nextAnalysis, nextLength)
     val cappedHandoffTime = if (cappedCueTime == finalIncomingCueTime) {
-        incomingHandoffTime
+        scheduledHandoffTime
     } else {
-        max(cappedCueTime, incomingHandoffTime - (finalIncomingCueTime - cappedCueTime))
+        max(cappedCueTime, scheduledHandoffTime - (finalIncomingCueTime - cappedCueTime))
     }
     val hasBassContent = analysis.lowEnergyCurve.isNotEmpty() || nextAnalysis.lowEnergyCurve.isNotEmpty()
     val measuredVocalOverlap = plannedVocalOverlap(
