@@ -238,10 +238,19 @@ object AudioDecoder {
         startSeconds: Double,
         endSeconds: Double,
         abort: () -> Boolean = { false },
+        keepFrom: Double = Double.NEGATIVE_INFINITY,
         onChunk: (samples: FloatArray, atSeconds: Double, sampleRate: Int) -> Unit,
     ): Pair<Double, Double>? =
         decodeRaw(source, startSeconds, endSeconds, abort) { buffer, info, channels, rate ->
-            val mono = FloatArray(info.size / 2 / max(1, channels))
+            val frames = info.size / 2 / max(1, channels)
+            // A chunk ending before [keepFrom] (the caller's earliest useful
+            // time) is not downmixed at all: a sparse seek can land minutes
+            // early, and each of those chunks cost an array and a mix only to be
+            // thrown away. The codec is still fed from the sync point; a chunk
+            // that overlaps the boundary is kept.
+            val at = info.presentationTimeUs / 1_000_000.0
+            if (rate > 0 && at + frames.toDouble() / rate < keepFrom) return@decodeRaw
+            val mono = FloatArray(frames)
             toMono(buffer, info, channels, mono)
             onChunk(mono, info.presentationTimeUs / 1_000_000.0, rate)
         }

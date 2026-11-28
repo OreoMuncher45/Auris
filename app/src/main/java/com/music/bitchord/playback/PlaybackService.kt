@@ -2221,6 +2221,8 @@ class PlaybackService : MediaLibraryService() {
             },
             analysisRunningFor = { item -> trackAnalyzer.isAnalysing(item.mediaId) },
             analysisProvisionalFor = { item -> trackAnalyzer.isProvisional(item.mediaId) },
+            // The rule [playbackListener]'s natural advance applies (and skips by).
+            rejectsAdvance = { item -> !castPlayback.active && AppSettings.isSongBlocked(item.toSong()) },
             // The standby is still the spare when this runs — it only becomes
             // the session player at the handoff — so the incoming track is
             // levelled on its own sink before it renders a frame, and the
@@ -10315,7 +10317,9 @@ class PlaybackService : MediaLibraryService() {
         // is the listener's own business, and the lifecycle paths that call it
         // are not asking to move the party.
         override fun stop() {
-            crossfade.cancelAutoMixVisual()
+            // Before the player stops: a transition (a loop mix's deck build
+            // included) is cancelled outright, with no recovery seek.
+            crossfade.onStopped()
             if (locked()) { super.stop(); return }
             onUserIntent()
             super.stop()
