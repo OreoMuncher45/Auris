@@ -1510,6 +1510,11 @@ object SourceResolver {
         val wantsAtmos = DeviceCodecs.playsDolbyAtmos && request.wantsAtmos
         val ordered = preferred(matches, target, wantsLossless, wantsAtmos)
         var settleFor: SourceStream? = null
+        // A capped request's over-ceiling answers, held while later rows are
+        // tried: the first row's 256 kbps must not end the walk when a later
+        // row of the same source answers within the cap. The lightest of them
+        // is returned only if no row fits; see [withinCeiling].
+        var overCeiling: SourceStream? = null
         for (match in ordered.take(STREAM_ATTEMPTS)) {
             val trackId = SourceRegistry.parseTrackKey(match.videoId)?.second ?: match.videoId
             val opened = attempt(source) { source.stream(trackId, request) } ?: continue
@@ -1531,6 +1536,16 @@ object SourceResolver {
                     "${source.displayName} offered ${served.summary} for '${match.title}'; " +
                         "over this lossy request — passing",
                 )
+                continue
+            }
+            if (!withinCeiling(stream, request)) {
+                TrackLog.d(
+                    TAG,
+                    "${source.displayName} offered ${served.summary} for '${match.title}'; over the cap — trying further",
+                )
+                if (overCeiling == null || (served.kbps ?: Int.MAX_VALUE) < (overCeiling.format.kbps ?: Int.MAX_VALUE)) {
+                    overCeiling = stream
+                }
                 continue
             }
             if (!wantsLossless || served.isLossless == true || served.isDolbyAtmos || served.statesNothingLossy) {
@@ -1557,7 +1572,7 @@ object SourceResolver {
             // first.
             settleFor = betterOf(settleFor, stream.copy(belowRequest = true))
         }
-        return settleFor
+        return settleFor ?: overCeiling
     }
 
     /**
