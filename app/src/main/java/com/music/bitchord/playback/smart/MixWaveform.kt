@@ -74,7 +74,7 @@ object MixWaveform {
         // this is skipped whole rather than filtered for nothing.
         val warmFrom = fromSeconds - WARM_UP_SECONDS
         val binsPerSecond = bins / span
-        val decoded = AudioDecoder.streamRegion(BlockBuffered(source), max(0.0, warmFrom), toSeconds, abort) { samples, at, rate ->
+        val decoded = AudioDecoder.streamRegion(BlockBuffered(source), max(0.0, warmFrom), toSeconds, abort, keepFrom = warmFrom) { samples, at, rate ->
             if (rate <= 0) return@streamRegion
             if (at + samples.size.toDouble() / rate < warmFrom) return@streamRegion
             if (rate != configuredRate) {

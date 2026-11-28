@@ -450,6 +450,9 @@ object LoopMix {
         var coveredSec = 0.0
         var longestFrameSec = 0.0
         var coveredUntil = Double.NEGATIVE_INFINITY
+        // Where the frames counted so far end, for telling a gap inside the
+        // span from the part-frames its edges lose to the frame grid.
+        var countedUntil = Double.NaN
         // Already in order as the analyzer stores them: no copy then (this runs per bar per candidate).
         val ordered = if ((1 until windows.size).all { windows[it - 1].startTime <= windows[it].startTime }) {
             windows
@@ -466,6 +469,11 @@ object LoopMix {
                 count++
             }
             if (b > a) {
+                // A stretch nothing measured between two windows, inside the span:
+                // the edge allowance below is for the span's ends, not for this.
+                val firstCounted = window.startTime + a / window.frameRate
+                if (!countedUntil.isNaN() && firstCounted > countedUntil + 1 / window.frameRate + 1e-9) return Double.NaN
+                countedUntil = max(if (countedUntil.isNaN()) firstCounted else countedUntil, window.startTime + b / window.frameRate)
                 coveredUntil = max(coveredUntil, window.startTime + b / window.frameRate)
                 coveredSec += (b - a) / window.frameRate
                 longestFrameSec = max(longestFrameSec, 1 / window.frameRate)
