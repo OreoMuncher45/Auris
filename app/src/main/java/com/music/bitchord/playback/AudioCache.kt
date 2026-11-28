@@ -404,6 +404,46 @@ object AudioCache {
     }
 
     /**
+     * The identity of the stream this analysis round of [videoId] reads: the
+     * round's pinned light read, or the player's pin it shares at the playback
+     * tier. Null when neither is known, which [spansReusable] reads as
+     * "cannot verify".
+     */
+    private fun servedIdentityOf(videoId: String, uri: Uri): String? =
+        (AnalysisReadPins.get(videoId) ?: StreamChoice.of(mediaIdIn(uri) ?: videoId))?.let(::streamIdentity)
+
+    /**
+     * What makes one stream the same representation as another, for deciding
+     * whether cached spans can be extended with its bytes: the source, the
+     * codec and rate, and the address without its query (signed URLs change
+     * per resolve; the path names the file). Two streams of one length that
+     * differ here are two files.
+     */
+    internal fun streamIdentity(stream: SourceStream): String {
+        val path = runCatching { Uri.parse(stream.url).let { "${it.host}${it.path}" } }.getOrDefault(stream.url.substringBefore('?'))
+        return listOf(stream.sourceConfigId.orEmpty(), stream.format.codec.orEmpty(), stream.format.kbps?.toString().orEmpty(), path)
+            .joinToString("|")
+    }
+
+    /**
+     * Whether an analysis copy's cached spans may be extended by this round:
+     * nothing cached, or bytes recorded under this round's own stream identity
+     * and length. An unknown identity on either side is not verified, so the
+     * spans are not reused.
+     */
+    internal fun spansReusable(
+        hasBytes: Boolean,
+        recordedIdentity: String?,
+        currentIdentity: String?,
+        recordedLength: Long,
+        total: Long,
+    ): Boolean {
+        if (!hasBytes) return true
+        if (recordedIdentity == null || currentIdentity == null || recordedIdentity != currentIdentity) return false
+        return recordedLength <= 0L || total <= 0L || recordedLength == total
+    }
+
+    /**
      * The key analysis admission files [mediaId]'s round under: the video id
      * for a YouTube row, `<source>|<track>` for a source-backed one (see
      * [sourceBaseKey]).
@@ -1512,6 +1552,9 @@ object AudioCache {
 
     /** Set on an entry Automix's analysis-only YouTube Opus fetch filled. */
     private const val META_ANALYSIS = "bc_analysis"
+
+    /** Which stream filled an analysis copy: see [streamIdentity]. */
+    private const val META_STREAM_IDENTITY = "bc_stream_identity"
 
     /** Set once the player has played the track from this entry. */
     private const val META_PLAYED = "bc_played"
@@ -3072,17 +3115,28 @@ object AudioCache {
                             .getOrNull() ?: 0L
                     }
                     // Spans already on the key are reused only if they are this
-                    // stream's: a catalogue row's copy is re-resolved each round,
-                    // and an entry whose recorded length is not this stream's is
-                    // another representation, so it is cleared before anything is
-                    // written beside it. A same-length retry refills only what is
-                    // missing (the tail an eviction took, say).
-                    if (total > 0L) {
-                        val recorded = runCatching { ContentMetadata.getContentLength(cache.getContentMetadata(key)) }
+                    // stream's. A catalogue row's copy is re-resolved each round,
+                    // and two streams of one length are not one representation, so
+                    // the identity of the stream that filled the entry is recorded
+                    // with it and compared with this round's (both from the
+                    // stream the round is pinned to). A different identity, or
+                    // one that cannot be verified, clears the entry before
+                    // anything is written beside it; the same one refills only
+                    // what is missing (the tail an eviction took, say).
+                    if (isCatalogueRow(videoId)) {
+                        val identity = servedIdentityOf(videoId, uri)
+                        val recordedIdentity = runCatching { cache.getContentMetadata(key).get(META_STREAM_IDENTITY, null as String?) }
+                            .getOrNull()
+                        val recordedLength = runCatching { ContentMetadata.getContentLength(cache.getContentMetadata(key)) }
                             .getOrDefault(C.LENGTH_UNSET.toLong())
-                        if (recorded > 0L && recorded != total && cachedBytesOf(key, 1L) > 0L) {
+                        if (!spansReusable(cachedBytesOf(key, 1L) > 0L, recordedIdentity, identity, recordedLength, total)) {
                             runCatching { cache.removeResource(key) }
-                                .onSuccess { TrackLog.d(TAG, "cleared $key: another representation ($recorded, now $total)", about = videoId) }
+                                .onSuccess { TrackLog.d(TAG, "cleared $key: not this round's stream", about = videoId) }
+                        }
+                        if (identity != null) {
+                            runCatching {
+                                cache.applyContentMetadataMutations(key, ContentMetadataMutations().set(META_STREAM_IDENTITY, identity))
+                            }
                         }
                     }
                     val want = analysisHeadSize(total)
