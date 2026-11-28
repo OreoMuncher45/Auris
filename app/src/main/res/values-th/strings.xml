@@ -1628,6 +1628,16 @@
     <string name="community_discord">Discord</string>
     <string name="community_discord_subtitle">Bugs, features, beta builds</string>
     <string name="community_reddit_subtitle">r/BitChordNext</string>
+    <string name="show_total_duration">แสดงความยาวทั้งหมด</string>
+    <string name="show_total_duration_subtitle">แสดงความยาวเต็มของเพลงแทนเวลาที่เหลือ</string>
+    <string name="sleep_timer_fade_out">ค่อยๆ ลดเสียงก่อนหยุดชั่วคราว</string>
+    <string name="sleep_timer_fade_out_subtitle">ค่อยๆ ลดระดับเสียงในช่วง 30 วินาทีสุดท้าย</string>
+    <string name="youtube_premium_audio">เสียง YouTube Premium</string>
+    <string name="youtube_premium_audio_subtitle">ฉันมี Premium: สตรีม Opus คุณภาพสูงกว่า ~256 kbps แทน 160 kbps มาตรฐาน</string>
+    <string name="download_liked_songs">ดาวน์โหลดเพลงที่ชอบ</string>
+    <string name="download_liked_songs_subtitle">ดาวน์โหลดเพลงที่คุณชอบ และทุกเพลงที่คุณกดชอบนับจากนี้</string>
+    <string name="show_best_part">Best Part button</string>
+    <string name="show_best_part_subtitle">Jump to the most-replayed part of a song</string>
     <string name="addon_backup_header">Backup</string>
     <string name="addon_backup_footer">Addons, extensions, their settings and sign-ins, in one file locked with a password you choose. Keep it to restore everything after a reinstall.</string>
     <string name="export_addons">Export add-ons</string>

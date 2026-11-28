@@ -341,6 +341,92 @@ object Downloads {
     private val running = LinkedHashMap<String, Job?>()
 
     /**
+     * Queued tracks whose service start is still unanswered, to how many
+     * enqueue calls are waiting on that answer. Guarded by [lock].
+     *
+     * A track here is in [pending] only provisionally: if every caller's
+     * start fails it is taken back off the queue. So a second caller does not
+     * count it as already queued — it joins the wait and starts the service
+     * too, and only a start that succeeds makes it real for either of them.
+     */
+    private val starting = HashMap<String, StartAttempt>()
+
+    /**
+     * One track's unanswered service start: which attempt it is, and how many
+     * enqueue calls wait on it. A [cancel] ends the attempt, so a start that
+     * answers afterwards (or a retry that queued the track again) can never be
+     * settled against the wrong one.
+     */
+    private class StartAttempt(val generation: Long, var waiters: Int)
+
+    /** The attempt a successful start last confirmed for each queued id, so its joined waiters see it. Under [lock]. */
+    private val confirmed = HashMap<String, Long>()
+    private var startGeneration = 0L
+
+    /**
+     * Ids a worker took off the queue while their start was still unanswered,
+     * to that attempt. A file already on disk can be prepared and finished
+     * before the start returns, leaving the id in neither [pending] nor
+     * [running]; it was admitted all the same. Under [lock].
+     */
+    private val takenWhileStarting = HashMap<String, Long>()
+
+    /** Whether [id] counts as admitted under [generation]. Under [lock]. */
+    private fun admittedUnder(id: String, generation: Long): Boolean =
+        id in pending || id in running || takenWhileStarting[id] == generation
+
+    /** Joins [id]'s unanswered start, or begins one; returns the attempt waited on. Under [lock]. */
+    private fun waitOnStart(id: String, fresh: Boolean): Long {
+        val attempt = starting[id]
+        if (!fresh && attempt != null) {
+            attempt.waiters++
+            return attempt.generation
+        }
+        val created = StartAttempt(++startGeneration, 1)
+        starting[id] = created
+        takenWhileStarting.remove(id)
+        return created.generation
+    }
+
+    /**
+     * Settle the service start [ids] were waiting on, under [lock].
+     *
+     * A start that worked confirms them all. A failed one takes back each id
+     * no other caller is still waiting on and no successful start has already
+     * confirmed. Returns the ids that are now really queued or running, and
+     * the ids this failure took off the queue.
+     */
+    private fun settleStart(attempts: Map<String, Long>, started: Boolean): Pair<Set<String>, List<String>> =
+        synchronized(lock) {
+            val dropped = ArrayList<String>()
+            val kept = HashSet<String>()
+            for ((id, generation) in attempts) {
+                // Cancelled, or replaced by a newer attempt: not this answer's to
+                // settle, and not this caller's to report as admitted either; a
+                // replacement that started is its own caller's.
+                val attempt = starting[id]?.takeIf { it.generation == generation }
+                if (attempt == null) {
+                    // Already confirmed by another waiter's successful answer to this
+                    // same attempt: admitted, whatever this call's own start did,
+                    // as long as [confirmed] still records this attempt for the id.
+                    if (confirmed[id] == generation && admittedUnder(id, generation)) kept += id
+                    continue
+                }
+                if (started) {
+                    starting.remove(id)
+                    confirmed[id] = generation
+                    if (admittedUnder(id, generation)) kept += id
+                } else if (attempt.waiters > 1) {
+                    attempt.waiters--
+                } else {
+                    starting.remove(id)
+                    if (pending.remove(id) != null) dropped += id
+                }
+            }
+            kept to dropped
+        }
+
+    /**
      * Completed once the index has been read off disk.
      *
      * The read happens on a background thread, so for a moment after [init]
@@ -498,24 +584,38 @@ object Downloads {
             }
             return
         }
-        synchronized(lock) {
-            if (id in pending || id in running) return
-            pending[id] = song
+        var attempt = 0L
+        val joined = synchronized(lock) {
+            when {
+                // Another call's start is still unanswered: wait on it too,
+                // and start the service from here as well. See [starting].
+                id in starting -> {
+                    attempt = waitOnStart(id, fresh = false)
+                    true
+                }
+                id in pending || id in running -> return
+                else -> {
+                    pending[id] = song
+                    attempt = waitOnStart(id, fresh = true)
+                    false
+                }
+            }
         }
-        _active.update { it + (id to DownloadState.Queued) }
-        DownloadSession.queued(song, from)
+        if (!joined) {
+            _active.update { it + (id to DownloadState.Queued) }
+            DownloadSession.queued(song, from)
+        }
 
         val app = context.applicationContext
-        runCatching {
+        val started = runCatching {
             ContextCompat.startForegroundService(app, Intent(app, DownloadService::class.java))
         }.onFailure {
             // Refused only when the app has no window and no exemption, which
             // means the queue has nothing to drain it and would sit there
             // looking accepted forever.
             Log.w(TAG, "could not start the download service: ${it.message}")
-            synchronized(lock) { pending.remove(id) }
-            fail(id, "Downloads can't start right now")
-        }
+        }.isSuccess
+        settleStart(mapOf(id to attempt), started).second.forEach { fail(it, "Downloads can't start right now") }
     }
 
     /**
@@ -534,22 +634,46 @@ object Downloads {
      *
      * @param automatic whether this is the app asking rather than the listener.
      *   See [enqueue]: an automatic ask never clears a [deletedByHand] mark.
+     * @return the ids that are queued or already downloading after the call.
+     *   A song refused by Wi-Fi only, or dropped because the service could not
+     *   start, is left out, so a caller keeping a record can try it again.
      */
-    fun enqueueAll(context: Context, songs: List<Song>, from: String? = null, automatic: Boolean = false) {
-        if (songs.isEmpty()) return
+    fun enqueueAll(context: Context, songs: List<Song>, from: String? = null, automatic: Boolean = false): Set<String> {
+        if (songs.isEmpty()) return emptySet()
         val app = context.applicationContext
         val accepted = mutableListOf<Song>()
         val refused = mutableListOf<Song>()
+        val already = mutableSetOf<String>()
+        // Queued by another call whose service start is still unanswered.
+        val joined = mutableListOf<String>()
+        val attempts = HashMap<String, Long>()
         if (!automatic) clearDeletedByHand(songs.map { it.videoId })
         synchronized(lock) {
-            for (song in songs) {
+            // One ask per track: a list that names a track twice would
+            // otherwise admit the first copy and count the second as already
+            // queued — by this very call.
+            for (song in songs.distinctBy { it.videoId }) {
                 val id = song.videoId
-                if (id in pending || id in running) continue
+                if (id in starting) {
+                    // Not admitted yet, only provisionally queued: see [starting].
+                    attempts[id] = waitOnStart(id, fresh = false)
+                    joined += id
+                    continue
+                }
+                if (id in pending || id in running) {
+                    already += id
+                    continue
+                }
+                // Read here, under the queue's lock, rather than trusted from
+                // the caller's earlier read: a track the listener deleted
+                // while a sync pass was browsing must not come back.
+                if (automatic && id in _deletedByHand.value) continue
                 if (!AppSettings.downloadsAllowedNow && id !in fromCache) {
                     refused += song
                     continue
                 }
                 pending[id] = song
+                attempts[id] = waitOnStart(id, fresh = true)
                 accepted += song
             }
         }
@@ -565,14 +689,18 @@ object Downloads {
             DownloadSession.queued(song, from)
             fail(song.videoId, WIFI_ONLY_REFUSAL)
         }
-        if (accepted.isEmpty()) return
-        runCatching {
+        if (accepted.isEmpty() && joined.isEmpty()) return already
+        val started = runCatching {
             ContextCompat.startForegroundService(app, Intent(app, DownloadService::class.java))
         }.onFailure {
             Log.w(TAG, "could not start the download service: ${it.message}")
-            synchronized(lock) { accepted.forEach { pending.remove(it.videoId) } }
-            accepted.forEach { fail(it.videoId, "Downloads can't start right now") }
-        }
+        }.isSuccess
+        // Only what a successful start confirmed counts as admitted: a track
+        // a failed start took back off the queue is left for the caller to
+        // try again, whichever call first queued it.
+        val (kept, dropped) = settleStart(attempts, started)
+        dropped.forEach { fail(it, "Downloads can't start right now") }
+        return already + kept
     }
 
     /**
@@ -615,6 +743,11 @@ object Downloads {
         fromCache.remove(videoId)
         val job = synchronized(lock) {
             pending.remove(videoId)
+            // Ends its unanswered start too: a retry queues afresh, and the old
+            // start's answer settles nothing.
+            starting.remove(videoId)
+            confirmed.remove(videoId)
+            takenWhileStarting.remove(videoId)
             if (videoId !in running) return@synchronized null
             running.remove(videoId)
         }
@@ -816,11 +949,27 @@ object Downloads {
      * tracks is actually on disk is answered where it is read — see
      * [collectionsAmong].
      */
-    fun rememberCollection(target: DownloadTarget, songs: List<Song>) {
+    fun rememberCollection(
+        target: DownloadTarget,
+        songs: List<Song>,
+        keepSwitch: Boolean = false,
+        switchOn: () -> Boolean = { true },
+    ) {
         if (songs.isEmpty()) return
         val ids = songs.map { it.videoId }.distinct()
+        // Liked Music downloaded with the page's own button: the listener
+        // asked for it kept, which the sync reads from the setting.
+        if (!keepSwitch && switchOn() && samePlaylist(target.id, YtMusicRepository.LIKED_MUSIC) &&
+            !AppSettings.downloadLikedSongs.value
+        ) {
+            AppSettings.setDownloadLikedSongs(true)
+        }
         recordCollections { current ->
             val existing = current[target.id]
+            // The sync only grows a record that is still there: one deleted
+            // while its pass was reading stays deleted. The sync's first fill
+            // passes keepSwitch = false, since it is the one creating it.
+            if (keepSwitch && existing == null) return@recordCollections current
             val record = SavedCollection(
                 id = target.id,
                 title = target.title,
@@ -836,6 +985,11 @@ object Downloads {
                 // rather than the second replacing the first — but the new order
                 // leads, since it is the one just seen on screen.
                 videoIds = (ids + (existing?.videoIds ?: emptyList())).distinct(),
+                // The sync passes [keepSwitch]: a switch turned off while its
+                // pass was reading must not come back on with the record. A
+                // record it creates reads [switchOn] here, under the record's
+                // lock, so a setting turned off mid-pass is the one it gets.
+                autoDownload = if (keepSwitch) existing?.autoDownload ?: true else switchOn(),
             )
             current + (target.id to record)
         }
@@ -877,12 +1031,39 @@ object Downloads {
      * where a single track only ever offers [delete].
      */
     suspend fun deleteCollection(context: Context, id: String): Boolean {
-        val record = _collections.value[id] ?: return false
+        if (id !in _collections.value) return false
+        // Deleting the liked songs while they are kept downloaded would have
+        // the next pass fetch every one of them again. Taking them off the
+        // device says the listener no longer wants that, so it ends here.
+        if (samePlaylist(id, YtMusicRepository.LIKED_MUSIC)) AppSettings.setDownloadLikedSongs(false)
+        // The switch goes off before any file does, under the lock a sync
+        // pass admits and records under (see [withCollectionsHeld]): a pass
+        // either finished first, and what it queued is in this snapshot, or it
+        // runs after and finds the switch off.
+        val record = synchronized(collectionLock) {
+            val current = _collections.value[id] ?: return false
+            setAutoDownloadNewSongs(id, false)
+            current
+        }
+        // A track still downloading has no file to delete yet, and would
+        // arrive after the release is gone.
+        // Its job is waited out after the cancel: a worker already past its
+        // last suspension point still commits, and would record a file the
+        // deletes below had not found yet.
+        val (inFlight, jobs) = synchronized(lock) {
+            val ids = record.videoIds.filter { it in pending || it in running }
+            ids to ids.mapNotNull { running[it] }
+        }
+        inFlight.forEach(::cancel)
+        kotlinx.coroutines.withTimeoutOrNull(FINISHING_JOIN_MS) { jobs.forEach { it.join() } }
         var any = false
         record.videoIds.forEach { videoId -> if (delete(context, videoId)) any = true }
         forgetCollection(id)
         return any
     }
+
+    /** How long [deleteCollection] waits for a cancelled download to wind down. */
+    private const val FINISHING_JOIN_MS = 5_000L
 
     /**
      * How one downloaded playlist is addressed as a page of its own.
@@ -1059,8 +1240,12 @@ object Downloads {
 
     private fun recordCollections(update: (Map<String, SavedCollection>) -> Map<String, SavedCollection>) {
         synchronized(collectionLock) {
-            val map = update(_collections.value)
+            val before = _collections.value
+            val map = update(before)
+            // A declined update writes nothing, here or to disk.
+            if (map === before) return
             _collections.value = map
+            dropChangedCollectionListings(before, map)
             if (::prefs.isInitialized) {
                 synchronized(recordLock) {
                     persistLocked(
@@ -1072,6 +1257,35 @@ object Downloads {
     }
 
     private val collectionLock = Any()
+
+    /** Whether a collection's tracks or their order differ; by reference first, as most records are untouched. */
+    internal fun collectionListingChanged(old: List<String>?, new: List<String>?): Boolean = old !== new && old != new
+
+    /**
+     * Forget the cached song list of each collection whose tracks or order
+     * changed. That cache is keyed by [listingGeneration], which moves only
+     * with the files: a record that gained a track already on disk would go
+     * on reading back the old list. Compares lists by reference first, so an
+     * update that touched one record costs one comparison per other record.
+     */
+    private fun dropChangedCollectionListings(before: Map<String, SavedCollection>, after: Map<String, SavedCollection>) {
+        if (collectionSongsCache.isEmpty()) return
+        for (id in collectionSongsCache.keys) {
+            val old = before[id]?.videoIds
+            val new = after[id]?.videoIds
+            if (collectionListingChanged(old, new)) collectionSongsCache.remove(id)
+        }
+    }
+
+    /**
+     * Runs [block] with the collection records held still: no switch change,
+     * deletion or other record write lands while it runs.
+     *
+     * For the sync pass, whose last check that a release is still wanted, its
+     * enqueue and its record write must be one step — see [deleteCollection]
+     * and [DownloadedPlaylistSync.setKeepLiked]. [block] must not suspend.
+     */
+    internal fun <T> withCollectionsHeld(block: () -> T): T = synchronized(collectionLock, block)
 
     /**
      * Record one file under every id it could be asked about.
@@ -1511,6 +1725,7 @@ object Downloads {
         val entry = pending.entries.firstOrNull() ?: return null
         pending.remove(entry.key)
         running[entry.key] = null
+        starting[entry.key]?.let { takenWhileStarting[entry.key] = it.generation }
         entry.value
     }
 
@@ -1528,6 +1743,9 @@ object Downloads {
     internal fun onIdle(videoId: String) {
         synchronized(lock) { running.remove(videoId) }
     }
+
+    /** Whether [videoId] is queued or downloading. */
+    internal fun isInFlight(videoId: String): Boolean = synchronized(lock) { videoId in pending || videoId in running }
 
     /** Whether anything is still queued or in flight — see [DownloadService]'s workers. */
     internal fun busy(): Boolean = synchronized(lock) { pending.isNotEmpty() || running.isNotEmpty() }
@@ -2410,9 +2628,10 @@ data class DownloadedCollection(
  *
  * **Coalesce.** A batch download finishes dozens of tracks in a row, and each
  * completion used to encode the entire library and write it. Now a payload that
- * arrives while a write is in flight replaces the pending one instead of
- * queueing behind it, so a burst costs one write of the final state — which is
- * the only state anyone will ever read.
+ * arrives while a write is in flight is merged into the pending one, key by
+ * key with the newer value winning, instead of queueing behind it, so a burst
+ * costs one write of the final state — which is the only state anyone will
+ * ever read.
  *
  * **Never lose the last one.** [drain] reads the pending payload until there is
  * none, and re-checks for a late arrival before clearing [draining]. A payload
@@ -2434,7 +2653,10 @@ internal class CoalescingWriter(
 
     fun submit(payload: Map<String, String>) {
         val start = synchronized(lock) {
-            pending = payload
+            // Merged by key, newest value winning: a payload carries only the
+            // keys it changed, so a collection write landing on a pending
+            // saved-track write must not replace it.
+            pending = pending?.let { it + payload } ?: payload
             if (draining) return
             draining = true
             true

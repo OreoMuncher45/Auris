@@ -48,6 +48,7 @@ at once.
 - [x] `audio.offline_mode` — Offline mode
 - [x] `audio.wifi` — On Wi-Fi
 - [x] `audio.mobile_data` — On mobile data
+- [x] `audio.youtube_premium` — YouTube Premium audio
 - [x] `audio.output_precision` — Output precision
 - [x] `audio.bit_perfect` — Bit-perfect
 - [x] `audio.prefer_usb_dac` — Prefer USB DAC
@@ -75,13 +76,16 @@ at once.
 - [x] `downloads.quality` — Download quality
 - [x] `downloads.wifi_only` — Download on Wi-Fi only
 - [x] `downloads.export_compatible` — Export compatible downloads
+- [x] `downloads.liked_songs` — Download liked songs
 - [x] `downloads.concurrent` — Concurrent downloads
 
 ### Now Playing
 - [x] `now_playing.colors` — Player colours (buttons, seekbar, text, lyrics)
+- [x] `now_playing.show_total_duration` — Show total duration
 - [x] `now_playing.text_glow` — Text glow
 - [x] `now_playing.show_lyrics` — Lyric line
 - [x] `now_playing.next_track_status` — Next track status
+- [x] `now_playing.show_best_part` — Best Part button
 - [x] `now_playing.upgrade_badge` — Upgrade badge
 - [x] `now_playing.lossless_badge` — Lossless badge
 - [x] `now_playing.hires_badge` — Hi-res badge

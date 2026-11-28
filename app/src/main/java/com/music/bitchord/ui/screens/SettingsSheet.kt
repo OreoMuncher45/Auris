@@ -52,6 +52,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -62,6 +63,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -826,7 +828,9 @@ internal fun SearchableSettingsGroup(
                 // has nothing to sit under, so it is given that room back.
                 index == 0 && !entry.divided -> Spacer(Modifier.height(10.dp))
             }
-            entry.content()
+            CompositionLocalProvider(LocalSubRowStandalone provides entry.divided) {
+                entry.content()
+            }
         }
     }
 }
@@ -1042,9 +1046,19 @@ internal fun SettingsRow(
 }
 
 /**
+ * Whether the [SettingsSubRow] being drawn is a row of its own, under a
+ * divider or at the top of its card, rather than hanging off the row above.
+ * Set per row by [SearchableSettingsGroup], which knows which rows are divided.
+ */
+private val LocalSubRowStandalone = staticCompositionLocalOf { false }
+
+/**
  * A toggle that reads as part of the option above it rather than a setting
  * of its own: no icon, no divider, and pulled up close against its parent
  * instead of getting the same breathing room a full [SettingsRow] gets.
+ *
+ * Also drawn as a plain toggle row of its own, under a divider. There it gets
+ * the same gap above its title as below it, or the title sits on the line.
  */
 @Composable
 internal fun SettingsSubRow(
@@ -1058,7 +1072,12 @@ internal fun SettingsSubRow(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onCheckedChange(!checked) }
-            .padding(start = ROW_INSET, end = ROW_INSET, top = 0.dp, bottom = 10.dp),
+            .padding(
+                start = ROW_INSET,
+                end = ROW_INSET,
+                top = if (LocalSubRowStandalone.current) 10.dp else 0.dp,
+                bottom = 10.dp,
+            ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {

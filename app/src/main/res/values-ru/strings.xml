@@ -1677,6 +1677,16 @@
     <string name="community_discord">Discord</string>
     <string name="community_discord_subtitle">Bugs, features, beta builds</string>
     <string name="community_reddit_subtitle">r/BitChordNext</string>
+    <string name="show_total_duration">Показывать общую длительность</string>
+    <string name="show_total_duration_subtitle">Показывает полную длительность трека вместо оставшегося времени</string>
+    <string name="sleep_timer_fade_out">Затухание перед паузой</string>
+    <string name="sleep_timer_fade_out_subtitle">Плавно уменьшает громкость в последние 30 секунд</string>
+    <string name="youtube_premium_audio">Звук YouTube Premium</string>
+    <string name="youtube_premium_audio_subtitle">У меня есть Premium: воспроизводить Opus повышенного качества ~256 кбит/с вместо стандартных 160 кбит/с</string>
+    <string name="download_liked_songs">Скачивать понравившиеся треки</string>
+    <string name="download_liked_songs_subtitle">Скачивает понравившиеся треки и каждый трек, который вам понравится в дальнейшем</string>
+    <string name="show_best_part">Best Part button</string>
+    <string name="show_best_part_subtitle">Jump to the most-replayed part of a song</string>
     <string name="addon_backup_header">Backup</string>
     <string name="addon_backup_footer">Addons, extensions, their settings and sign-ins, in one file locked with a password you choose. Keep it to restore everything after a reinstall.</string>
     <string name="export_addons">Export add-ons</string>
