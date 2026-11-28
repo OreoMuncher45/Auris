@@ -554,4 +554,20 @@ class LoopMixTest {
         val window = CurveWindow(0.05, LEVEL_FRAME_RATE, FloatArray(25) { 0.5f })
         assertFalse(LoopMix.meanRms(listOf(window), 0.0, 2.0).isNaN())
     }
+
+    @Test
+    fun aGapInsideTheBarIsNotCoveredByTheEdgeAllowance() {
+        // Two loud 10 Hz windows over 0-0.9 s and 1.1-2.0 s: 200 ms inside the bar unmeasured.
+        val first = CurveWindow(0.0, LEVEL_FRAME_RATE, FloatArray(9) { 0.9f })
+        val second = CurveWindow(1.1, LEVEL_FRAME_RATE, FloatArray(9) { 0.9f })
+        assertTrue(LoopMix.meanRms(listOf(first, second), 0.0, 2.0).isNaN())
+    }
+
+    @Test
+    fun twoWindowsMeetingOffEachOthersGridStillCoverTheBar() {
+        // The second window's frames sit 50 ms off the first's: no gap a frame long.
+        val first = CurveWindow(0.0, LEVEL_FRAME_RATE, FloatArray(10) { 0.5f })
+        val second = CurveWindow(1.05, LEVEL_FRAME_RATE, FloatArray(10) { 0.5f })
+        assertFalse(LoopMix.meanRms(listOf(first, second), 0.0, 2.0).isNaN())
+    }
 }
