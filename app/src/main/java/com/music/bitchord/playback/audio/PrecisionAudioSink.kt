@@ -839,7 +839,20 @@ class PrecisionAudioSink(
         if (outArm != null && loopGenerating) return generateLoop(outArm, outEncoding, skipDsp, userGain)
         // Likewise the incoming side: no more muting or shifting once a flush
         // has ended the mix it was lining up for.
-        val inArm = armed.inn?.takeIf { !port.interrupted }
+        // Nor under bit-perfect: shifting, muting and fading the samples are
+        // exactly what it rules out. The arm is called off; one that had already
+        // started on this sink holds the output until the recovery flush, so the
+        // song isn't heard to jump back.
+        val inArm = armed.inn?.takeIf { !port.interrupted }?.let { arm ->
+            if (skipDsp) {
+                port.interrupt(armed.generation)
+                if (loopInStarted) awaitingFlushAfterMix = true
+                null
+            } else {
+                arm
+            }
+        }
+        if (awaitingFlushAfterMix) return false
 
         // 1. Drain pending output from previous cycle if delegate had backpressure
         if (outputByteBuffer.hasRemaining()) {
@@ -976,6 +989,8 @@ class PrecisionAudioSink(
             var tookOverHere = false
             if (outArm != null) {
                 tookOverHere = spliceLoop(outArm, loopBlockUs, decodedFrames, refuse = skipDsp)
+                // The renderer failed mid-crossing: this block is not written.
+                if (awaitingFlushAfterMix) return false
             } else if (inArm != null) {
                 silenceUntilHandover(inArm, loopBlockUs, decodedFrames)
             }
@@ -1166,8 +1181,12 @@ class PrecisionAudioSink(
             return false
         }
         if (!arm.render.render(start, loopScratch, 0, frames)) {
-            // Closed under the arm: no mix to cross into, so the song plays on.
+            // Closed under the arm: no mix to cross into. Before the crossing
+            // the song plays on; once part of it was heard, the song coming
+            // back mid-crossing would be heard too, so the sink holds until the
+            // controller's recovery flush.
             loop.interrupt(loopGeneration)
+            if (loopCrossing) awaitingFlushAfterMix = true
             return false
         }
         loopRendering = true
