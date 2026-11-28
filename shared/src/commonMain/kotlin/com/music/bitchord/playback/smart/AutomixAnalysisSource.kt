@@ -114,7 +114,7 @@ object AutomixAnalysisSource {
     const val RENDITION_PARAMETER = "automix_rendition"
 
     /** Whether an Opus read asked under [marker] (null: the ordinary one) is still the current rendition. */
-    fun renditionIsCurrent(marker: String?): Boolean = marker == rendition()
+    fun renditionIsCurrent(marker: String?): Boolean = marker?.ifEmpty { null } == rendition()
 
     fun requestsYouTubeOpus(marker: String?): Boolean = marker == "1"
 
@@ -130,8 +130,43 @@ object AutomixAnalysisSource {
     /** The highest bitrate an analysis read asks a source for. */
     const val ANALYSIS_KBPS = 192
 
-    fun analysisRead(uri: String): String =
-        if ("$ANALYSIS_READ_PARAMETER=1" in uri) uri else uri + (if ('?' in uri) "&" else "?") + "$ANALYSIS_READ_PARAMETER=1"
+    /**
+     * [uri] marked as the analyser's read, with the routing its round was
+     * admitted under: [light] (the capped copy, at a lossless or immersive
+     * playback tier) or the playback tier's own copy, and the [rendition].
+     * Every open in the round carries the same marks, and the resolver refuses
+     * one whose marks no longer match the settings, so a round never reads two
+     * streams: see [routingMatches].
+     */
+    fun analysisRead(uri: String, light: Boolean, rendition: String? = this.rendition()): String {
+        if ("$ANALYSIS_READ_PARAMETER=" in uri) return uri
+        val marked = uri + (if ('?' in uri) "&" else "?") + "$ANALYSIS_READ_PARAMETER=${if (light) "1" else "0"}"
+        return withRendition(marked, rendition)
+    }
 
-    fun isAnalysisRead(marker: String?): Boolean = marker == "1"
+    /** Any analysis read, light or at the playback tier. */
+    fun isAnalysisRead(marker: String?): Boolean = marker == "1" || marker == "0"
+
+    /** An analysis read admitted as a light (capped) one. */
+    fun isLightRead(marker: String?): Boolean = marker == "1"
+
+    /**
+     * [uri] carrying the [rendition] it is read under (empty for the ordinary
+     * one), for reads that must be served that rendition or none.
+     */
+    fun withRendition(uri: String, rendition: String? = this.rendition()): String =
+        if ("$RENDITION_PARAMETER=" in uri) uri else uri + (if ('?' in uri) "&" else "?") + "$RENDITION_PARAMETER=${rendition.orEmpty()}"
+
+    /**
+     * Whether a read's captured routing still matches now: its rendition mark
+     * ([RENDITION_PARAMETER], absent for reads that carry none) and its tier
+     * mark ([ANALYSIS_READ_PARAMETER], against [heavyTierNow]). A mismatch
+     * means a setting changed since the round or pass was admitted, and the
+     * read must be refused so the round ends short and its retry starts fresh.
+     */
+    fun routingMatches(renditionMark: String?, readMark: String?, heavyTierNow: () -> Boolean): Boolean {
+        if (renditionMark != null && renditionMark.ifEmpty { null } != rendition()) return false
+        if (isAnalysisRead(readMark) && isLightRead(readMark) != heavyTierNow()) return false
+        return true
+    }
 }

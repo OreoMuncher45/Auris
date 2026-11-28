@@ -26,6 +26,7 @@ class AudioCacheAnalysisCopyTest {
         val copy = AudioCache.analysisCopyAddress(
             uri = "bitchord://watch?v=abc123&n=Some+Song&a=Some+Artist",
             videoId = "abc123",
+            light = false,
         )
 
         // The marker is what keeps the analyser's bytes out of the player's
@@ -39,12 +40,12 @@ class AudioCacheAnalysisCopyTest {
         val row = "bitchord://watch?v=spotify:2vd2ouW2pbzXWUbzORtxOi" +
             "&n=Guillotines+for+Billionaires&a=Matt+Elliott&d=184"
 
-        val copy = AudioCache.analysisCopyAddress(row, "spotify:2vd2ouW2pbzXWUbzORtxOi")
+        val copy = AudioCache.analysisCopyAddress(row, "spotify:2vd2ouW2pbzXWUbzORtxOi", rendition = null, light = true)
 
         // The row's own address, whole (the id, and the name the sources are
         // asked to match on), marked as the analyser's read so the sources
         // answer it with a light copy rather than the listener's master.
-        assertEquals("$row&automix_read=1", copy)
+        assertEquals("$row&automix_read=1&automix_rendition=", copy)
         assertTrue(copy.startsWith(row))
         assertTrue(copy.contains("n=Guillotines+for+Billionaires"))
         assertTrue(copy.contains("a=Matt+Elliott"))
@@ -59,9 +60,9 @@ class AudioCacheAnalysisCopyTest {
         // copy, keyed by the source and its track, and asked for light.
         val row = "bitchord://source?s=addon1&t=track9&n=Some+Song&a=Some+Artist&d=200"
 
-        val copy = AudioCache.analysisCopyAddress(row, "addon1|track9")
+        val copy = AudioCache.analysisCopyAddress(row, "addon1|track9", rendition = null, light = true)
 
-        assertEquals("$row&automix_read=1", copy)
+        assertEquals("$row&automix_read=1&automix_rendition=", copy)
         assertFalse(copy.contains("automix_opus"))
     }
 }
