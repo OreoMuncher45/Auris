@@ -2391,7 +2391,6 @@ object AudioCache {
         // `<id>#<rendition>` while the checks (here and in [fetch]) read the
         // bare id, so the pass never saw its own bytes and kept re-fetching.
         val key = prefetchKeyOf(videoId)
-        val watch = Uri.parse("bitchord://watch?v=$videoId")
         return cacheRangesOnce(
             key = key,
             total = total,
@@ -2402,7 +2401,7 @@ object AudioCache {
             // now" case the guard in [fetchWhole] exists for.
             stillWanted = { pendingQueue.firstOrNull() == videoId },
             cachedAt = { position, length -> cache.getCachedBytes(key, position, length) },
-            fetchRange = { position, length -> fetch(key, watch, position, length, pinKey = true) },
+            fetchRange = { position, length -> fetch(videoId, position, length) },
         )
     }
 
@@ -3781,8 +3780,15 @@ object AudioCache {
      * [CacheWriter] fetches only the gaps, so a range already partly on disk —
      * from a track played earlier, or skipped back to — costs only the rest.
      */
-    private suspend fun fetch(videoId: String, position: Long, length: Long) =
-        fetch(videoId, Uri.parse("bitchord://watch?v=$videoId"), position, length)
+    /**
+     * Reads [length] bytes of YouTube track [videoId] ahead, under one key
+     * resolved once ([prefetchKeyOf]) and pinned for the write, the lock probe
+     * and every check. Left to the key factory, under Premium the bytes landed
+     * on `<id>#premium` while the probe's check read the bare id, so the fetch
+     * stopped after the probe's 64 KiB.
+     */
+    internal suspend fun fetch(videoId: String, position: Long, length: Long) =
+        fetch(prefetchKeyOf(videoId), Uri.parse("bitchord://watch?v=$videoId"), position, length, pinKey = true)
 
     /**
      * [pinKey] forces the write to land under [cacheKey] instead of wherever
