@@ -201,21 +201,33 @@ internal class PlaybackStreamResolver(
         ) {
             // One stream for the whole round: see [AnalysisReadPins].
             val rowId = "$configId|$trackParam"
-            val light = try {
-                AnalysisReadPins.streamFor(rowId) {
-                    runBlocking(about) {
-                        withTimeout(RESOLVE_TIMEOUT_MS) {
-                            SourceResolver.resolve(dataSpec.uri, StreamRequest.Capped(AutomixAnalysisSource.ANALYSIS_KBPS))
-                        }
-                    }
-                }
-            } catch (e: TimeoutCancellationException) {
-                null
-            }
             // Nothing at the capped rate (a source that only offers lossless,
-            // or a slow one): the read falls through to the player's own pin and
-            // playback-quality resolve below, as it did before the light read,
-            // rather than leaving the analyser with no copy to measure.
+            // or a slow one): the player's own pin, else a playback-quality
+            // resolve, as before the light read, rather than leaving the
+            // analyser with no copy to measure. Whichever answers is the one
+            // pinned for the round, so its later opens read that same stream.
+            val light = AnalysisReadPins.streamFor(
+                rowId,
+                capped = {
+                    try {
+                        runBlocking(about) {
+                            withTimeout(RESOLVE_TIMEOUT_MS) {
+                                SourceResolver.resolve(dataSpec.uri, StreamRequest.Capped(AutomixAnalysisSource.ANALYSIS_KBPS))
+                            }
+                        }
+                    } catch (e: TimeoutCancellationException) {
+                        null
+                    }
+                },
+                fallback = {
+                    fullMediaId?.let { StreamChoice.of(it) } ?: try {
+                        runBlocking(about) { withTimeout(RESOLVE_TIMEOUT_MS) { SourceResolver.resolve(dataSpec.uri) } }
+                    } catch (e: TimeoutCancellationException) {
+                        null
+                    }
+                },
+            )
+            // Neither answered: the ordinary path below says why.
             if (light != null) {
                 return dataSpec.buildUpon()
                     .setUri(Uri.parse(light.url))
@@ -704,6 +716,9 @@ internal class PlaybackStreamResolver(
             // player's own copy, which is what it read before the light read:
             // measured at the playback tier rather than not at all.
             if (lightRead && playbackPin != null) {
+                // Pinned for the round like a capped answer: its later opens
+                // read this same stream. See [AnalysisReadPins].
+                AnalysisReadPins.put(videoId, playbackPin)
                 return dataSpec.buildUpon()
                     .setUri(Uri.parse(playbackPin.url))
                     .setHttpRequestHeaders(playbackPin.headers)
