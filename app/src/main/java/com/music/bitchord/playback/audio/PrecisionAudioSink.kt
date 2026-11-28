@@ -596,9 +596,11 @@ class PrecisionAudioSink(
         if (exclusiveAdoptionSuppressed) return
         // Not mid-mix: once the crossing is audible (or the incoming side has
         // started its handover), the flush adoption makes would cut the song
-        // back in over it. The controller retires the mix on bit-perfect
-        // within a tick; adoption follows on the first buffer after.
-        if (loopAudibleHere()) return
+        // back in over it. Nor between a takeover's retirement and the
+        // controller's recovery flush: the decoder buffer held since the
+        // takeover is from before it, and the new route would play it.
+        // Adoption follows on the first buffer after that flush.
+        if (loopHoldsOutput()) return
         val session = exclusiveUsb ?: return
         if (!isAudible()) return
         // A live session belongs to the other sink; do not feed two clocks
@@ -1112,7 +1114,7 @@ class PrecisionAudioSink(
         // A mix this sink had taken over is retired: the decoder buffer it
         // held is from before the takeover, and the mix has played past it.
         // Nothing is written until the controller's seek flushes it.
-        if (loopGenerating) awaitingFlushAfterMix = true
+        if (loopGenerating || loopCrossing) awaitingFlushAfterMix = true
         loopGeneration = generation
         loopGenerating = false
         loopRendering = false
@@ -1129,9 +1131,15 @@ class PrecisionAudioSink(
      */
     private var awaitingFlushAfterMix = false
 
-    /** Whether the arm armed now is audible on this sink: crossing, generating, or the incoming side started. */
-    private fun loopAudibleHere(): Boolean =
-        loop.armed.generation == loopGeneration && (loopCrossing || loopGenerating || loopInStarted)
+    /**
+     * Whether a mix owns this sink's output until the next flush: one crossing
+     * or taken over (whether or not its arm has been retired since: the
+     * recovery flush is still to come), or the incoming side started for the
+     * arm armed now.
+     */
+    private fun loopHoldsOutput(): Boolean =
+        awaitingFlushAfterMix || loopCrossing || loopGenerating ||
+            (loop.armed.generation == loopGeneration && loopInStarted)
 
     /**
      * The outgoing side, block by block until the loop start: renders the mix
