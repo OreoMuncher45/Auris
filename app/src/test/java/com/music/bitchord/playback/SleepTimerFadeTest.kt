@@ -364,4 +364,44 @@ class SleepTimerFadeTest {
             SleepTimer.releaseUpgradeBlend()
         }
     }
+
+    /** Applies each level, but answers [answers] in turn (true by default once they run out). */
+    private class LateReceiver(override val level: Double, private val answers: MutableList<Boolean>) : StreamVolume {
+        val asked = mutableListOf<Double>()
+        val restoredLater = mutableListOf<Double>()
+        override suspend fun set(level: Double): Boolean {
+            asked += level
+            return if (answers.isEmpty()) true else answers.removeAt(0)
+        }
+        override fun restoreLater(level: Double) {
+            restoredLater += level
+        }
+    }
+
+    @Test
+    fun aFadeStepThatTimedOutIsStillRestored() = runTest {
+        // The first step reached the receiver but its answer came too late.
+        val volume = LateReceiver(level = 0.8, answers = mutableListOf(false))
+        SleepTimer.fadeOutCast(volume, 2_000L, 500L, { testScheduler.currentTime }, { true }, { true }, { true })
+        assertEquals("the level it had is put back", 0.8, volume.asked.last(), 0.0)
+        assertTrue(volume.restoredLater.isEmpty())
+    }
+
+    @Test
+    fun aRestoreRefusedEveryTimeIsKeptForTheNextPlay() = runTest {
+        // The fade and pause go through; every restore attempt is refused.
+        val answers = MutableList(5) { true }.apply { addAll(List(SleepTimer.CAST_RESTORE_ATTEMPTS) { false }) }
+        val volume = LateReceiver(level = 0.6, answers = answers)
+        val fade = SleepTimer.fadeOutCast(volume, 2_000L, 500L, { testScheduler.currentTime }, { true }, { true }, { true })
+        assertEquals(SleepTimer.CastFade.PAUSED, fade)
+        assertEquals(listOf(0.6), volume.restoredLater)
+    }
+
+    @Test
+    fun aVersionSwapIsAdoptedOnlyOnTheTrackItBeganOn() {
+        assertTrue(versionSwapStillCurrent(true, 3, 3, "a", "a"))
+        assertFalse("the track moved on while the standby aligned", versionSwapStillCurrent(true, 3, 4, "a", "b"))
+        assertFalse("same index, another entry", versionSwapStillCurrent(true, 3, 3, "a", "b"))
+        assertFalse("the players were rebuilt", versionSwapStillCurrent(false, 3, 3, "a", "a"))
+    }
 }
