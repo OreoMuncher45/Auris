@@ -91,4 +91,13 @@ class LoopMixPortPositionTest {
         assertEquals(5.010, port.presentedSeconds(1_010_000_000L, playing = true)!!, 1e-9)
         assertNull(port.presentedSeconds(1_030_000_000L, playing = true))
     }
+
+    @Test
+    fun aReadingIsNotProjectedOntoTheShiftBoundaryItself() {
+        val port = LoopMixPort()
+        // A drop's boundary 20 ms after the reading: at that instant the drop applies.
+        port.publishPosition(5_000_000L, 1_000_000_000L, port.generation, steadyUs = 20_000L)
+        assertNull(port.presentedSeconds(1_020_000_000L, playing = true))
+        assertEquals(5.019, port.presentedSeconds(1_019_000_000L, playing = true)!!, 1e-9)
+    }
 }

@@ -23,6 +23,18 @@ internal object AnalysisReadPins {
     inline fun streamFor(id: String, resolve: () -> SourceStream?): SourceStream? =
         get(id) ?: resolve()?.also { put(id, it) }
 
+    /**
+     * [id]'s stream for this round: the pinned one, else the capped answer,
+     * else [fallback] (the player's own copy, when nothing answers at the
+     * capped rate). Whichever stream the round reads is the one pinned, the
+     * fallback included, so a later open cannot land on the other.
+     */
+    inline fun streamFor(
+        id: String,
+        capped: () -> SourceStream?,
+        fallback: () -> SourceStream?,
+    ): SourceStream? = get(id) ?: (capped() ?: fallback())?.also { put(id, it) }
+
     fun get(id: String): SourceStream? = pins[id]
 
     fun put(id: String, stream: SourceStream) {
