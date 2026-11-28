@@ -35,10 +35,11 @@ internal sealed interface QueueReconcile {
          * @param samePlayable whether two entries also play the same thing (the
          *   same stream or file): from the incoming entry on, an entry whose
          *   identity survived but whose playback changed is a change too.
-         * @param sameRow whether two entries after the incoming one are the
+         * @param sameRow whether two entries from the incoming one on are the
          *   same row in every respect the queue shows (title, artwork, tier):
-         *   a retitled upcoming entry keeps its identity and stream, and
-         *   would otherwise keep the standby's stale copy.
+         *   a retitled entry keeps its identity and stream, and would
+         *   otherwise keep the standby's stale copy. An upcoming one is
+         *   replaced; the incoming one (playing on the standby) bails.
          */
         fun <T> plan(
             live: List<T>,
@@ -55,12 +56,16 @@ internal sealed interface QueueReconcile {
             val incoming = live.getOrNull(liveIncoming) ?: return Bail
             val heldIncoming = held.getOrNull(heldCurrent) ?: return Bail
             if (!samePlayable(incoming, heldIncoming)) return Bail
+            // Retitled or re-arted after arming: the standby is already playing
+            // its copy and can't take the edit in place, so the live queue keeps
+            // the session (no handoff) rather than losing the edit.
+            if (!sameRow(incoming, heldIncoming)) return Bail
             val shared = minOf(live.size, held.size)
             var firstDifference = -1
             for (i in 0 until shared) {
                 val matches = when {
                     i < heldCurrent -> same(live[i], held[i])
-                    i == heldCurrent -> samePlayable(live[i], held[i])
+                    i == heldCurrent -> true // compared in full above
                     else -> samePlayable(live[i], held[i]) && sameRow(live[i], held[i])
                 }
                 if (!matches) {

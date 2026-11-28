@@ -12,4 +12,22 @@ package com.music.bitchord.playback
  */
 internal object HandoffBookkeeping {
     fun booksTrackChange(late: Boolean): Boolean = !late
+
+    /**
+     * Whether a late handoff (the outgoing player ran on into the next track
+     * itself) may still move the session onto the standby. Not onto a standby
+     * that failed or went idle: the player that advanced works, and muting it
+     * for a broken one leaves silence. Nor when the natural advance paused
+     * playback (the sleep timer's "after this song" lands on that advance):
+     * the still-playing standby would undo the pause. Nor when the service
+     * rejected the track the player advanced to (strict mode: a blocked
+     * track): it posted a skip on that player, which has to stay the session
+     * for the skip to act on it. The natural advance stands in all of them.
+     */
+    fun lateHandoffAllowed(
+        standbyFailed: Boolean,
+        standbyIdle: Boolean,
+        advancedPlayerPlaying: Boolean,
+        advanceRejected: Boolean = false,
+    ): Boolean = !standbyFailed && !standbyIdle && advancedPlayerPlaying && !advanceRejected
 }

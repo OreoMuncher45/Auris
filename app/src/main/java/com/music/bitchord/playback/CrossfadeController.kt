@@ -23,6 +23,7 @@ import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.model.QueueEntryIdentity
 import com.music.bitchord.playback.loopmix.LoopAlignmentState
 import com.music.bitchord.playback.loopmix.LoopArmGate
+import com.music.bitchord.playback.loopmix.LoopClockWait
 import com.music.bitchord.playback.loopmix.LoopNextEntry
 import com.music.bitchord.playback.loopmix.LoopMixPort
 import com.music.bitchord.playback.loopmix.LoopMixRenderer
@@ -182,6 +183,13 @@ class CrossfadeController(
      * whole-track pass (which may be waiting on bytes, not running).
      */
     private val analysisProvisionalFor: (MediaItem) -> Boolean = { false },
+    /**
+     * Whether the service rejects a media item it advanced to on its own
+     * (strict mode: a blocked track), posting a skip on that player. A late
+     * handoff onto the standby would leave that skip acting on a player that
+     * is no longer the session.
+     */
+    private val rejectsAdvance: (MediaItem) -> Boolean = { false },
     /**
      * The track about to be loaded onto the standby player, announced at the
      * moment [begin] arms rather than at the handoff.
@@ -546,6 +554,9 @@ class CrossfadeController(
     private var bailStartedAt = 0L
     private var armDeadline = 0L
 
+    /** How long an attached loop mix has gone without a usable outgoing clock; see [LoopClockWait]. */
+    private val loopClock = LoopClockWait()
+
     /** Length of the fade-out driven by [Phase.SLEEP_FADE], in ms. Fixed when it begins. */
     private var sleepFadeMs = 0L
 
@@ -710,11 +721,28 @@ class CrossfadeController(
     fun cancelAutoMixVisual() = AutoMixVisualFeed.cancel(visualGeneration)
 
     /**
+     * Playback was stopped: whatever transition is in flight is dropped, a
+     * loop mix's deck build included, without the recovery seek a bail would
+     * otherwise make. Media3 can be idle with playWhenReady still true after a
+     * stop, and a build that returned then would pass the arming checks and
+     * prepare the standby on a stopped session.
+     */
+    fun onStopped() = bail(recover = false)
+
+    /**
      * Automix switched off: its artwork reveal, its seek-bar marker and the
      * mix popup's preview all go now. Paused, the ticker stops at once and
      * nothing would clear them; playing, the plain crossfade path never
      * publishes a smart window to replace the marker.
      */
+    /**
+     * Automix was switched on. A paused session with it off lets the ticker
+     * stop, so nothing would plan the seek-bar marker until playback resumed
+     * or the popup opened: the ticker is started again (its paused-polling
+     * cap applies as before).
+     */
+    fun onAutomixEnabled() = ensureTicker()
+
     fun onAutomixDisabled() {
         cancelAutoMixVisual()
         AppSettings.smartTransitionWindow.value = null
@@ -877,6 +905,18 @@ class CrossfadeController(
             Phase.FADING -> {
                 val out = outgoing ?: return bail()
                 val into = incoming ?: return bail()
+                if (!HandoffBookkeeping.lateHandoffAllowed(
+                        standbyFailed = into.playerError != null,
+                        standbyIdle = into.playbackState == Player.STATE_IDLE,
+                        advancedPlayerPlaying = out.playWhenReady,
+                        advanceRejected = out.currentMediaItem?.let(rejectsAdvance) == true,
+                    )
+                ) {
+                    // The advance the outgoing player made stands: bail() puts it
+                    // back to full volume and ramps the standby away.
+                    TrackLog.d(TAG, "outgoing ran on into the next track; keeping that advance, not a standby that can't take it")
+                    return bail()
+                }
                 TrackLog.d(TAG, "outgoing ran on into the next track before the handoff")
                 out.volume = 0f
                 handOff(out, into, late = true)
@@ -1369,7 +1409,8 @@ class CrossfadeController(
         // The popup previews the blend only when the blend is what will run: a
         // pair the loop mix takes shows the loop once it arms (smartMixView),
         // not a blend's cue and faders until then.
-        if (loopChosen) {
+        // Nor a blocked pair: no blend will run, so no overlap or faders to show.
+        if (MixPreviewRule.clears(loopChosen = loopChosen, planBlocked = plan.blocked)) {
             AppSettings.smartMixPreview.value = null
             mixPreviewIds = null
             mixPreviewKey = ""
@@ -2348,16 +2389,13 @@ class CrossfadeController(
     }
 
     /** A decoded waveform and the stretch of its track, in seconds, it covers. */
-    private class DeckWave(val mediaId: String, val from: Double, val to: Double, val bands: MixWaveform.Bands) {
-        fun covers(id: String, start: Double, end: Double) = id == mediaId && from <= start + 0.05 && to >= end - 0.05
-    }
 
     /**
      * The waveforms for the next transition. Decoded ahead of it — see
      * [prefetchMixWaves] — so the popup has them the moment the blend starts.
      */
-    private var outgoingWave: DeckWave? = null
-    private var incomingWave: DeckWave? = null
+    private var outgoingWave: MixDeckWave? = null
+    private var incomingWave: MixDeckWave? = null
 
     /** Which pair [mixViewJob] is decoding, so a tick does not start it twice. */
     private var mixWavePair: String? = null
@@ -2409,9 +2447,9 @@ class CrossfadeController(
         val pair = "${outItem.mediaId}->${inItem.mediaId}"
         if (mixWavePair != null && mixWavePair != pair) failedWaveAt.clear()
         val outReady = !wantOut || waveFailedRecently(outItem.mediaId) ||
-            outgoingWave?.covers(outItem.mediaId, outFrom + MIX_PREFETCH_PAD_SECONDS, outTo - MIX_PREFETCH_PAD_SECONDS) == true
+            outgoingWave?.covers(outItem.mediaId, analysisFor(outItem).measuredOn, outFrom + MIX_PREFETCH_PAD_SECONDS, outTo - MIX_PREFETCH_PAD_SECONDS) == true
         val inReady = !wantIn || waveFailedRecently(inItem.mediaId) ||
-            incomingWave?.covers(inItem.mediaId, inFrom + MIX_PREFETCH_PAD_SECONDS, inTo - MIX_PREFETCH_PAD_SECONDS) == true
+            incomingWave?.covers(inItem.mediaId, analysisFor(inItem).measuredOn, inFrom + MIX_PREFETCH_PAD_SECONDS, inTo - MIX_PREFETCH_PAD_SECONDS) == true
         if (outReady && inReady) return
         if (mixViewJob?.isActive == true && mixWavePair == pair) return
         mixViewJob?.cancel()
@@ -2420,12 +2458,18 @@ class CrossfadeController(
         pendingInWave = !inReady
         republishWaves()
         mixViewJob = scope.launch {
-            suspend fun wave(item: MediaItem, durationMs: Long, from: Double, to: Double): DeckWave? =
+            suspend fun wave(item: MediaItem, durationMs: Long, from: Double, to: Double): MixDeckWave? =
                 withContext(Dispatchers.IO) {
+                    // The copy the bands are read off, before the decode: what reuse is keyed on.
+                    val rendition = analysisFor(item).measuredOn
                     val began = SystemClock.elapsedRealtime()
                     val bins = ((to - from) * MIX_WAVE_BINS_PER_SECOND).toInt().coerceIn(64, MIX_WAVE_MAX_BINS)
                     val bands = runCatching { mixWaveform(item, durationMs, from, to, bins) }
-                        .onFailure { TrackLog.w(TAG, "mix waveform failed for ${item.mediaId}", it) }
+                        // The id redacted, and the exception by type only: a local
+                        // track's id, and the message about it, can be its file path.
+                        .onFailure {
+                            TrackLog.w(TAG, "mix waveform failed for ${TrackLog.idForLog(item.mediaId)}: ${it::class.java.simpleName}")
+                        }
                         .getOrNull()
                     TrackLog.d(
                         TAG,
@@ -2433,7 +2477,7 @@ class CrossfadeController(
                             String.format(Locale.ROOT, "%.1f-%.1fs", from, to) +
                             ": ${if (bands == null) "none" else "ok"} in ${SystemClock.elapsedRealtime() - began}ms",
                     )
-                    bands?.let { DeckWave(item.mediaId, from, to, it) }
+                    bands?.let { MixDeckWave(item.mediaId, rendition, from, to, it) }
                 }
             if (!outReady) {
                 outgoingWave = wave(outItem, outDurationMs, outFrom, outTo)
@@ -2458,7 +2502,7 @@ class CrossfadeController(
 
     /** [view] with the decoded waveforms of [ids] in, and each deck marked while its own is still coming. */
     private fun withWaves(view: MixTransitionView, ids: Pair<String, String>?): MixTransitionView {
-        fun MixDeck.with(wave: DeckWave?, id: String?, pending: Boolean): MixDeck {
+        fun MixDeck.with(wave: MixDeckWave?, id: String?, pending: Boolean): MixDeck {
             val decoded = if (wave != null && wave.mediaId == id) {
                 withWave(wave.bands.low, wave.bands.mid, wave.bands.high, wave.from, wave.to)
             } else {
@@ -2787,6 +2831,9 @@ class CrossfadeController(
     private var loopBuildJob: Job? = null
     private var loopAlignJob: Job? = null
 
+    /** Alignment attempts started for the loop mix in flight; see [LoopAlignmentState.retryAfterAttempt]. */
+    private var loopAlignAttempts = 0
+
     /** The pair (and analyses) the cached loop plan belongs to, and that plan; null when none is possible. */
     private var loopPlanKey: String? = null
     private var loopPlanned: LoopMix.Plan? = null
@@ -2843,6 +2890,15 @@ class CrossfadeController(
                     found.map { line ->
                         val end = line.sungUntilMs ?: line.words.lastOrNull()?.endMs
                         LoopMix.Line(line.timeMs, end, blank = line.isGap || line.text.isBlank())
+                    },
+                    // Background vocals are voices too: a loop in a background-only
+                    // stretch must not pass on the lead lines alone.
+                    background = found.mapNotNull { line ->
+                        line.background?.let { bg ->
+                            val start = bg.words.firstOrNull()?.startMs ?: bg.timeMs.takeIf { it > 0 } ?: line.timeMs
+                            val end = bg.sungUntilMs ?: bg.words.lastOrNull()?.endMs
+                            LoopMix.Line(start, end, blank = bg.text.isBlank())
+                        }
                     },
                 )
             }
@@ -3129,6 +3185,8 @@ class CrossfadeController(
         out.removeListener(loopStallListener)
         out.addListener(loopStallListener)
         loopSession = session
+        loopAlignAttempts = 0
+        loopClock.start(SystemClock.elapsedRealtime())
         loopIncomingStarted = false
         lastLoopPositionMs = -1L
         lastLoopPositionIncoming = false
@@ -3185,7 +3243,11 @@ class CrossfadeController(
             }
             return
         }
-        val m = session.mixSeconds(System.nanoTime(), out.isPlaying) ?: return
+        val m = session.mixSeconds(System.nanoTime(), out.isPlaying)
+        // No usable clock for too long: the takeover can't be timed, so the
+        // pair takes the ordinary blend rather than waiting on it forever.
+        if (loopClock.expired(m, SystemClock.elapsedRealtime())) return loopFallBack("no clock from the outgoing sink")
+        if (m == null) return
         if (m > 1.0) loopBail("the sink never reached the loop")
     }
 
@@ -3311,6 +3373,7 @@ class CrossfadeController(
      * clocks, and has its sink drop frames or insert silence to cancel it.
      */
     private fun startLoopAlignment(session: LoopMixSession) {
+        loopAlignAttempts++
         loopAlignJob = scope.launch {
             // One more round than corrections: the last only measures, so the
             // result of the final correction is itself confirmed by a full,
@@ -3367,6 +3430,9 @@ class CrossfadeController(
                 session.recordAligned(it, confirmed = false)
                 TrackLog.d(TAG, "loop align: left at ${"%+.2f".format(Locale.ROOT, it * 1000)}ms")
             }
+            // Unconfirmed: let the tick start another attempt (on Main, like it)
+            // once both clocks read again, while attempts remain.
+            if (LoopAlignmentState.retryAfterAttempt(session.alignmentConfirmed, loopAlignAttempts)) loopAlignJob = null
         }
     }
 
