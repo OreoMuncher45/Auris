@@ -627,7 +627,9 @@ object AudioCache {
                     // The entry the player's open is bound to, for readers that
                     // must match what is playing (the loop deck): recomputing
                     // the key follows the current settings, not the binding.
-                    if (request != null) boundKeys[videoId] = key
+                    // A tagged open (an explicit upgrade) is bound too, or the
+                    // binding kept naming the untagged copy the player left.
+                    if (openingRequest.get() != null) boundKeys[videoId] = key
                 }
             }
             // A source-backed track keys on the source and its track id alone.
@@ -2355,8 +2357,15 @@ object AudioCache {
 
     /** @return true once every range of [videoId] is on disk. */
     private suspend fun cacheWholeOnce(videoId: String): Boolean {
-        val total = runCatching { StreamResolver.contentLength(videoId) }.getOrNull()
-            ?: return false
+        // The length of the stream the pass reads, measured on its own route:
+        // with substitution in play that is a source's file, whose length is
+        // not YouTube's, and a YouTube length bounded the pass short of it (or
+        // past it, and the pass retried for ever).
+        val total = if (SourceResolver.canSubstituteForYouTube()) {
+            measureUpstream(readAheadTarget(videoId).second).takeIf { it > 0L }
+        } else {
+            runCatching { StreamResolver.contentLength(videoId) }.getOrNull()
+        } ?: return false
         return cacheWholePass(videoId, total)
     }
 
@@ -2374,6 +2383,7 @@ object AudioCache {
     internal suspend fun cacheWholePass(videoId: String, total: Long, chunk: Long = CHUNK_BYTES): Boolean {
         val (key, routed) = readAheadTarget(videoId)
         val rendition = renditionOf(routed)
+        val substituted = routed.getQueryParameter(ROUTE_PARAMETER) == ROUTE_SUBSTITUTED
         return cacheRangesOnce(
             key = key,
             total = total,
@@ -2386,7 +2396,8 @@ object AudioCache {
             stillWanted = {
                 pendingQueue.firstOrNull() == videoId &&
                     AutomixAnalysisSource.rendition() == rendition &&
-                    prefetchKeyOf(videoId, rendition) == key
+                    SourceResolver.canSubstituteForYouTube() == substituted &&
+                    prefetchKeyOf(videoId, rendition, substituted) == key
             },
             cachedAt = { position, length -> cache.getCachedBytes(key, position, length) },
             fetchRange = { position, length -> fetch(key, routed, position, length, pinKey = true) },
@@ -2394,8 +2405,12 @@ object AudioCache {
     }
 
     /** The entry [cacheWholeOnce] fills for [videoId] under [rendition]; see there. */
-    internal fun prefetchKeyOf(videoId: String, rendition: String? = AutomixAnalysisSource.rendition()): String =
-        if (SourceResolver.canSubstituteForYouTube()) {
+    internal fun prefetchKeyOf(
+        videoId: String,
+        rendition: String? = AutomixAnalysisSource.rendition(),
+        substituted: Boolean = SourceResolver.canSubstituteForYouTube(),
+    ): String =
+        if (substituted) {
             altKeyOf(videoId, atmosKeySuffix(), rendition)
         } else {
             AutomixAnalysisSource.playbackKey(videoId, rendition)
@@ -2409,7 +2424,12 @@ object AudioCache {
      */
     internal fun readAheadTarget(videoId: String): Pair<String, Uri> {
         val rendition = AutomixAnalysisSource.rendition()
-        return prefetchKeyOf(videoId, rendition) to readAheadUriOf(videoId, rendition)
+        // The route with it, read once: whether a source above YouTube can serve
+        // this track decides the key, and the address carries the decision so
+        // the resolver refuses a range raced to the other route
+        // ([checkCapturedRouting]): one entry, one representation.
+        val substituted = SourceResolver.canSubstituteForYouTube()
+        return prefetchKeyOf(videoId, rendition, substituted) to readAheadUriOf(videoId, rendition, substituted)
     }
 
     /** The rendition a read-ahead address carries; null for the ordinary one. */
@@ -3051,6 +3071,20 @@ object AudioCache {
                             }
                             .getOrNull() ?: 0L
                     }
+                    // Spans already on the key are reused only if they are this
+                    // stream's: a catalogue row's copy is re-resolved each round,
+                    // and an entry whose recorded length is not this stream's is
+                    // another representation, so it is cleared before anything is
+                    // written beside it. A same-length retry refills only what is
+                    // missing (the tail an eviction took, say).
+                    if (total > 0L) {
+                        val recorded = runCatching { ContentMetadata.getContentLength(cache.getContentMetadata(key)) }
+                            .getOrDefault(C.LENGTH_UNSET.toLong())
+                        if (recorded > 0L && recorded != total && cachedBytesOf(key, 1L) > 0L) {
+                            runCatching { cache.removeResource(key) }
+                                .onSuccess { TrackLog.d(TAG, "cleared $key: another representation ($recorded, now $total)", about = videoId) }
+                        }
+                    }
                     val want = analysisHeadSize(total)
                     var fetched = copy
                     // Which key this round's bytes end up under: the Opus
@@ -3216,7 +3250,11 @@ object AudioCache {
                     tagAnalysisCopy(filled, mediaIdIn(uri) ?: videoId, uri)
                     val after = cachedBytesOf(filled, target)
                     // A copy shorter than a size-unknown round's guess is whole too.
-                    complete = (after >= target || (measured > 0L && after >= measured)) && tailHeld
+                    // Whole only once a length confirms it: a stream that never said
+                    // how long it is has filled the size-unknown guess, not
+                    // necessarily the recording. Its prefix still serves the head
+                    // pass, and the short-round retry asks again for the length.
+                    complete = measured > 0L && (after >= target || after >= measured) && tailHeld
                     if (after < target) {
                         // The one line that says *this* fetch failed, as opposed to
                         // the read-ahead chatter around it: every cause below
@@ -3293,6 +3331,9 @@ object AudioCache {
      */
     private fun claimStillBacked(videoId: String, key: String): Boolean {
         val want = analysisHeadWant[videoId] ?: return cachedBytesOf(key, 1L) > 0L
+        // A claim on another key (the last rendition's) says nothing about this
+        // request's: it is the requested key, or its own substitute beside it.
+        if (want.key != key && want.key != "$key$ALT_SUFFIX") return false
         if (cachedBytesOf(want.key, want.size) < want.size) return false
         val length = runCatching { ContentMetadata.getContentLength(cache.getContentMetadata(want.key)) }
             .getOrDefault(C.LENGTH_UNSET.toLong())
@@ -3808,8 +3849,14 @@ object AudioCache {
      * rendition or refuses ([checkCapturedRouting]), never another one into
      * the pinned key.
      */
-    private fun readAheadUriOf(videoId: String, rendition: String? = AutomixAnalysisSource.rendition()): Uri =
-        Uri.parse(AutomixAnalysisSource.withRendition("bitchord://watch?v=$videoId", rendition))
+    private fun readAheadUriOf(
+        videoId: String,
+        rendition: String? = AutomixAnalysisSource.rendition(),
+        substituted: Boolean = SourceResolver.canSubstituteForYouTube(),
+    ): Uri = Uri.parse(withRoute(readAheadAddressOf(videoId, rendition), substituted))
+
+    private fun readAheadAddressOf(videoId: String, rendition: String?): String =
+        AutomixAnalysisSource.withRendition("bitchord://watch?v=$videoId", rendition)
 
     /**
      * [pinKey] forces the write to land under [cacheKey] instead of wherever
