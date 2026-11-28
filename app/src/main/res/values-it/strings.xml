@@ -1584,6 +1584,14 @@
     <string name="community_discord">Discord</string>
     <string name="community_discord_subtitle">Bugs, features, beta builds</string>
     <string name="community_reddit_subtitle">r/BitChordNext</string>
+    <string name="show_total_duration">Mostra durata totale</string>
+    <string name="show_total_duration_subtitle">Mostra la durata completa del brano invece del tempo rimanente</string>
+    <string name="sleep_timer_fade_out">Dissolvenza prima della pausa</string>
+    <string name="sleep_timer_fade_out_subtitle">Abbassa gradualmente il volume negli ultimi 30 secondi</string>
+    <string name="youtube_premium_audio">Audio YouTube Premium</string>
+    <string name="youtube_premium_audio_subtitle">Ho Premium: riproduci l\'Opus di qualità superiore a ~256 kbps invece dei 160 kbps standard</string>
+    <string name="download_liked_songs">Scarica i brani che ti piacciono</string>
+    <string name="download_liked_songs_subtitle">Scarica i brani che ti piacciono e ogni brano a cui metti mi piace da ora in poi</string>
     <string name="addon_backup_header">Backup</string>
     <string name="addon_backup_footer">Addons, extensions, their settings and sign-ins, in one file locked with a password you choose. Keep it to restore everything after a reinstall.</string>
     <string name="export_addons">Export add-ons</string>

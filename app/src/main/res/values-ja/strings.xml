@@ -1623,6 +1623,14 @@
     <string name="community_discord">Discord</string>
     <string name="community_discord_subtitle">Bugs, features, beta builds</string>
     <string name="community_reddit_subtitle">r/BitChordNext</string>
+    <string name="show_total_duration">合計時間を表示</string>
+    <string name="show_total_duration_subtitle">残り時間の代わりに曲の長さを表示します</string>
+    <string name="sleep_timer_fade_out">一時停止前にフェードアウト</string>
+    <string name="sleep_timer_fade_out_subtitle">最後の30秒で音量を徐々に下げます</string>
+    <string name="youtube_premium_audio">YouTube Premium オーディオ</string>
+    <string name="youtube_premium_audio_subtitle">Premium に加入済み：標準の 160 kbps ではなく、高音質の約 256 kbps Opus で再生します</string>
+    <string name="download_liked_songs">高く評価した曲をダウンロード</string>
+    <string name="download_liked_songs_subtitle">高く評価した曲と、今後高く評価するすべての曲をダウンロードします</string>
     <string name="addon_backup_header">Backup</string>
     <string name="addon_backup_footer">Addons, extensions, their settings and sign-ins, in one file locked with a password you choose. Keep it to restore everything after a reinstall.</string>
     <string name="export_addons">Export add-ons</string>

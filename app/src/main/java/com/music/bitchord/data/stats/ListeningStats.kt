@@ -763,6 +763,24 @@ enum class ReplayPeriod(val chip: String) {
         THIS_YEAR -> today.year.toString()
         ALL_TIME -> "All time"
     }
+
+    companion object {
+        /**
+         * The period the Library cards always show, and the one the Replay page
+         * opens on until another has been picked there.
+         */
+        val DEFAULT = THIS_YEAR
+
+        /** The period stored under [name], or [DEFAULT] for none or one this build doesn't know. */
+        fun named(name: String?): ReplayPeriod = entries.firstOrNull { it.name == name } ?: DEFAULT
+
+        /**
+         * The period to read: the one last picked on the page while it is open,
+         * and [DEFAULT] everywhere else — the Library cards above all, which
+         * must not take on whatever the page was left on.
+         */
+        fun shown(pageOpen: Boolean, picked: ReplayPeriod): ReplayPeriod = if (pageOpen) picked else DEFAULT
+    }
 }
 
 /**

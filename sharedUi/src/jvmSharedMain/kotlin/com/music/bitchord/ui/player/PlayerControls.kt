@@ -281,6 +281,7 @@ internal fun PlayerScrubber(
     // canvas needs.
     val mixBlend = PlayerSettings.smartMixBlend.collectAsStateWithLifecycle()
     val reduceAnimation by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
+    val showTotalDuration by PlayerSettings.showTotalDuration.collectAsStateWithLifecycle()
     // One clock for the bar and the "Mixing" label, so they breathe on the same beat.
     val mixPulse = rememberMixPulse({ mixBlend.value }, enabled = !reduceAnimation)
     Column(Modifier.fillMaxWidth()) {
@@ -332,7 +333,13 @@ internal fun PlayerScrubber(
                     color = ink.copy(alpha = alphas.secondary * TIME_LABEL_ALPHA),
                 )
                 Text(
-                    text = "-" + formatTime(durationMs - (shown * durationMs).toLong()),
+                    // The length while it is known; until then the countdown,
+                    // which reads as "-0:00" rather than a length of nothing.
+                    text = if (showTotalDuration && durationMs > 0L) {
+                        formatTime(durationMs)
+                    } else {
+                        "-" + formatTime(durationMs - (shown * durationMs).toLong())
+                    },
                     style = timeStyle,
                     color = ink.copy(alpha = alphas.secondary * TIME_LABEL_ALPHA),
                 )

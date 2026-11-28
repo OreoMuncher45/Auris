@@ -1602,6 +1602,14 @@
     <string name="community_discord">Discord</string>
     <string name="community_discord_subtitle">Bugs, features, beta builds</string>
     <string name="community_reddit_subtitle">r/BitChordNext</string>
+    <string name="show_total_duration">Toplam süreyi göster</string>
+    <string name="show_total_duration_subtitle">Kalan süre yerine şarkının tam uzunluğunu gösterir</string>
+    <string name="sleep_timer_fade_out">Duraklatmadan önce sesi azalt</string>
+    <string name="sleep_timer_fade_out_subtitle">Son 30 saniyede sesi yavaş yavaş kısar</string>
+    <string name="youtube_premium_audio">YouTube Premium sesi</string>
+    <string name="youtube_premium_audio_subtitle">Premium\'um var: standart 160 kbps yerine daha yüksek kaliteli ~256 kbps Opus akışı</string>
+    <string name="download_liked_songs">Beğenilen şarkıları indir</string>
+    <string name="download_liked_songs_subtitle">Beğendiğin müzikleri ve bundan sonra beğendiğin her şarkıyı indirir</string>
     <string name="addon_backup_header">Backup</string>
     <string name="addon_backup_footer">Addons, extensions, their settings and sign-ins, in one file locked with a password you choose. Keep it to restore everything after a reinstall.</string>
     <string name="export_addons">Export add-ons</string>
