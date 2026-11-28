@@ -132,6 +132,9 @@ class ExclusiveUsbOutput(
     /** After a DAC that took no level write, when to try again: not on every chunk the writer sends. */
     @Volatile private var volumeRetryAtMs = 0L
 
+    /** The listener level the DAC last refused; a different one is tried at once. */
+    @Volatile private var refusedLevel = Float.NaN
+
     /** When the DAC's own level was last re-read. */
     @Volatile private var lastDacLevelCheckMs = 0L
 
@@ -973,6 +976,7 @@ class ExclusiveUsbOutput(
                     // Louder than asked until the write lands: the writer makes up
                     // the difference on every chunk it sends meanwhile.
                     pendingAttenuation = DacLevelFallback.pendingAttenuation(target, written ?: current)
+                    refusedLevel = level
                     volumeRetryAtMs = DacLevelFallback.retryAt(SystemClock.elapsedRealtime())
                     volumeDirty = true
                     return
@@ -1136,7 +1140,12 @@ class ExclusiveUsbOutput(
 
     private fun maybeApplyVolume() {
         if (!volumeDirty) return
-        if (!DacLevelFallback.mayRetry(volumeRetryAtMs, SystemClock.elapsedRealtime())) return
+        if (!DacLevelFallback.mayRetry(
+                volumeRetryAtMs,
+                SystemClock.elapsedRealtime(),
+                levelChanged = listenerLevel != refusedLevel,
+            )
+        ) return
         withLockUnlessStopping {
             if (!volumeDirty) return
             volumeDirty = false

@@ -25,4 +25,14 @@ class DacLevelFallbackTest {
         assertEquals(1f, DacLevelFallback.pendingAttenuation(targetDb = -6.0, dacAtDb = -18.0), 0f)
         assertEquals(1f, DacLevelFallback.pendingAttenuation(targetDb = -6.0, dacAtDb = null), 0f)
     }
+
+    @Test
+    fun aFurtherDecreaseDuringTheRetryIntervalIsTriedAtOnce() {
+        // -18 dB refused at 10 s; the listener asks for -30 dB half a second later.
+        val at = DacLevelFallback.retryAt(nowMs = 10_000L)
+        assertFalse("the same refused level waits out the spacing", DacLevelFallback.mayRetry(at, nowMs = 10_500L, levelChanged = false))
+        assertTrue("a new level must not wait behind the old one's deadline", DacLevelFallback.mayRetry(at, nowMs = 10_500L, levelChanged = true))
+        // Refused again, the attenuation is the new level's, not the old one's.
+        assertEquals(0.0631f, DacLevelFallback.pendingAttenuation(targetDb = -30.0, dacAtDb = -6.0), 1e-3f)
+    }
 }

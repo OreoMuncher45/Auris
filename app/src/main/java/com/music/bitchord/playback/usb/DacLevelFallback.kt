@@ -32,6 +32,14 @@ internal object DacLevelFallback {
     /** When to write the level again after a write the DAC refused at [nowMs]. */
     fun retryAt(nowMs: Long): Long = nowMs + RETRY_MS
 
-    /** Whether the level pending since a refused write may be tried at [nowMs]. */
-    fun mayRetry(retryAtMs: Long, nowMs: Long): Boolean = nowMs >= retryAtMs
+    /**
+     * Whether the pending level may be written at [nowMs]: once the retry
+     * spacing is over, or straight away when the listener has asked for a
+     * different level since the refusal ([levelChanged]). The spacing only
+     * keeps a refused level from being re-sent on every chunk; a new one is
+     * tried at once, so a further decrease (and its attenuation, if refused
+     * too) never waits behind the old one's deadline.
+     */
+    fun mayRetry(retryAtMs: Long, nowMs: Long, levelChanged: Boolean = false): Boolean =
+        levelChanged || nowMs >= retryAtMs
 }
