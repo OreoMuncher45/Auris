@@ -425,6 +425,29 @@ object AudioCache {
             .joinToString("|")
     }
 
+    /** What [prepareAnalysisEntry] made of an analysis copy's existing spans. */
+    internal enum class EntryPreparation { REUSED, CLEARED, REFUSED }
+
+    /**
+     * Gets an analysis copy ready for this round's stream: its spans are kept
+     * only when [spansReusable] says they are this stream's; otherwise they are
+     * cleared with [remove], and when that fails the entry is [EntryPreparation.REFUSED],
+     * so the caller writes and stamps nothing. [hasSpans] is any cached span at
+     * all, not just byte 0.
+     */
+    internal inline fun prepareAnalysisEntry(
+        hasSpans: Boolean,
+        recordedIdentity: String?,
+        identity: String?,
+        recordedLength: Long,
+        total: Long,
+        remove: () -> Boolean,
+    ): EntryPreparation = when {
+        spansReusable(hasSpans, recordedIdentity, identity, recordedLength, total) -> EntryPreparation.REUSED
+        remove() -> EntryPreparation.CLEARED
+        else -> EntryPreparation.REFUSED
+    }
+
     /**
      * Whether an analysis copy's cached spans may be extended by this round:
      * nothing cached, or bytes recorded under this round's own stream identity
@@ -3129,9 +3152,26 @@ object AudioCache {
                             .getOrNull()
                         val recordedLength = runCatching { ContentMetadata.getContentLength(cache.getContentMetadata(key)) }
                             .getOrDefault(C.LENGTH_UNSET.toLong())
-                        if (!spansReusable(cachedBytesOf(key, 1L) > 0L, recordedIdentity, identity, recordedLength, total)) {
-                            runCatching { cache.removeResource(key) }
-                                .onSuccess { TrackLog.d(TAG, "cleared $key: not this round's stream", about = videoId) }
+                        val prepared = prepareAnalysisEntry(
+                            // Any span, not byte 0: an eviction can leave a tail
+                            // with no head, and a fresh head written in front of
+                            // it would splice the old stream's tail on.
+                            hasSpans = cache.getCachedSpans(key).any { it.isCached },
+                            recordedIdentity = recordedIdentity,
+                            identity = identity,
+                            recordedLength = recordedLength,
+                            total = total,
+                            remove = { runCatching { cache.removeResource(key) }.isSuccess },
+                        )
+                        if (prepared == EntryPreparation.REFUSED) {
+                            // The old spans could not be cleared (a reader holds
+                            // them): nothing is stamped or written beside them.
+                            // The round ends short and its retry tries again.
+                            TrackLog.d(TAG, "$key holds another stream's spans and could not be cleared; retrying later", about = videoId)
+                            return@launch
+                        }
+                        if (prepared == EntryPreparation.CLEARED) {
+                            TrackLog.d(TAG, "cleared $key: not this round's stream", about = videoId)
                         }
                         if (identity != null) {
                             runCatching {
