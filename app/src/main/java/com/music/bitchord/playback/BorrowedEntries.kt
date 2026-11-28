@@ -51,7 +51,21 @@ internal class BorrowedEntries {
      * Whether an upstream fetch may write into [key]. The emptiness check
      * keeps an ordinary fetch, with nothing lent, to a field read.
      */
-    fun mayFill(key: String): Boolean = keys.isEmpty() || !keys.containsKey(key)
+    fun mayFill(key: String): Boolean =
+        (keys.isEmpty() || !keys.containsKey(key)) && (frozen.isEmpty() || key !in frozen)
+
+    /**
+     * Entries this request may still read but never refill: the one it opened
+     * on, once a later reopen would have resolved another rendition (Premium
+     * switched on mid-play). Cached bytes there are the encoding its extractor
+     * is reading; a refill would be the other one. The refused refill fails the
+     * open, and the player's recovery reopens fresh under the new rendition.
+     */
+    private val frozen = ConcurrentHashMap.newKeySet<String>()
+
+    fun freeze(key: String) {
+        frozen.add(key)
+    }
 
     /**
      * The key lent for [videoId], if any — for a per-request set, which holds
