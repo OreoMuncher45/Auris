@@ -219,8 +219,20 @@ internal class PlaybackStreamResolver(
                         null
                     }
                 },
-                fallback = {
-                    fullMediaId?.let { StreamChoice.of(it) } ?: try {
+                fallback = fallback@{
+                    val pin = fullMediaId?.let { StreamChoice.of(it) }
+                    if (pin != null) {
+                        // A pin from a source the listener has since turned off
+                        // (kept near the playhead) is not served, and nothing is
+                        // resolved in its place: the entry may hold that source's
+                        // bytes, and another source's would mix renditions. The
+                        // light read fails, and the round retries.
+                        val active = pin.sourceConfigId?.let { id ->
+                            SourceRegistry.activeForPlayback().any { it.configId == id }
+                        } ?: true
+                        return@fallback pin.takeIf { active }
+                    }
+                    try {
                         runBlocking(about) { withTimeout(RESOLVE_TIMEOUT_MS) { SourceResolver.resolve(dataSpec.uri) } }
                     } catch (e: TimeoutCancellationException) {
                         null

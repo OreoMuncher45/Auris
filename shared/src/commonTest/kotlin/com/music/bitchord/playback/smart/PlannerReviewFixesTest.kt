@@ -402,6 +402,94 @@ class PlannerReviewFixesTest {
                 "a beat-matched blend cued at ${p.incomingCueTime} against start ${p.transitionStart} is out of phase")
         } else {
             assertEquals(TransitionStyle.DJ_FILTER, p.transitionStyle, p.reason)
+            // Planned as unmatched from the start: no arrangement overlap held
+            // back from the end, which only a beat-matched blend reserves.
+            assertTrue(p.transitionEnd > 196.0, "ends at ${p.transitionEnd}, short of the 198.25 s content end by a blend's reserve")
         }
+    }
+
+    private fun phase(t: Double, line: Double) = ((t - line) % 2.0 + 2.0) % 2.0
+    private fun inPhase(a: Double, aLine: Double, b: Double, bLine: Double): Boolean {
+        val gap = kotlin.math.abs(phase(a, aLine) - phase(b, bLine))
+        return gap < 1e-6 || gap > 2.0 - 1e-6
+    }
+
+    @Test
+    fun aPhasedCueIsChosenInsideTheSkipCapNotMovedByItAfterwards() {
+        // A 60 s incoming song may be cued at most 15 s in; it first sounds at 14.9 s.
+        for (offset in listOf(0.5, 1.0, 1.25)) for (advanced in listOf(false, true)) {
+            val head = generateSequence(offset) { it + 2.0 }.takeWhile { it < 40.0 }.toList()
+            val next = track(120.0, duration = 60.0).copy(
+                downbeats = generateSequence(offset) { it + 2.0 }.takeWhile { it < 59.0 }.toList(),
+                audibleStartTime = 14.9,
+                mixInTime = 16.5,
+                mixInCandidates = listOf(MixCandidate(16.5, 1.0, "drop")),
+                headBeats = BeatSide(head.flatMap { listOf(it, it + 0.5, it + 1.0, it + 1.5) }, head, 120.0, 0.9),
+            )
+            val p = planTransition(
+                analysis = track(120.0).copy(contentEndTime = 198.25),
+                nextAnalysis = next,
+                currentTime = 100.0,
+                duration = 200.0,
+                mode = CrossfadeMode.SMART,
+                advanced = advanced,
+            )
+            if (p.transitionStyle != TransitionStyle.DJ_BLEND) continue
+            val where = "offset=$offset advanced=$advanced: cue ${p.incomingCueTime}, start ${p.transitionStart}"
+            assertTrue(p.incomingCueTime <= latestIncomingCue(60.0) + 1e-9, "$where is past the skip cap")
+            assertTrue(p.incomingCueTime >= 14.9 - 0.05, "$where fades out before the incoming song sounds")
+            assertTrue(inPhase(p.incomingCueTime, offset, p.transitionStart, 0.5), "$where is out of phase")
+        }
+    }
+
+    @Test
+    fun aCuePastTheOpeningIsNotPhasedOnAWholeTrackGridThePolicyDoesNotTrust() {
+        // Advanced: the opening is trusted (0.9) and ends at 10 s; the whole
+        // track's grid is not (0.3), so a cue past the opening can't be phased on it.
+        val head = generateSequence(0.75) { it + 2.0 }.takeWhile { it < 10.0 }.toList()
+        val next = track(120.0).copy(
+            beatConfidence = 0.3,
+            mixInTime = 16.5,
+            mixInCandidates = listOf(MixCandidate(16.5, 1.0, "drop")),
+            headBeats = BeatSide(head.flatMap { listOf(it, it + 0.5, it + 1.0, it + 1.5) }, head, 120.0, 0.9),
+        )
+        val p = planTransition(
+            analysis = track(120.0).copy(contentEndTime = 198.25),
+            nextAnalysis = next,
+            currentTime = 100.0,
+            duration = 200.0,
+            mode = CrossfadeMode.SMART,
+            advanced = true,
+        )
+        if (p.transitionStyle == TransitionStyle.DJ_BLEND) {
+            assertTrue(p.incomingCueTime < 10.0, "a blend cued at ${p.incomingCueTime} is phased on the untrusted whole-track grid")
+        }
+    }
+
+    @Test
+    fun aShortIncomingSongsPhraseSwitchStaysOnItsGrid() {
+        // 9.3 s at 120 BPM, drop at 2.0 s: the handoff is clamped by the song's end.
+        val next = track(120.0, duration = 9.3).copy(
+            downbeats = generateSequence(0.0) { it + 2.0 }.takeWhile { it < 9.3 }.toList(),
+            audibleStartTime = 0.0,
+            firstBeat = 0.0,
+            mixInTime = 2.0,
+            mixInCandidates = listOf(MixCandidate(2.0, 1.0, "drop")),
+        )
+        val planned = planWsolaTransition(track(120.0), next, 200.0, 9.3, advanced = true)
+        if (planned !is WsolaPlanResult.Planned) return
+        fun onBeat(t: Double) = kotlin.math.abs((t - 2.0) / 0.5 - kotlin.math.round((t - 2.0) / 0.5)) < 1e-6
+        assertTrue(onBeat(planned.incomingCueTime), "cue ${planned.incomingCueTime} is off the incoming beat")
+        assertTrue(onBeat(planned.incomingHandoffTime), "handoff ${planned.incomingHandoffTime} is off the incoming beat")
+        assertTrue(planned.incomingCueTime <= latestIncomingCue(9.3) + 1e-9, "cue ${planned.incomingCueTime} past the skip cap")
+    }
+
+    @Test
+    fun aCueJustAboveTheSkipCapIsOutsideItForThePhaseSearchAsForTheCap() {
+        // 60 s: the cap is exactly 15 s. One shared test, no slack on either side.
+        val cap = latestIncomingCue(60.0)
+        assertTrue(withinSkipCap(cap, 60.0))
+        assertTrue(!withinSkipCap(cap + 1e-10, 60.0), "a cue just above the cap passed the phase search's test")
+        assertTrue(!withinSkipCap(cap + 1e-12, 60.0))
     }
 }

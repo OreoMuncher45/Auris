@@ -27,7 +27,7 @@ class CapturedRoutingTest {
     }
 
     private fun refused(uri: String, heavyNow: Boolean): Boolean = try {
-        checkCapturedRouting(Uri.parse(uri)) { heavyNow }
+        checkCapturedRouting(Uri.parse(uri), heavyTierNow = { heavyNow }, substitutingNow = { false })
         false
     } catch (expected: IOException) {
         true
@@ -64,5 +64,24 @@ class CapturedRoutingTest {
     fun aReadWithNoCapturedRoutingIsNeverRefused() {
         AutomixAnalysisSource.rendition = { "premium" }
         if (refused("bitchord://watch?v=abcdefghijk", heavyNow = true)) fail("refused ordinary playback")
+    }
+
+    @Test
+    fun aReadAheadRangeIsRefusedOnceTheSubstitutionRouteFlipped() {
+        // Keyed for YouTube's own copy: a source that came up mid-fill must
+        // not be raced into it.
+        val range = withRoute(AutomixAnalysisSource.withRendition("bitchord://watch?v=abcdefghijk", null), substituted = false)
+        if (refusedRoute(range, substitutingNow = false)) fail("refused on its own route")
+        if (!refusedRoute(range, substitutingNow = true)) fail("served a source into a YouTube-keyed fill")
+        // And the other way round.
+        val subRange = withRoute(AutomixAnalysisSource.withRendition("bitchord://watch?v=abcdefghijk", null), substituted = true)
+        if (!refusedRoute(subRange, substitutingNow = false)) fail("served YouTube into a substitute-keyed fill")
+    }
+
+    private fun refusedRoute(uri: String, substitutingNow: Boolean): Boolean = try {
+        checkCapturedRouting(Uri.parse(uri), heavyTierNow = { false }, substitutingNow = { substitutingNow })
+        false
+    } catch (expected: IOException) {
+        true
     }
 }

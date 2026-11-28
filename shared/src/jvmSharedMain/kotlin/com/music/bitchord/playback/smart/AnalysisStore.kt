@@ -366,7 +366,10 @@ class AnalysisStore(
             fun of(window: CurveWindow, keepingSidesOf: Double? = null, scale: Int = 100): StoredCurve {
                 val threshold = keepingSidesOf?.let { (it * scale).roundToInt() }
                 return StoredCurve(
-                    round(window.startTime),
+                    // Unrounded: a millisecond off the start moves the restored
+                    // window's end, and a loop whose coverage sits at the bar
+                    // could pass before a reload and fail after it.
+                    window.startTime,
                     window.frameRate,
                     window.values.map { value ->
                         // A NaN from the model would throw in roundToInt and lose the
