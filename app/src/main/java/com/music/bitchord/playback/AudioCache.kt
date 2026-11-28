@@ -2354,25 +2354,40 @@ object AudioCache {
     private suspend fun cacheWholeOnce(videoId: String): Boolean {
         val total = runCatching { StreamResolver.contentLength(videoId) }.getOrNull()
             ?: return false
+        return cacheWholePass(videoId, total)
+    }
 
-        // The entry this pass writes, resolved once and pinned for every
-        // write and every check: YouTube's own entry under the current
-        // rendition, or its substitution-capable bucket, as [keyFactory] files a
-        // YouTube winner. Left to the key factory, the write landed on
-        // `<id>#<rendition>` while the checks (here and in [fetch]) read the
-        // bare id, so the pass never saw its own bytes and kept re-fetching.
+    /**
+     * One whole-track pass over [videoId]'s [total] bytes, its routing captured
+     * once: the key ([prefetchKeyOf]) and the rendition. Every write and every
+     * check stays on that key, every range is fetched through an address
+     * naming that rendition (refused by the resolver if it is no longer
+     * served), and a range whose key the current settings would now compute
+     * differently (Premium switched, a source ranked above YouTube) ends the
+     * pass: [fetchWhole]'s retry starts a fresh one under the new routing.
+     * Recomputed per range, a write could land under the new key while the
+     * loop checked the old one, and stop the pass early.
+     */
+    internal suspend fun cacheWholePass(videoId: String, total: Long, chunk: Long = CHUNK_BYTES): Boolean {
         val key = prefetchKeyOf(videoId)
+        val rendition = AutomixAnalysisSource.rendition()
+        val routed = readAheadUriOf(videoId, rendition)
         return cacheRangesOnce(
             key = key,
             total = total,
-            chunk = CHUNK_BYTES,
+            chunk = chunk,
             // Checked per chunk, not just once per pass: a track long enough
             // to need several chunks can lose the race partway through one,
             // and a queue change mid-pass is exactly the "the player has it
-            // now" case the guard in [fetchWhole] exists for.
-            stillWanted = { pendingQueue.firstOrNull() == videoId },
+            // now" case the guard in [fetchWhole] exists for. The routing is
+            // checked with it.
+            stillWanted = {
+                pendingQueue.firstOrNull() == videoId &&
+                    AutomixAnalysisSource.rendition() == rendition &&
+                    prefetchKeyOf(videoId) == key
+            },
             cachedAt = { position, length -> cache.getCachedBytes(key, position, length) },
-            fetchRange = { position, length -> fetch(videoId, position, length) },
+            fetchRange = { position, length -> fetch(key, routed, position, length, pinKey = true) },
         )
     }
 
@@ -2607,7 +2622,7 @@ object AudioCache {
      * The read-ahead already learned this — see [SPOTIFY_ROW_PREFIX].
      */
     internal fun analysisCopyFor(uri: Uri, videoId: String, rendition: String? = AutomixAnalysisSource.rendition()): Uri =
-        Uri.parse(analysisCopyAddress(uri.toString(), videoId, rendition))
+        Uri.parse(analysisCopyAddress(uri.toString(), videoId, rendition, heavyPlaybackTier()))
 
     /**
      * The address of the copy the analyser reads, for a row.
@@ -2620,10 +2635,12 @@ object AudioCache {
         uri: String,
         videoId: String,
         rendition: String? = AutomixAnalysisSource.rendition(),
+        light: Boolean = heavyPlaybackTier(),
     ): String =
         if (isCatalogueRow(videoId)) {
-            // Marked as the analyser's read: see [AutomixAnalysisSource.analysisRead].
-            AutomixAnalysisSource.analysisRead(uri)
+            // Marked as the analyser's read, with the tier and rendition its
+            // round is admitted under: see [AutomixAnalysisSource.analysisRead].
+            AutomixAnalysisSource.analysisRead(uri, light, rendition)
         } else {
             AutomixAnalysisSource.opusUri(videoId, rendition)
         }
@@ -3095,7 +3112,8 @@ object AudioCache {
                         // short-round retry takes it from there.
                         clearPartialHead(key, want)
                         val substitute = AutomixAnalysisSource.analysisSubstituteKey(videoId, rendition)
-                        val substituteUri = Uri.parse("bitchord://watch?v=$videoId")
+                        // Under the round's own rendition: see [checkCapturedRouting].
+                        val substituteUri = Uri.parse(AutomixAnalysisSource.withRendition("bitchord://watch?v=$videoId", rendition))
                         val substituteLength = measureUpstream(substituteUri)
                         val substituteTarget = if (substituteLength > 0L) analysisHeadSize(substituteLength) else want
                         if (cachedBytesOf(substitute, substituteTarget) >= substituteTarget ||
@@ -3759,7 +3777,16 @@ object AudioCache {
      * stopped after the probe's 64 KiB.
      */
     internal suspend fun fetch(videoId: String, position: Long, length: Long) =
-        fetch(prefetchKeyOf(videoId), Uri.parse("bitchord://watch?v=$videoId"), position, length, pinKey = true)
+        fetch(prefetchKeyOf(videoId), readAheadUriOf(videoId), position, length, pinKey = true)
+
+    /**
+     * The address a read-ahead of [videoId] fetches through: carrying the
+     * rendition its key was resolved under, so the resolver serves that
+     * rendition or refuses ([checkCapturedRouting]), never another one into
+     * the pinned key.
+     */
+    private fun readAheadUriOf(videoId: String, rendition: String? = AutomixAnalysisSource.rendition()): Uri =
+        Uri.parse(AutomixAnalysisSource.withRendition("bitchord://watch?v=$videoId", rendition))
 
     /**
      * [pinKey] forces the write to land under [cacheKey] instead of wherever

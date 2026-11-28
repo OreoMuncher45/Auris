@@ -121,6 +121,12 @@ internal class PlaybackStreamResolver(
         // are fetching. Read-ahead means the track being resolved here is
         // usually *not* the one playing, which is exactly why the lines
         // have to say. See [TrackLog.about].
+        // One guard for every read that carries a captured routing (an
+        // analysis round's opens, a whole-track read-ahead's ranges): served the
+        // rendition and tier it was admitted under, or refused, so the round or
+        // pass ends short and its retry starts fresh. Never two streams, or two
+        // renditions, in one entry.
+        checkCapturedRouting(dataSpec.uri)
         val about = TrackLog.about(mediaIdIn(dataSpec.uri))
         // A source-backed track is resolved by whichever source can serve
         // it, which is not necessarily the one it was queued from — see
@@ -192,13 +198,7 @@ internal class PlaybackStreamResolver(
         // match to measure instead), at a lossless or immersive playback tier:
         // answered with a capped lossy copy, without the upgrade or the pin,
         // as for a catalogue row. See [AutomixAnalysisSource.analysisRead].
-        val playbackRequest = SourceResolver.requestForNow()
-        if (!directYouTube &&
-            AutomixAnalysisSource.isAnalysisRead(
-                dataSpec.uri.getQueryParameter(AutomixAnalysisSource.ANALYSIS_READ_PARAMETER),
-            ) &&
-            (playbackRequest.wantsLossless || playbackRequest.wantsAtmos)
-        ) {
+        if (!directYouTube && isLightAnalysisRead(dataSpec)) {
             // One stream for the whole round: see [AnalysisReadPins].
             val rowId = "$configId|$trackParam"
             // Nothing at the capped rate (a source that only offers lossless,
@@ -583,16 +583,10 @@ internal class PlaybackStreamResolver(
      * playback tier, which is answered with a capped copy instead: see
      * [AutomixAnalysisSource.analysisRead].
      */
-    private fun isLightAnalysisRead(dataSpec: DataSpec): Boolean {
-        if (!AutomixAnalysisSource.isAnalysisRead(
-                dataSpec.uri.getQueryParameter(AutomixAnalysisSource.ANALYSIS_READ_PARAMETER),
-            )
-        ) {
-            return false
-        }
-        val request = SourceResolver.requestForNow()
-        return request.wantsLossless || request.wantsAtmos
-    }
+    private fun isLightAnalysisRead(dataSpec: DataSpec): Boolean =
+        // As admitted: [checkCapturedRouting] has already refused a read whose
+        // tier changed since its round began.
+        AutomixAnalysisSource.isLightRead(dataSpec.uri.getQueryParameter(AutomixAnalysisSource.ANALYSIS_READ_PARAMETER))
 
     private fun resolveSpotifyRow(dataSpec: DataSpec, videoId: String, about: CoroutineContext): DataSpec {
         // The analyser's read of a row the listener plays lossless or
@@ -602,9 +596,7 @@ internal class PlaybackStreamResolver(
         // [AutomixAnalysisSource.analysisRead]. At a lossy playback tier the
         // pin is already a lossy copy, and the read shares it as before.
         val playbackRequest = SourceResolver.requestForNow()
-        val lightRead = AutomixAnalysisSource.isAnalysisRead(
-            dataSpec.uri.getQueryParameter(AutomixAnalysisSource.ANALYSIS_READ_PARAMETER),
-        ) && (playbackRequest.wantsLossless || playbackRequest.wantsAtmos)
+        val lightRead = isLightAnalysisRead(dataSpec)
         val request = if (lightRead) StreamRequest.Capped(AutomixAnalysisSource.ANALYSIS_KBPS) else playbackRequest
         // One stream for the whole round: see [AnalysisReadPins].
         if (lightRead) {
@@ -867,5 +859,24 @@ internal class PlaybackStreamResolver(
             about = videoId,
         )
         return pinned
+    }
+}
+
+/** Whether the listener's playback tier is lossless or immersive, which an analysis read is answered lighter than. */
+internal fun heavyPlaybackTier(): Boolean = SourceResolver.requestForNow().let { it.wantsLossless || it.wantsAtmos }
+
+/**
+ * Refuses a read whose captured routing (see
+ * [AutomixAnalysisSource.routingMatches]) no longer matches the settings: a
+ * rendition or a playback tier that changed since its analysis round or
+ * read-ahead pass began. The refusal fails the open; the round or pass ends
+ * short, and its retry is admitted afresh under the current routing.
+ */
+internal fun checkCapturedRouting(uri: Uri, heavyTierNow: () -> Boolean = ::heavyPlaybackTier) {
+    val renditionMark = uri.getQueryParameter(AutomixAnalysisSource.RENDITION_PARAMETER)
+    val readMark = uri.getQueryParameter(AutomixAnalysisSource.ANALYSIS_READ_PARAMETER)
+    if (renditionMark == null && readMark == null) return
+    if (!AutomixAnalysisSource.routingMatches(renditionMark, readMark, heavyTierNow)) {
+        throw java.io.IOException("a read admitted under another rendition or tier; its round retries")
     }
 }
