@@ -483,4 +483,13 @@ class PlannerReviewFixesTest {
         assertTrue(onBeat(planned.incomingHandoffTime), "handoff ${planned.incomingHandoffTime} is off the incoming beat")
         assertTrue(planned.incomingCueTime <= latestIncomingCue(9.3) + 1e-9, "cue ${planned.incomingCueTime} past the skip cap")
     }
+
+    @Test
+    fun aCueJustAboveTheSkipCapIsOutsideItForThePhaseSearchAsForTheCap() {
+        // 60 s: the cap is exactly 15 s. One shared test, no slack on either side.
+        val cap = latestIncomingCue(60.0)
+        assertTrue(withinSkipCap(cap, 60.0))
+        assertTrue(!withinSkipCap(cap + 1e-10, 60.0), "a cue just above the cap passed the phase search's test")
+        assertTrue(!withinSkipCap(cap + 1e-12, 60.0))
+    }
 }

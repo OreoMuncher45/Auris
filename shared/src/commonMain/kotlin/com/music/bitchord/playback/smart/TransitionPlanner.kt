@@ -486,9 +486,16 @@ private fun capIncomingSkip(plan: TransitionPlan, nextAnalysis: TrackAnalysis, n
 }
 
 /** [cue] pulled back by whole incoming bars to within [latestIncomingCue]; unchanged when it already is. */
+/**
+ * Whether [cue] is inside the incoming song's skip cap: the one test both the
+ * cap ([cappedIncomingCue]) and the blend's phase search apply, so a cue the
+ * search accepts is never one the cap then moves.
+ */
+internal fun withinSkipCap(cue: Double, nextLength: Double): Boolean = cue <= latestIncomingCue(nextLength)
+
 private fun cappedIncomingCue(cue: Double, nextAnalysis: TrackAnalysis, nextLength: Double): Double {
     val latest = latestIncomingCue(nextLength)
-    if (cue <= latest) return cue
+    if (withinSkipCap(cue, nextLength)) return cue
     val beat = nextAnalysis.beatInterval.orZero().takeIf { it > 0 }
         ?: if (nextAnalysis.bpm.orZero() > 0) 60 / nextAnalysis.bpm else 0.0
     val over = cue - latest
@@ -1956,7 +1963,7 @@ private fun mixPlan(
                     // longer in phase when it is moved.
                     bars.filter { it.isFinite() }.map { it + offset }.filter {
                         it >= rawIncomingCueTime - 0.05 && it + span <= maxIncomingHandoff + 0.05 &&
-                            it <= latestIncomingCue(nextLength) + 1e-9
+                            withinSkipCap(it, nextLength)
                     },
                     unsnappedCue,
                     incomingBar / 2,
