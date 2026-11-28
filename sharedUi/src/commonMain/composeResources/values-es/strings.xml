@@ -256,4 +256,17 @@
     <string name="library_search_hint">Search this</string>
     <string name="library_empty_segment">Nothing here yet</string>
     <string name="home_chip_all">All</string>
+    <string name="best_part">Best Part</string>
+    <string name="best_part_description">Saltar a la mejor parte</string>
+    <string name="queue_select">Seleccionar</string>
+    <string name="queue_select_all">Seleccionar todo</string>
+    <string name="queue_selected_count">Seleccionadas: %1$d</string>
+    <string name="queue_close_selection">Salir de la selección</string>
+    <string name="queue_selection_remove">Quitar</string>
+    <string name="queue_selection_add_to_playlist">Añadir a una lista</string>
+    <string name="queue_download">Descargar</string>
+    <string name="queue_removed_song">Se quitó %1$s</string>
+    <string name="queue_removed_songs">Se quitaron %1$d canciones</string>
+    <string name="queue_undo_action">Deshacer</string>
+    <string name="queue_cleared">Se vació «Siguiente en la cola»</string>
 </resources>

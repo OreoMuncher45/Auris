@@ -112,6 +112,8 @@ fun GlassFoldingNavBar(
     onBlockedControl: () -> Unit = {},
     dock: PlayerDock? = null,
     pull: MiniPlayerPull? = null,
+    /** False while the full player covers the bar: its glyphs then swap without motion. */
+    animationsActive: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     AnimatedContent(
@@ -173,6 +175,7 @@ fun GlassFoldingNavBar(
                 onBlockedControl = onBlockedControl,
                 dock = dock,
                 pull = pull,
+                animationsActive = animationsActive,
                 modifier = Modifier.fillMaxWidth(),
             )
         }
@@ -198,6 +201,7 @@ private fun GlassFoldingNavBarChrome(
     onBlockedControl: () -> Unit,
     dock: PlayerDock?,
     pull: MiniPlayerPull?,
+    animationsActive: Boolean,
     modifier: Modifier,
 ) {
     BackHandler(enabled = search.visualActive, onBack = search.onExit)
@@ -227,6 +231,7 @@ private fun GlassFoldingNavBarChrome(
                     onBlockedControl = onBlockedControl,
                     dock = dock,
                     pull = pull,
+                    animationsActive = animationsActive,
                     modifier = accessoryModifier
                         .fillMaxWidth()
                         .then(glassSurface()),

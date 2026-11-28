@@ -66,9 +66,8 @@ import java.util.Locale
 @UnstableApi
 class TrackAnalyzer(private val context: Context, private val cache: AudioCache) {
 
-    // Bundled in the APK for now, or downloaded behind the one switch in
-    // [AutomixModels]. Until a downloaded one arrives these throw, and the
-    // trackers answer with no evidence.
+    // Downloaded on first use by [AutomixModels]. Until both arrive these
+    // throw, and the trackers answer with no evidence.
     private val tracker = BeatTracker(
         modelPath = {
             java.io.File(context.filesDir, BeatTracker.RETIRED_MODEL_ASSET).delete()
@@ -244,9 +243,11 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             restoreAttempted.remove(trackId)
             provisional.remove(trackId)
             measuredCopies.remove(trackId)
-            // An evicted head result gives its prefix claim back (only that
-            // exact claim), or the unchanged prefix that produced it would have
-            // to grow before the head pass may rebuild it.
+            // A model-less result was never stored, so nothing restores it;
+            // its record goes with it rather than pinning its curves in memory.
+            modelless.release(trackId, headAttempts) { results[it] }
+            // A head result measured with the models gives its prefix claim
+            // back too, so the same prefix can rebuild it.
             headClaims.release(trackId, headAttempts)
         }
     }
@@ -257,10 +258,18 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      * video share its copy, and a claim on the copy alone kept the second row
      * from measuring a prefix only the first could use the result of.
      */
-    private fun attemptKey(trackId: String, renditionKey: String): String = "$trackId|$renditionKey"
+    private fun attemptKey(trackId: String, renditionKey: String): String = headAttemptKey(trackId, renditionKey)
 
     /** The head claim each published head result was measured under. */
     private val headClaims = HeadClaims()
+
+    /**
+     * This result as planning should see one measured without the models: its
+     * grid is a DSP estimate, and AutoMix without its models plays plain
+     * crossfades, so it never clears the beat-match bar.
+     */
+    private fun TrackAnalysis.withoutBeatMatch(): TrackAnalysis =
+        if (beatConfidence < MODELLESS_CONFIDENCE) this else copy(beatConfidence = MODELLESS_CONFIDENCE)
     private val running = ConcurrentHashMap.newKeySet<String>()
     private val sourceAnalysisUris = ConcurrentHashMap<String, Uri>()
 
@@ -378,6 +387,14 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      * overwrite it.
      */
     private val discarded = ConcurrentHashMap<String, Int>()
+
+    /**
+     * Whole-track results measured while the models were not on disk yet: DSP
+     * estimates only. Never persisted, and dropped — along with their copy in
+     * [triedRenditions] — once [AutomixModels] reports them ready, so each
+     * such track is measured again the next time it is asked for.
+     */
+    private val modelless = ModellessResults()
 
     private fun discardsOf(key: String): Int = discarded[key] ?: 0
 
@@ -524,6 +541,12 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // mix. See [stopped].
         if (stopped) return
         if (trackId in running) return
+        // Cheap enough for every tick: an empty-map check, then a StateFlow
+        // read. Dropping only makes the tracks unmeasured; each is re-analysed
+        // when it is next requested, so the usual demand limits apply.
+        if (!modelless.isEmpty() && AutomixModels.state.value == AutomixModels.State.Ready) {
+            modelless.drop(results, triedRenditions, measuredCopies, provisional, headAttempts)
+        }
         // A track measured in an earlier session costs nothing to restore, so
         // only the work below waits for the phone to cool. Queued before the
         // cache is even consulted, and before a source-backed track's catalogue
@@ -683,6 +706,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                     // new grid with the old copy's key or the other way round.
                     val whole = outcome.analysis?.let { keepHeadGrid(trackId, it, measuredOn) }
                         ?.copy(measuredOn = measuredOn)
+                        ?.let { if (outcome.withoutModels) it.withoutBeatMatch() else it }
                     if (whole != null) {
                         // The release check and the publish are one step that
                         // release() also takes, so nothing is published once it
@@ -717,6 +741,11 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                         // would freeze a deliberately partial answer in place of
                         // the complete one that supersedes it minutes later.
                         // Not a deliberately partial answer: see [WholeTrack.persist].
+                        if (outcome.withoutModels) {
+                            modelless.record(trackId, whole, measuredOn)
+                        } else {
+                            modelless.forget(trackId)
+                        }
                         // Not stored while it was measured off a fallback during a
                         // failed search's backoff: restored after a restart it
                         // would look settled, and the search would never run
@@ -754,15 +783,30 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                     // Marked before it is published, so a reader on the playback
                     // thread can never see a provisional result that is not
                     // flagged as one.
+                    // Read on both sides, as in [analyze]: a head measured
+                    // without the beat model is a DSP estimate that must give
+                    // way to a model pass on the same bytes once they arrive.
+                    val modelsBefore = modelsReady()
+                    val headGeneration = AutomixModels.generation
                     val head = analyzeHead(trackId, analysisUri, durationSeconds, headRendition!!, playingUri = uri)
                     if (head != null) {
                         synchronized(publishing) {
                             if (released) return@execute
                             provisional.add(trackId)
                             measuredCopies[trackId] = headRendition.key
+                            // The very object published, so the model-less record's
+                            // identity check matches what the cache holds.
+                            val withModels = modelsBefore && modelsReady() && AutomixModels.generation == headGeneration
+                            val published = head.copy(measuredOn = headRendition.key)
+                                .let { if (withModels) it else it.withoutBeatMatch() }
                             // Its claim, so an eviction can hand it back: see [forget].
                             headClaims.record(trackId, attemptKey(trackId, headRendition.key), headRendition.cachedPrefix)
-                            remember(trackId, head.copy(measuredOn = headRendition.key))
+                            remember(trackId, published)
+                            if (withModels) {
+                                modelless.forget(trackId)
+                            } else {
+                                modelless.recordHead(trackId, published, headRendition.key, headRendition.cachedPrefix)
+                            }
                         }
                     } else if (stopped) {
                         // Given up for the player (or a party), not failed: the
@@ -1332,6 +1376,11 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
          * in place of the complete answer a later session can still get.
          */
         val persist: Boolean = true,
+        /**
+         * Pass 2 ran without the models on disk, so the grid and vocal mask are
+         * DSP estimates. Never persisted; see [modelless].
+         */
+        val withoutModels: Boolean = false,
         /** A window of the model pass ran out of memory: the result lacks what it would have measured. */
         val incomplete: Boolean = false,
     )
@@ -1558,6 +1607,10 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // here is a whole extra pass of both models.
         val headEnd = minOf(effectiveDuration, HEAD_MODEL_WINDOWS * span - (HEAD_MODEL_WINDOWS - 1) * WINDOW_OVERLAP_SECONDS)
         val tailStart = max(0.0, effectiveDuration - (TAIL_MODEL_WINDOWS * span - (TAIL_MODEL_WINDOWS - 1) * WINDOW_OVERLAP_SECONDS))
+        // Read before and after the windows: models that arrive or go mid-pass
+        // leave some windows without them.
+        val modelsBefore = modelsReady()
+        val generationBefore = AutomixModels.generation
         val regions = ArrayList<Region>()
         // Latched, like Pass 1's: [stopped] clears again once the player has the
         // codec back, so read afterwards it can say "not stopped" about a window
@@ -1583,6 +1636,9 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             window?.let(regions::add)
         }
         if (abort.poll()) return interrupted()
+        // A delete and a fresh download inside the pass read as ready on both
+        // sides; the generation says the windows between ran without them.
+        val withoutModels = !(modelsBefore && modelsReady() && AutomixModels.generation == generationBefore)
 
         val beats = seamBeats(regions)
         val headSide = beatSide(beats, 0.0, headEnd)
@@ -1602,7 +1658,8 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             // when the windows ran and found no beats.
             val grid = leading ?: return WholeTrack(
                 empty(trackId, effectiveDuration),
-                persist = !outOfMemory && !windowOutOfMemory,
+                persist = !outOfMemory && !windowOutOfMemory && !withoutModels,
+                withoutModels = withoutModels,
                 incomplete = windowOutOfMemory,
             )
             Log.d(TAG, "Analysed $trackId head and tail only: bpm=${grid.bpm} conf=${grid.beatConfidence}")
@@ -1625,7 +1682,8 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                 // Nor after a window ran out of memory: what it would have
                 // measured is missing, and a later session with more room can
                 // still answer in full. Kept for this session meanwhile.
-                persist = !outOfMemory && !windowOutOfMemory,
+                persist = !outOfMemory && !windowOutOfMemory && !withoutModels,
+                withoutModels = withoutModels,
                 incomplete = windowOutOfMemory,
             )
         }
@@ -1690,9 +1748,16 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                 vocalWindows = regions.mapNotNull { it.vocalWindow },
                 levelWindows = regions.mapNotNull { it.levelWindow },
             ),
-            persist = !windowOutOfMemory,
+            persist = !windowOutOfMemory && !withoutModels,
+            withoutModels = withoutModels,
             incomplete = windowOutOfMemory,
         )
+    }
+
+    private fun modelsReady(): Boolean {
+        // Settles the state on first use; a no-op once the app has done it.
+        AutomixModels.install(context)
+        return AutomixModels.state.value == AutomixModels.State.Ready
     }
 
     /**
@@ -2238,6 +2303,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         wrongLength.clear()
         triedRenditions.clear()
         discarded.clear()
+        modelless.clear()
         tracker.release()
         vocals.release()
     }
@@ -2253,6 +2319,9 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
 
         /** Failed searches after which a source track is measured on its own audio. */
         const val SOURCE_SEARCH_ATTEMPTS = 3
+
+        /** Where a model-less result's confidence is capped: under [MIN_BEATMATCH_CONFIDENCE]. */
+        const val MODELLESS_CONFIDENCE = MIN_BEATMATCH_CONFIDENCE - 0.05
 
         /** How much shorter than asked a window on a partial copy may decode before it counts as missing bytes. */
         const val PARTIAL_WINDOW_SLACK_SECONDS = 1.0
@@ -2379,6 +2448,91 @@ internal fun mergeVocalMasks(
         }
     }
     return merged.toList()
+}
+
+/**
+ * Results measured without the models, with the copy each was read from, so
+ * both can be forgotten once the models arrive. See [TrackAnalyzer.request].
+ */
+/**
+ * The [TrackAnalyzer] head-attempt key for [trackId]'s attempts on the copy
+ * [renditionKey]: per track as well as per copy, since two source rows can
+ * share one matched YouTube copy.
+ */
+internal fun headAttemptKey(trackId: String, renditionKey: String): String = "$trackId|$renditionKey"
+
+internal class ModellessResults {
+    /** [headPrefix] is set for a head result: the prefix [TrackAnalyzer]'s head claim holds. */
+    private class Entry(val analysis: TrackAnalysis, val copyKey: String?, val headPrefix: Long? = null)
+
+    private val entries = ConcurrentHashMap<String, Entry>()
+
+    fun isEmpty(): Boolean = entries.isEmpty()
+
+    fun record(trackId: String, analysis: TrackAnalysis, copyKey: String?) {
+        entries[trackId] = Entry(analysis, copyKey)
+    }
+
+    /** A provisional head result read off [copyKey]'s first [prefix] bytes. */
+    fun recordHead(trackId: String, analysis: TrackAnalysis, copyKey: String, prefix: Long) {
+        entries[trackId] = Entry(analysis, copyKey, prefix)
+    }
+
+    fun forget(trackId: String) {
+        entries.remove(trackId)
+    }
+
+    /**
+     * Forgets [trackId]'s record once [cached] no longer holds the result it
+     * describes: after an eviction. A newer record whose result is still
+     * cached is kept.
+     */
+    fun release(
+        trackId: String,
+        headAttempts: MutableMap<String, Long>? = null,
+        cached: (String) -> TrackAnalysis?,
+    ) {
+        entries.computeIfPresent(trackId) { _, entry ->
+            if (cached(trackId) === entry.analysis) return@computeIfPresent entry
+            // An evicted head result gives its prefix claim back too (only that
+            // exact claim, never a newer one), or the unchanged prefix that
+            // produced it would have to grow before it may be tried again.
+            if (entry.headPrefix != null && entry.copyKey != null) {
+                headAttempts?.remove(headAttemptKey(trackId, entry.copyKey), entry.headPrefix)
+            }
+            null
+        }
+    }
+
+    fun clear() = entries.clear()
+
+    /**
+     * Removes each recorded result from [results], leaving alone anything that
+     * has since been replaced. A whole-track result also gives up its copy in
+     * [tried] and [measured]; a head result gives up its [provisional] mark,
+     * its copy in [measured] and its claim in [headAttempts], so the same
+     * prefix gets one more attempt without having to grow.
+     */
+    fun drop(
+        results: AnalysisResultCache,
+        tried: MutableSet<String>,
+        measured: MutableMap<String, String>,
+        provisional: MutableSet<String>,
+        headAttempts: MutableMap<String, Long>,
+    ) {
+        for ((trackId, entry) in entries) {
+            if (!entries.remove(trackId, entry)) continue
+            if (!results.remove(trackId, entry.analysis)) continue
+            val key = entry.copyKey ?: continue
+            measured.remove(trackId, key)
+            if (entry.headPrefix != null) {
+                provisional.remove(trackId)
+                headAttempts.remove(headAttemptKey(trackId, key), entry.headPrefix)
+            } else {
+                tried.remove(key)
+            }
+        }
+    }
 }
 
 /**

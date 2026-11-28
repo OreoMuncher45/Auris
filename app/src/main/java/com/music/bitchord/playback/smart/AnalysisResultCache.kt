@@ -71,6 +71,21 @@ internal class AnalysisResultCache(
     fun trimTo(max: Int, pinned: (String) -> Boolean): List<String> =
         synchronized(order) { trimLocked(max, pinned) }
 
+    /**
+     * Removes [trackId]'s result only if it is still this very [analysis] —
+     * by identity: [TrackAnalysis] is a data class, and an equal result
+     * measured since is a replacement, not the one being removed. Returns
+     * whether it did.
+     */
+    fun remove(trackId: String, analysis: TrackAnalysis): Boolean = synchronized(order) {
+        (results[trackId] === analysis).also { same ->
+            if (same) {
+                results.remove(trackId)
+                order.remove(trackId)
+            }
+        }
+    }
+
     fun clear() = synchronized(order) {
         results.clear()
         order.clear()
