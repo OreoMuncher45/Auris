@@ -82,6 +82,7 @@ import com.music.bitchord.ui.components.PlayingAccent
 import com.music.bitchord.ui.components.ROW_DIVIDER_INSET
 import com.music.bitchord.ui.components.SearchField
 import com.music.bitchord.ui.components.SongRow
+import com.music.bitchord.ui.components.SwipeToQueueBox
 import com.music.bitchord.ui.components.SearchPlayingBars
 import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.components.songListSkeleton
@@ -276,6 +277,7 @@ fun SearchScreen(
                             typeaheadResults = typeaheadResults,
                             onSongClick = { song -> onTopResultPlay(song) },
                             onSongLongPress = onTypeaheadLongPress,
+                            onSongSwipe = onSongSwipe,
                             onBrowseClick = { item ->
                                 onBrowseClick(item)
                             },
@@ -638,6 +640,7 @@ private fun LazyListScope.searchTypeaheadDropdown(
     typeaheadResults: List<SearchResult>,
     onSongClick: (Song) -> Unit,
     onSongLongPress: ((Song) -> Unit)?,
+    onSongSwipe: (Song) -> Unit,
     onBrowseClick: (BrowseItem) -> Unit,
     currentSong: Song?,
     isPlaying: Boolean,
@@ -661,18 +664,19 @@ private fun LazyListScope.searchTypeaheadDropdown(
                 song = result.song,
                 onClick = { onSongClick(result.song) },
                 onLongPress = onSongLongPress?.let { { it(result.song) } },
+                onSwipeToQueue = { onSongSwipe(result.song) },
                 isCurrent = result.song.isSameTrackAs(currentSong),
                 isPlaying = isPlaying && result.song.isSameTrackAs(currentSong),
             )
             is SearchResult.Browse -> BrowseRow(
                 item = result.item,
                 onClick = { onBrowseClick(result.item) },
-                onLongPress = onSongLongPress?.let { { /* browse long-press not applicable */ } },
             )
             is SearchResult.TopTrack -> TypeaheadSongRow(
                 song = result.song,
                 onClick = { onSongClick(result.song) },
                 onLongPress = onSongLongPress?.let { { it(result.song) } },
+                onSwipeToQueue = { onSongSwipe(result.song) },
                 isCurrent = result.song.isSameTrackAs(currentSong),
                 isPlaying = isPlaying && result.song.isSameTrackAs(currentSong),
             )
@@ -689,46 +693,51 @@ private fun TypeaheadSongRow(
     song: Song,
     onClick: () -> Unit,
     onLongPress: (() -> Unit)? = null,
+    onSwipeToQueue: () -> Unit,
     isCurrent: Boolean = false,
     isPlaying: Boolean = false,
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .longPressMenuClickable(onClick = onClick, onLongClick = onLongPress)
-            .contextClick(onLongPress)
-            .padding(horizontal = PAGE_GUTTER, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(Modifier.size(52.dp)) {
-            AsyncImage(
-                model = song.artworkAt(ROW_ART_PX),
-                contentDescription = null,
-                modifier = Modifier
-                    .size(52.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .thumbnailBorder(RoundedCornerShape(8.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
-            )
-            if (isCurrent && isPlaying) SearchPlayingBars(Modifier.align(Alignment.Center))
-        }
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Text(
-                text = song.title,
-                style = MaterialTheme.typography.titleMedium,
-                color = if (isCurrent) PlayingAccent else MaterialTheme.colorScheme.onBackground,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text = listOfNotNull(song.artist).joinToString(" · "),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+    SwipeToQueueBox(onSwipeToQueue = onSwipeToQueue, modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                // Opaque, so the swipe's reveal stays behind the row.
+                .background(MaterialTheme.colorScheme.background)
+                .longPressMenuClickable(onClick = onClick, onLongClick = onLongPress)
+                .contextClick(onLongPress)
+                .padding(horizontal = PAGE_GUTTER, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.size(52.dp)) {
+                AsyncImage(
+                    model = song.artworkAt(ROW_ART_PX),
+                    contentDescription = null,
+                    modifier = Modifier
+                        .size(52.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .thumbnailBorder(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                )
+                if (isCurrent && isPlaying) SearchPlayingBars(Modifier.align(Alignment.Center))
+            }
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = song.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = if (isCurrent) PlayingAccent else MaterialTheme.colorScheme.onBackground,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = listOfNotNull(song.artist).joinToString(" · "),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 }

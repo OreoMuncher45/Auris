@@ -256,4 +256,17 @@
     <string name="library_search_hint">Search this</string>
     <string name="library_empty_segment">Nothing here yet</string>
     <string name="home_chip_all">All</string>
+    <string name="best_part">Best Part</string>
+    <string name="best_part_description">いちばん良いところへスキップ</string>
+    <string name="queue_select">選択</string>
+    <string name="queue_select_all">すべて選択</string>
+    <string name="queue_selected_count">%1$d件選択</string>
+    <string name="queue_close_selection">選択モードを終了</string>
+    <string name="queue_selection_remove">削除</string>
+    <string name="queue_selection_add_to_playlist">プレイリストに追加</string>
+    <string name="queue_download">ダウンロード</string>
+    <string name="queue_removed_song">%1$s を削除しました</string>
+    <string name="queue_removed_songs">%1$d 曲を削除しました</string>
+    <string name="queue_undo_action">元に戻す</string>
+    <string name="queue_cleared">「キューの次の曲」をクリアしました</string>
 </resources>

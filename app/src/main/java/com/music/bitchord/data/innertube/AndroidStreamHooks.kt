@@ -44,7 +44,20 @@ object AndroidStreamHooks {
             )
         }
         StreamResolver.maxKbps = { AppSettings.effectiveAudioQuality.maxKbps }
+        StreamResolver.premiumAudio = { AppSettings.youtubePremiumAudio.value }
+        installRenditionHook()
         InnerTubeXResolver.debugLogging = BuildConfig.DEBUG
+    }
+
+    /**
+     * Premium's higher Opus rung is another encoding of the recording, so its
+     * audio and its analysis live under keys of their own. On its own so a
+     * test can install it without loading the stream resolver.
+     */
+    fun installRenditionHook() {
+        com.music.bitchord.playback.smart.AutomixAnalysisSource.rendition = {
+            if (AppSettings.youtubePremiumAudio.value) YOUTUBE_PREMIUM_RENDITION else null
+        }
     }
 
     /** What `InnerTubeXResolver.init(context)` did when it lived in the app. */
@@ -69,3 +82,6 @@ object AndroidStreamHooks {
         )
     }
 }
+
+/** The rendition tag Premium audio is filed under; see [com.music.bitchord.playback.smart.AutomixAnalysisSource.rendition]. */
+const val YOUTUBE_PREMIUM_RENDITION = "premium"

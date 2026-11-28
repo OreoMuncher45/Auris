@@ -256,4 +256,17 @@
     <string name="library_search_hint">Search this</string>
     <string name="library_empty_segment">Nothing here yet</string>
     <string name="home_chip_all">All</string>
+    <string name="best_part">Best Part</string>
+    <string name="best_part_description">सबसे अच्छे हिस्से पर जाएं</string>
+    <string name="queue_select">चुनें</string>
+    <string name="queue_select_all">सभी चुनें</string>
+    <string name="queue_selected_count">%1$d चुने गए</string>
+    <string name="queue_close_selection">चयन बंद करें</string>
+    <string name="queue_selection_remove">हटाएं</string>
+    <string name="queue_selection_add_to_playlist">प्लेलिस्ट में जोड़ें</string>
+    <string name="queue_download">डाउनलोड करें</string>
+    <string name="queue_removed_song">%1$s हटाया गया</string>
+    <string name="queue_removed_songs">%1$d गाने हटाए गए</string>
+    <string name="queue_undo_action">पूर्ववत करें</string>
+    <string name="queue_cleared">\"कतार में अगला\" खाली किया गया</string>
 </resources>

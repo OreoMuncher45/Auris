@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.components
 
+import androidx.compose.ui.semantics.Role
+import androidx.compose.foundation.selection.toggleable
 import com.music.bitchord.R
 
 import android.net.Uri
@@ -40,6 +42,7 @@ import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.HighQuality
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Image
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Radio
@@ -55,6 +58,8 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -255,6 +260,10 @@ fun SongActionsSheet(
     presentation: SongActionsPresentation = SongActionsPresentation.Menu,
 ) {
     var pickingSleepTimer by remember { mutableStateOf(false) }
+    // The dialog is its own window, so it shows over the menu wherever the
+    // menu hangs — the player's included — and the menu stays as it was.
+    var showingSongInfo by remember(song.videoId) { mutableStateOf(false) }
+    if (showingSongInfo) SongInfoDialog(song) { showingSongInfo = false }
     val glass = presentation == SongActionsPresentation.Glass
     // A menu over a page stays in the theme's colours: it floats over
     // whatever the page is, and an accent pitched against one sleeve is not
@@ -435,6 +444,9 @@ fun SongActionsSheet(
                 stringResource(R.string.open_artist),
                 accent = palette.accent,
             ) { onOpenArtist(id) }
+        }
+        ActionRow(Icons.Rounded.Info, stringResource(R.string.song_info), accent = palette.accent) {
+            showingSongInfo = true
         }
         if (showSleepTimer) {
             ActionRow(
@@ -825,6 +837,15 @@ private fun SleepTimerPicker(
                 onBack()
             }
         }
+        // Under the durations because it is about them: the timer's last
+        // half-minute, not a choice of when it ends.
+        val fadeOut by AppSettings.sleepTimerFadeOut.collectAsStateWithLifecycle()
+        SleepFadeOption(
+            checked = fadeOut,
+            accent = palette.accent,
+            mutedInk = mutedInk,
+            onCheckedChange = AppSettings::setSleepTimerFadeOut,
+        )
         if (chosen != null || afterTrack) {
             ActionRow(Icons.Rounded.Close, stringResource(R.string.turn_off_timer), accent = palette.accent) {
                 SleepTimer.cancel()
@@ -864,6 +885,55 @@ private fun SleepOption(
                 modifier = Modifier.size(22.dp),
             )
         }
+    }
+}
+
+/** The fade-out switch under the sleep timer's durations, in the same row shape as [SleepOption]. */
+@Composable
+private fun SleepFadeOption(
+    checked: Boolean,
+    accent: Color,
+    mutedInk: Color,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    val ink = LocalMenuInk.current ?: MaterialTheme.colorScheme.onSurface
+    val interactive = LocalMenuInteractive.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            // One control for TalkBack: the label, its state and the toggle
+            // together, the switch itself drawing only.
+            .toggleable(
+                value = checked,
+                enabled = interactive,
+                role = Role.Switch,
+                onValueChange = onCheckedChange,
+            )
+            .padding(start = 22.dp, end = 16.dp, top = 11.dp, bottom = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = stringResource(R.string.sleep_timer_fade_out),
+                style = MaterialTheme.typography.bodyLarge,
+                color = ink,
+            )
+            Text(
+                text = stringResource(R.string.sleep_timer_fade_out_subtitle),
+                style = MaterialTheme.typography.bodyMedium,
+                color = mutedInk,
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Switch(
+            checked = checked,
+            onCheckedChange = null,
+            enabled = interactive,
+            colors = SwitchDefaults.colors(
+                checkedTrackColor = accent,
+                checkedBorderColor = accent,
+            ),
+        )
     }
 }
 

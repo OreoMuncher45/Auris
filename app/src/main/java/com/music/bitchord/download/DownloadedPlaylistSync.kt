@@ -2,7 +2,9 @@ package com.music.bitchord.download
 
 import android.content.Context
 import android.util.Log
+import com.music.bitchord.R
 import com.music.bitchord.data.YtMusicRepository
+import com.music.bitchord.data.innertube.Innertube
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import kotlinx.coroutines.CoroutineScope
@@ -39,6 +41,11 @@ import java.util.concurrent.ConcurrentHashMap
  * the Liked Songs page *is*, and downloading it records a collection under
  * that id like any other, so the newest like is picked up by exactly the same
  * walk.
+ *
+ * It can also be asked for without the tap: [AppSettings.downloadLikedSongs]
+ * stands in for downloading the page, so the first pass allowed to download
+ * fetches the whole of it and files it as that collection — see
+ * [collectionsToSync] and [setKeepLiked].
  *
  * ## Why it has to be told when to look
  *
@@ -147,6 +154,11 @@ object DownloadedPlaylistSync {
         val app = context.applicationContext
         scope.launch {
             if (AppSettings.effectiveOffline.value) return@launch
+            // Wi-Fi only on mobile data: [Downloads.enqueueAll] would refuse
+            // every track, and the pass would still write them into the
+            // record as asked for, so the next pass on Wi-Fi took them for
+            // handled and they never arrived. Left for that pass instead.
+            if (!AppSettings.downloadsAllowedNow) return@launch
             if (!force && !refreshDue(playlistId)) return@launch
             mutex.withLock {
                 if (!force && !refreshDue(playlistId)) return@withLock
@@ -156,6 +168,75 @@ object DownloadedPlaylistSync {
             }
         }
     }
+
+    /**
+     * Turns "keep liked songs downloaded" on or off, from Settings or from the
+     * Liked Music page's own switch, so the two never disagree.
+     *
+     * On, the first fill starts now if downloads are allowed, and otherwise
+     * waits for the next pass that is. Off, nothing already here is deleted:
+     * the next like simply stops arriving, as with any playlist's switch.
+     */
+    fun setKeepLiked(context: Context, on: Boolean) {
+        // Under [likedSwitchLock], so it cannot land between the reconcile's
+        // read and its write; that lock is held only for those, never across
+        // a sync's enqueue, so this caller does not wait on one.
+        synchronized(likedSwitchLock) { AppSettings.setDownloadLikedSongs(on) }
+        // The saved Liked Music record only exists once the download index has
+        // loaded; set before that, the load would bring back its old switch.
+        // Applied from the preference as it stands then, so quick toggles end
+        // where the last one left it.
+        scope.launch {
+            Downloads.awaitIndexReady()
+            // Read and written under the collections lock, so two quick toggles
+            // can't each act on the other's stale reading.
+            Downloads.withCollectionsHeld {
+                val wanted = AppSettings.downloadLikedSongs.value
+                Downloads.collectionFor(YtMusicRepository.LIKED_MUSIC)
+                    ?.takeIf { it.autoDownload != wanted }
+                    ?.let { Downloads.setAutoDownloadNewSongs(it.id, wanted) }
+            }
+        }
+        if (on) refresh(context, YtMusicRepository.LIKED_MUSIC, force = true)
+    }
+
+    /**
+     * Bring the Liked Music record's switch and [AppSettings.downloadLikedSongs]
+     * back into agreement before the setting decides this pass.
+     *
+     * The Settings row and the Liked Music page show the switch On when the
+     * record is On, so a record On with the setting Off was a switch that
+     * looked On while every pass refused it. See [likedSwitchReconciliation].
+     */
+    private fun reconcileLikedSwitch() {
+        Downloads.withCollectionsHeld {
+            val record = Downloads.collectionFor(YtMusicRepository.LIKED_MUSIC) ?: return@withCollectionsHeld
+            // The setting is read and written under [likedSwitchLock], so an
+            // explicit toggle from [setKeepLiked] lands wholly before or after.
+            synchronized(likedSwitchLock) {
+                when (
+                    likedSwitchReconciliation(
+                        recordOn = record.autoDownload,
+                        settingOn = AppSettings.downloadLikedSongs.value,
+                        settingChosen = AppSettings.downloadLikedSongsChosen,
+                    )
+                ) {
+                    LikedSwitchFix.SETTING_ON -> AppSettings.setDownloadLikedSongs(true)
+                    LikedSwitchFix.RECORD_OFF -> Downloads.setAutoDownloadNewSongs(record.id, false)
+                    LikedSwitchFix.RECORD_ON -> Downloads.setAutoDownloadNewSongs(record.id, true)
+                    LikedSwitchFix.NONE -> Unit
+                }
+            }
+        }
+    }
+
+    /**
+     * Guards the keep-liked setting's read-and-apply in [reconcileLikedSwitch]
+     * against an explicit toggle in [setKeepLiked]. Taken inside the
+     * collections lock there and alone in [setKeepLiked], so never in the
+     * other order.
+     */
+    private val likedSwitchLock = Any()
 
     /** When each playlist was last looked at, so one is not walked twice. */
     private val refreshedAt = ConcurrentHashMap<String, Long>()
@@ -183,8 +264,13 @@ object DownloadedPlaylistSync {
         // exactly the answer that makes this pass a no-op. So the pass waits
         // for the answer it is going to act on.
         Downloads.awaitIndexReady()
-        val collections = Downloads.syncableCollections()
-            .filter { only == null || samePlaylist(it.id, only) }
+        reconcileLikedSwitch()
+        val collections = collectionsToSync(
+            syncable = Downloads.syncableCollections(),
+            all = Downloads.collections.value,
+            keepLiked = AppSettings.downloadLikedSongs.value,
+            likedTitle = context.getString(R.string.auto_liked),
+        ).filter { only == null || samePlaylist(it.id, only) }
         if (collections.isEmpty()) return
         // What is really on the disk, not what the record claims: a file
         // deleted from a file manager leaves its record behind, and a track
@@ -196,6 +282,10 @@ object DownloadedPlaylistSync {
         // would be undoing a decision the listener made on purpose.
         val deleted = Downloads.deletedByHandIds()
         for (collection in collections) {
+            // Liked Music is the listener's own: admitted only for the listener
+            // (and generation) it was read for. A candidate under validation is
+            // never in the shared session, so this is the whole check.
+            val readFor = Innertube.listenerStamp()
             val result = YtMusicRepository.browseSongsPaged(collection.id)
             val remote = result.getOrNull()
             if (remote.isNullOrEmpty()) {
@@ -209,25 +299,93 @@ object DownloadedPlaylistSync {
                 )
                 continue
             }
-            val missing = missingFromPlaylist(remote, onDisk, deleted, collection.videoIds.toSet())
-            if (missing.isEmpty()) continue
-            Log.i(TAG, "${collection.title}: ${missing.size} new track(s) to download")
-            Downloads.markRequested(collection.id, missing.map { it.videoId })
-            Downloads.enqueueAll(context, missing, collection.title, automatic = true)
-            // The record grows with what was asked for, so the next pass knows
-            // these are not new any more — whether or not the download itself
-            // finished.
-            Downloads.rememberCollection(
-                DownloadTarget(
-                    id = collection.id,
-                    title = collection.title,
-                    subtitle = collection.subtitle,
-                    thumbnailUrl = collection.thumbnailUrl,
-                    playlist = collection.playlist,
-                ),
-                missing,
+            val recorded = collection.videoIds.toSet()
+            val missing = missingFromPlaylist(remote, onDisk, deleted, recorded)
+            // Tracks of the playlist that are on the device but not in its
+            // record — one the queue refused on an earlier pass and that
+            // arrived by another path since. Not fetched, but filed, so the
+            // record says what the release really holds.
+            val unrecorded = onDiskNotRecorded(remote, onDisk, deleted, recorded)
+            // Liked Music kept by the setting, with no record yet: the first
+            // fill. Filed whole, like a tap on the page's download button, so
+            // the liked songs already on the device are in it too.
+            val liked = samePlaylist(collection.id, YtMusicRepository.LIKED_MUSIC)
+            val target = DownloadTarget(
+                id = collection.id,
+                title = collection.title,
+                subtitle = collection.subtitle,
+                thumbnailUrl = collection.thumbnailUrl,
+                playlist = collection.playlist,
             )
+            // The last check that the release is still wanted, the enqueue and
+            // the record write are one step under the record's lock. A switch
+            // turned off or a release deleted while this pass was reading then
+            // either lands first and is seen here, or lands after and finds
+            // what this step queued in the record. See [Downloads.deleteCollection]
+            // and [setKeepLiked].
+            // Liked Music is admitted while the session it was read for is still
+            // current, held there for the check and the enqueue together: an
+            // account switch can't land between them (see [admitForListener]).
+            val admitted = admitForListener(liked, readFor, Innertube::whileListener) {
+                Downloads.withCollectionsHeld {
+                    admit(context, collection.id, collection.title, liked, target, remote, missing, unrecorded)
+                }
+            }
+            if (!admitted) Log.w(TAG, "Liked Music was read for another listener; not admitted")
         }
+    }
+
+    /**
+     * Queue [missing] for one release and grow its record — with what it
+     * queued and with [unrecorded], the playlist's tracks already on the
+     * device — if the release is still wanted. Called under
+     * [Downloads.withCollectionsHeld].
+     */
+    private fun admit(
+        context: Context,
+        id: String,
+        title: String,
+        liked: Boolean,
+        target: DownloadTarget,
+        remote: List<Song>,
+        missing: List<Song>,
+        unrecorded: List<Song>,
+    ) {
+        val firstFill = liked && id !in Downloads.collections.value
+        val keepLiked = { liked && AppSettings.downloadLikedSongs.value }
+        // Switched off, or the download deleted, while this pass was reading.
+        // For Liked Music the setting is the listener's word: [setKeepLiked]
+        // turns it off first and reconciles the record's switch later, so a
+        // pass reading the record in between must not take it for On.
+        val stillWanted = if (liked) keepLiked() else Downloads.collections.value[id]?.autoDownload == true
+        if (!stillWanted) return
+        if (missing.isEmpty() && unrecorded.isEmpty() && !firstFill) return
+        var refused = emptySet<String>()
+        if (missing.isNotEmpty()) {
+            Log.i(TAG, "$title: ${missing.size} new track(s) to download")
+            val asked = missing.map { it.videoId }
+            val admitted = Downloads.enqueueAll(context, missing, title, automatic = true)
+            Downloads.markRequested(id, asked.filter { it in admitted })
+            refused = asked.toSet() - admitted
+        }
+        // The record grows with what was asked for, so the next pass knows
+        // these are not new any more — whether or not the download itself
+        // finished. A song the queue turned away (Wi-Fi only came back on,
+        // or the service could not start) is left out, so the next pass
+        // still sees it as missing.
+        Downloads.rememberCollection(
+            target,
+            recordOrder(
+                remote = remote,
+                recorded = Downloads.collections.value[id]?.videoIds.orEmpty(),
+                added = if (firstFill) remote else missing + unrecorded,
+                refused = refused,
+            ),
+            // Grow the record only if it is still there; the first fill is
+            // what creates it, with the switch the setting has right now.
+            keepSwitch = !firstFill,
+            switchOn = keepLiked,
+        )
     }
 
     /** Whether the last pass was long enough ago to do another one. */
@@ -272,6 +430,42 @@ object DownloadedPlaylistSync {
  * Split out as plain arguments so the rules can be tested without a device, a
  * network or a playlist: they are the whole of what makes this correct.
  */
+/**
+ * What a pass hands the record: the tracks it adds ([added], less [refused]),
+ * set in the playlist's own order among those already [recorded]. The record
+ * puts the list it is given first, so handing it only the new tracks filed a
+ * song refused on the first fill and admitted later ahead of the rest.
+ */
+internal fun recordOrder(
+    remote: List<Song>,
+    recorded: List<String>,
+    added: List<Song>,
+    refused: Set<String>,
+): List<Song> {
+    val adding = added.mapTo(HashSet()) { it.videoId } - refused
+    if (adding.isEmpty()) return emptyList()
+    val keep = recorded.toHashSet() + adding
+    return remote.filter { it.videoId in keep }.distinctBy { it.videoId }
+}
+
+/**
+ * The tracks of [remote] that are on the device but missing from the release's
+ * record ([alreadyRecorded]): filed without being fetched. The same exclusions
+ * as [missingFromPlaylist] hold — a track the listener deleted by hand, or a
+ * file of their own, is never claimed for the release.
+ */
+internal fun onDiskNotRecorded(
+    remote: List<Song>,
+    onDisk: Set<String>,
+    deletedByHand: Set<String>,
+    alreadyRecorded: Set<String>,
+): List<Song> = remote.filter { song ->
+    song.videoId in onDisk &&
+        song.videoId !in deletedByHand &&
+        song.videoId !in alreadyRecorded &&
+        !song.isDeviceFile()
+}
+
 internal fun missingFromPlaylist(
     remote: List<Song>,
     onDisk: Set<String>,
@@ -284,9 +478,76 @@ internal fun missingFromPlaylist(
         !song.isDeviceFile()
 }
 
+/**
+ * What a pass walks: the downloaded playlists whose switch is on, and Liked
+ * Music while [keepLiked] says to keep it downloaded.
+ *
+ * With [keepLiked] and no record of Liked Music yet, an empty one stands in for
+ * it, named [likedTitle]. The walk then finds every liked song missing, and
+ * writing down what it asked for is what files the collection — the same
+ * record a tap on the page's download button would have left. With a record
+ * already on file that one is walked, whatever its own switch says, since
+ * [keepLiked] is the listener's later word on it.
+ */
+internal fun collectionsToSync(
+    syncable: List<SavedCollection>,
+    all: Map<String, SavedCollection>,
+    keepLiked: Boolean,
+    likedTitle: String,
+): List<SavedCollection> {
+    if (!keepLiked) return syncable
+    val liked = all.values.firstOrNull { samePlaylist(it.id, YtMusicRepository.LIKED_MUSIC) }
+        ?: SavedCollection(id = YtMusicRepository.LIKED_MUSIC, title = likedTitle, playlist = true)
+    return syncable.filterNot { samePlaylist(it.id, liked.id) } + liked
+}
+
 /** Whether two ids name the same playlist, with or without YouTube's `VL`. */
 internal fun samePlaylist(a: String, b: String): Boolean = a.removePrefix("VL") == b.removePrefix("VL")
 
 /** Whether this song is a file of the listener's own rather than a track to fetch. */
 internal fun Song.isDeviceFile(): Boolean =
     videoId.startsWith("file://") || videoId.startsWith("content://")
+
+
+/**
+ * Runs [admit] for a sync pass's read: directly for a public playlist, and for
+ * Liked Music only inside [whileListener] for the session it was read for, so
+ * the stamp check and the enqueue are one step no account switch can split.
+ * False when Liked Music was read for a session that is no longer current.
+ */
+internal fun <S> admitForListener(
+    liked: Boolean,
+    readFor: S,
+    whileListener: (S, () -> Unit) -> Unit?,
+    admit: () -> Unit,
+): Boolean {
+    if (!liked) {
+        admit()
+        return true
+    }
+    return whileListener(readFor, admit) != null
+}
+
+/** What [likedSwitchReconciliation] changes so the record and the setting agree. */
+internal enum class LikedSwitchFix { NONE, SETTING_ON, RECORD_OFF, RECORD_ON }
+
+/**
+ * How a Liked Music record's switch and the keep-liked setting are brought into
+ * agreement when they differ.
+ *
+ * The setting is the listener's word once they have set it: [setKeepLiked]
+ * writes it first and the record after, so a record left On under an explicit
+ * Off is an Off whose second half never landed, and is finished. A setting
+ * never chosen leaves the record's switch as the only choice made, so it wins.
+ * A setting On over a record Off is an On whose record update never landed
+ * (the process ended in between): the record follows it, or the page would
+ * show Off and its tap could only ask for On again.
+ */
+internal fun likedSwitchReconciliation(recordOn: Boolean, settingOn: Boolean, settingChosen: Boolean): LikedSwitchFix =
+    when {
+        recordOn == settingOn -> LikedSwitchFix.NONE
+        settingOn -> LikedSwitchFix.RECORD_ON
+        settingChosen -> LikedSwitchFix.RECORD_OFF
+        else -> LikedSwitchFix.SETTING_ON
+    }
+

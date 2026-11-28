@@ -111,6 +111,7 @@ import com.music.bitchord.ui.LocalPageHidden
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import com.music.bitchord.ui.player.bestPartTrackChanged
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -239,6 +240,16 @@ import com.music.bitchord.playback.OriginalVersion
 import com.music.bitchord.playback.PlayerDeepLink
 import com.music.bitchord.playback.QueueBuilder
 import com.music.bitchord.playback.QueueCoordinator
+import com.music.bitchord.playback.QueueEdits
+import com.music.bitchord.playback.clearUserQueueRows
+import com.music.bitchord.playback.moveQueueRowsToUser
+import com.music.bitchord.playback.removeQueueRows
+import com.music.bitchord.playback.restoreQueueRows
+import com.music.bitchord.ui.player.LocalQueueEditing
+import com.music.bitchord.ui.player.QueueBulkAction
+import com.music.bitchord.ui.player.QueueEditing
+import com.music.bitchord.ui.player.QueueUndoKind
+import com.music.bitchord.ui.player.QueueUndoNotice
 import com.music.bitchord.playback.QueueCoordinator.asQueueEntry
 import com.music.bitchord.playback.QueueShuffle
 import com.music.bitchord.playback.QueueSource
@@ -339,6 +350,7 @@ import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.ui.components.ListenBrainzTokenAlert
 import com.music.bitchord.ui.components.MiniPlayer
+import com.music.bitchord.ui.components.LocalMiniAutoMixArtwork
 import com.music.bitchord.ui.components.QueueActionNotice
 import com.music.bitchord.ui.components.QueueActionNoticeHost
 import com.music.bitchord.ui.components.TopBarAccountButton
@@ -364,6 +376,7 @@ import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.ui.player.HardwareVolume
 import com.music.bitchord.ui.player.ListenTogetherMembersSheet
 import com.music.bitchord.ui.player.NowPlayingScreen
+import com.music.bitchord.ui.player.rememberMiniAutoMixArtwork
 import com.music.bitchord.ui.player.PlayerPlatform
 import com.music.bitchord.ui.components.VolumeHud
 import com.music.bitchord.ui.components.VolumeHudOverlay
@@ -834,6 +847,7 @@ internal fun BitChordApp(
      */
     val openSongMenu: (Song) -> Unit = { song ->
         sheets.songMenu.fromPlayer = false
+        sheets.songMenu.fromQueue = false
         sheets.songMenu.fromHistory = false
         sheets.songMenu.origin = LongPressOrigin.consume()
         sheets.songMenu.anchor = MenuOrigin.consume()
@@ -1283,6 +1297,14 @@ internal fun BitChordApp(
     }
     val controller = rememberMediaController()
     val player = rememberPlayerReads(controller)
+    // The best part's "heard" mark follows the track even while the player is
+    // closed: the now-playing screen, which also reports it, is only composed
+    // while open. Read in a flow, so the root does not recompose per track.
+    LaunchedEffect(player) {
+        snapshotFlow { player.song?.videoId }.collect { id ->
+            id?.let(::bestPartTrackChanged)
+        }
+    }
     // A resume in a party is performed on the instant the server schedules, not
     // when it was pressed, and nothing about the player moves in between — so
     // the transport spends that round trip drawn as though the tap never landed.
@@ -3094,6 +3116,66 @@ internal fun BitChordApp(
         }
     }
 
+    // The queue screen's swipes, held-row menu, multi-select and Undo. One
+    // object for the life of the app; its callbacks are refreshed here.
+    val queueEditing = remember { QueueEditing() }
+    // Every edit names its rows by entry, not by index alone, so a queue that
+    // changed under the screen can't have the wrong rows edited.
+    queueEditing.onSwipeToQueue = { index, song ->
+        controller?.moveQueueRowsToUser(
+            listOf(QueueEdits.Target(index, song)),
+            AppSettings.swipeToPlayNext.value,
+            player.queue,
+        ) == true
+    }
+    queueEditing.onSongMenu = { _, queueSong ->
+        // Hung off the held row, in the player's own window, without the
+        // rows that are about the track playing now.
+        val held = LongPressOrigin.consume()?.bounds
+        sheets.songMenu.fromPlayer = true
+        sheets.songMenu.fromQueue = true
+        sheets.songMenu.fromHistory = false
+        sheets.songMenu.origin = null
+        sheets.songMenu.queueAnchor = held?.let {
+            androidx.compose.ui.unit.IntRect(it.left.toInt(), it.top.toInt(), it.right.toInt(), it.bottom.toInt())
+        }
+        sheets.songMenu.song = queueSong
+    }
+    val offerQueueUndo: (QueueEdits.Removal?, Boolean) -> Unit = { removal, cleared ->
+        if (removal != null && removal.rows.isNotEmpty()) {
+            val kind = when {
+                cleared -> QueueUndoKind.Cleared
+                removal.rows.size == 1 -> QueueUndoKind.RemovedOne(removal.rows.first().song.title)
+                else -> QueueUndoKind.RemovedMany(removal.rows.size)
+            }
+            queueEditing.undo = QueueUndoNotice(System.nanoTime(), kind) {
+                controller?.restoreQueueRows(removal)
+            }
+        }
+    }
+    queueEditing.onSwipeRemove = { index, song ->
+        offerQueueUndo(controller?.removeQueueRows(listOf(QueueEdits.Target(index, song)), player.queue), false)
+    }
+    queueEditing.onBulkAction = { targets, action ->
+        // The songs the user ticked, as the screen showed them — not whatever
+        // sits at those indices in the queue by now.
+        val songs = targets.map { it.song }
+        when (action) {
+            QueueBulkAction.REMOVE -> offerQueueUndo(controller?.removeQueueRows(targets, player.queue), false)
+            QueueBulkAction.PLAY_NEXT -> controller?.moveQueueRowsToUser(targets, toHead = true, known = player.queue)
+            QueueBulkAction.PLAYLIST -> if (songs.isNotEmpty()) {
+                viewModel.loadPlaylists()
+                sheets.playlistPick.songs = songs
+                sheets.playlistPick.title = null
+                sheets.playlistPick.artwork = null
+            }
+            // A local file has nothing to download.
+            QueueBulkAction.DOWNLOAD -> songs.filter { it.localUri == null }
+                .takeIf { it.isNotEmpty() }
+                ?.let { startDownload(it, null) }
+        }
+    }
+
     // The player's whole parameter list, kept apart from the sheet that
     // mounts it so the sheet's own setup reads on its own.
     val nowPlaying: @Composable (Song) -> Unit = { song ->
@@ -3129,6 +3211,7 @@ internal fun BitChordApp(
         // the one flag, because the route list changes far less often than the
         // player redraws.
         val castState by CastController.state.collectAsStateWithLifecycle()
+        CompositionLocalProvider(LocalQueueEditing provides queueEditing) {
         NowPlayingScreen(
             song = displayedSong,
             playedBy = playedBy,
@@ -3254,7 +3337,16 @@ internal fun BitChordApp(
                     QueueCoordinator.jumpToQueueItem(c, index, player.queue)
                 }
             },
-            onRemoveFromQueue = { controller?.removeMediaItem(it) },
+            // Removed with an Undo under the queue.
+            onRemoveFromQueue = {
+                offerQueueUndo(
+                    controller?.removeQueueRows(
+                        QueueEdits.targetsAt(player.queue, listOf(it)),
+                        player.queue,
+                    ),
+                    false,
+                )
+            },
             onMoveInQueue = { from, to -> controller?.moveMediaItem(from, to) },
             onQueueDragActiveChange = { active -> controller?.setQueueDragActive(active) },
             // The queue's search asks for both of these by name, and both are
@@ -3267,6 +3359,7 @@ internal fun BitChordApp(
             // ids have been resolved.
             onOpenMenu = {
                 sheets.songMenu.fromPlayer = true
+                sheets.songMenu.fromQueue = false
                 sheets.songMenu.fromHistory = false
                 sheets.songMenu.origin = null
                 sheets.songMenu.song = song
@@ -3404,12 +3497,12 @@ internal fun BitChordApp(
                 nav.showListenTogether = true
             },
             onClearQueue = {
-                // Keep what's playing and context/autoplay; drop user-queued tracks.
-                controller?.let { c ->
-                    QueueCoordinator.clearUserQueue(c)
-                }
+                // Keep what's playing and context/autoplay; drop user-queued
+                // tracks, with an Undo under the queue.
+                offerQueueUndo(controller?.clearUserQueueRows(player.queue), true)
             },
         )
+        }
     }
 
     AppRootBox {
@@ -3656,6 +3749,9 @@ internal fun BitChordApp(
             // read off the player's own visibility any more, because on a
             // tablet the player is visible whatever the menu was opened from.
             val fromPlayer = sheets.songMenu.fromPlayer
+            // A held queue row is drawn in the player but is about its own
+            // song: the rows about the track playing now don't apply to it.
+            val playerOnly = fromPlayer && !sheets.songMenu.fromQueue
             // Whether the record says this track's file is on the device: the
             // menu answers to its own track's save, not to every save.
             val onDisk by remember(song.videoId) {
@@ -3702,7 +3798,7 @@ internal fun BitChordApp(
             } else {
                 !song.isVideo && versions.convertedVideoId != song.videoId
             }
-            val onToggleVersion: (() -> Unit)? = if (fromPlayer &&
+            val onToggleVersion: (() -> Unit)? = if (playerOnly &&
                 versions.hasAlternateVersion &&
                 !versions.switchingAudioVersion &&
                 controller?.currentMediaItem?.mediaId == song.videoId
@@ -3920,8 +4016,8 @@ internal fun BitChordApp(
                 // Only the player's copy of a track is ever missing these
                 // and backfilling — a row opened from a list already has
                 // whatever ids it's ever going to have.
-                resolvingLinks = fromPlayer && sheets.linksLoading,
-                showSleepTimer = fromPlayer,
+                resolvingLinks = playerOnly && sheets.linksLoading,
+                showSleepTimer = playerOnly,
                 // Offered for a playing track that something other than
                 // YouTube is actually serving — a module's copy, or an
                 // upgrade that won the race.
@@ -3934,7 +4030,7 @@ internal fun BitChordApp(
                 // that as "there is an undo here" and offered "Revert to
                 // original" for a track that had never been changed, which is
                 // what it said on a video that had not upgraded.
-                onRollbackToOriginal = if (fromPlayer &&
+                onRollbackToOriginal = if (playerOnly &&
                     song.hasYouTubeOriginal() &&
                     // Nothing to revert *from*: the listener is hearing a
                     // file they saved, not a stream anything chose.
@@ -3962,7 +4058,7 @@ internal fun BitChordApp(
                 // due to look at it again — [QualityUpgrade.refuseUpgrades]
                 // takes a broken track off the automatic path for the rest
                 // of the session, and `askByHand` is what clears that.
-                onUpgradeQuality = if (fromPlayer &&
+                onUpgradeQuality = if (playerOnly &&
                     // A video is never upgraded — the quality search refuses
                     // a video outright, so the row would be a button that
                     // does nothing. Its way to the audio copy is the version
@@ -4014,7 +4110,7 @@ internal fun BitChordApp(
                 } else {
                     null
                 },
-                upgradeQualityInProgress = fromPlayer && song.videoId in qualityUpgradesInFlight,
+                upgradeQualityInProgress = playerOnly && song.videoId in qualityUpgradesInFlight,
                 onToggleAudioVersion = onToggleVersion,
                 isAudioVersion = menuIsAudioVersion,
                 // Hidden outright when there's no id behind this row to build
@@ -4043,7 +4139,7 @@ internal fun BitChordApp(
                         )
                     }
                 },
-                onCopyLog = if (fromPlayer) {
+                onCopyLog = if (playerOnly) {
                     {
                         sheets.songMenu.song = null
                         scope.launch {
@@ -4080,7 +4176,7 @@ internal fun BitChordApp(
                 } else {
                     null
                 },
-                onLyricsOffset = if (fromPlayer) {
+                onLyricsOffset = if (playerOnly) {
                     {
                         sheets.songMenu.song = null
                         sheets.showLyricsOffset = true
@@ -4088,7 +4184,7 @@ internal fun BitChordApp(
                 } else {
                     null
                 },
-                onOpenSing = if (fromPlayer) {
+                onOpenSing = if (playerOnly) {
                     {
                         sheets.songMenu.song = null
                         sheets.showSing = true
@@ -4096,7 +4192,7 @@ internal fun BitChordApp(
                 } else {
                     null
                 },
-                onOpenReplay = if (fromPlayer) {
+                onOpenReplay = if (playerOnly) {
                     {
                         sheets.songMenu.song = null
                         nav.showReplay = true
@@ -4104,17 +4200,17 @@ internal fun BitChordApp(
                 } else {
                     null
                 },
-                spatialAudioOn = if (fromPlayer) {
+                spatialAudioOn = if (playerOnly) {
                     AppSettings.spatialAudio.collectAsStateWithLifecycle().value
                 } else {
                     null
                 },
-                onToggleSpatialAudio = if (fromPlayer) {
+                onToggleSpatialAudio = if (playerOnly) {
                     { AppSettings.setSpatialAudio(!AppSettings.spatialAudio.value) }
                 } else {
                     null
                 },
-                onOpenListenTogether = if (fromPlayer) {
+                onOpenListenTogether = if (playerOnly) {
                     {
                         sheets.songMenu.song = null
                         if (partyState.inParty) {
@@ -4128,7 +4224,7 @@ internal fun BitChordApp(
                 } else {
                     null
                 },
-                listenTogetherMembers = if (fromPlayer && partyState.inParty) {
+                listenTogetherMembers = if (playerOnly && partyState.inParty) {
                     partyState.members.size
                 } else {
                     null
@@ -4977,36 +5073,42 @@ internal fun BitChordApp(
                         // component they are stacked to imitate: the now playing
                         // controls dock into the tab bar rather than riding above it,
                         // and the pair folds together on scroll. See [GlassNavBar].
-                        AppGlassNav(
-                            useFoldingNav = useFoldingNav,
-                            tabs = tabs,
-                            selectedIndex = selectedTabIndex,
-                            onTabSelected = onTabSelected,
-                            scrollConnection = navBarScroll,
-                            search = navSearchState,
-                            placeholder = org.jetbrains.compose.resources.stringResource(
-                                if (searchSourceState.value == SearchSource.LIBRARY) {
-                                    SharedRes.string.search_library_hint
+                        val miniArtwork = rememberMiniAutoMixArtwork(player.song, player.queue, player.queueIndex)
+                        CompositionLocalProvider(LocalMiniAutoMixArtwork provides miniArtwork) {
+                            AppGlassNav(
+                                useFoldingNav = useFoldingNav,
+                                tabs = tabs,
+                                selectedIndex = selectedTabIndex,
+                                onTabSelected = onTabSelected,
+                                scrollConnection = navBarScroll,
+                                search = navSearchState,
+                                placeholder = org.jetbrains.compose.resources.stringResource(
+                                    if (searchSourceState.value == SearchSource.LIBRARY) {
+                                        SharedRes.string.search_library_hint
+                                    } else {
+                                        SharedRes.string.search_hint
+                                    },
+                                ),
+                                song = player.song,
+                                isPlaying = player.isPlaying,
+                                isLoading = playPauseBusy,
+                                onPlayPause = { togglePlayPause() },
+                                onNext = { controller?.seekToNextMediaItem() },
+                                onPrevious = { controller?.seekToPrevious() },
+                                onExpand = if (reducePlayerMotion) {
+                                    { showNowPlaying = true }
                                 } else {
-                                    SharedRes.string.search_hint
+                                    playerSheetMotion::open
                                 },
-                            ),
-                            song = player.song,
-                            isPlaying = player.isPlaying,
-                            isLoading = playPauseBusy,
-                            onPlayPause = { togglePlayPause() },
-                            onNext = { controller?.seekToNextMediaItem() },
-                            onPrevious = { controller?.seekToPrevious() },
-                            onExpand = if (reducePlayerMotion) {
-                                { showNowPlaying = true }
-                            } else {
-                                playerSheetMotion::open
-                            },
-                            controlsLocked = controlsLocked,
-                            onBlockedControl = showHostOnlyNotice,
-                            dock = activeDock,
-                            pull = playerSheetMotion.takeIf { !reducePlayerMotion },
-                        )
+                                controlsLocked = controlsLocked,
+                                onBlockedControl = showHostOnlyNotice,
+                                // Still in the tree under the full player: no motion
+                                // there for a tap nobody can see.
+                                animationsActive = !showNowPlaying,
+                                dock = activeDock,
+                                pull = playerSheetMotion.takeIf { !reducePlayerMotion },
+                            )
+                        }
                     }
                 } else Box(
                     modifier = Modifier
@@ -5041,28 +5143,32 @@ internal fun BitChordApp(
                         // buffering flip. In here they re-run the mini player.
                         IsolatedScope {
                             QueueActionNoticeHost(queueNotice)
+                            val miniArtwork = rememberMiniAutoMixArtwork(player.song, player.queue, player.queueIndex)
                             player.song?.let { song ->
-                                MiniPlayer(
-                                    song = song,
-                                    isPlaying = player.isPlaying,
-                                    isLoading = playPauseBusy,
-                                    hazeState = hazeState,
-                                    onPlayPause = {
-                                        togglePlayPause()
-                                    },
-                                    onNext = { controller?.seekToNextMediaItem() },
-                                    onPrevious = { controller?.seekToPrevious() },
-                                    onExpand = if (reducePlayerMotion) {
-                                        { showNowPlaying = true }
-                                    } else {
-                                        playerSheetMotion::open
-                                    },
-                                    controlsLocked = controlsLocked,
-                                    onBlockedControl = showHostOnlyNotice,
-                                    dock = activeDock,
-                                    pull = playerSheetMotion.takeIf { !reducePlayerMotion },
-                                    modifier = Modifier.fillMaxWidth(),
-                                )
+                                CompositionLocalProvider(LocalMiniAutoMixArtwork provides miniArtwork) {
+                                    MiniPlayer(
+                                        song = song,
+                                        isPlaying = player.isPlaying,
+                                        isLoading = playPauseBusy,
+                                        hazeState = hazeState,
+                                        onPlayPause = {
+                                            togglePlayPause()
+                                        },
+                                        onNext = { controller?.seekToNextMediaItem() },
+                                        onPrevious = { controller?.seekToPrevious() },
+                                        onExpand = if (reducePlayerMotion) {
+                                            { showNowPlaying = true }
+                                        } else {
+                                            playerSheetMotion::open
+                                        },
+                                        controlsLocked = controlsLocked,
+                                        onBlockedControl = showHostOnlyNotice,
+                                        dock = activeDock,
+                                        animationsActive = !showNowPlaying,
+                                        pull = playerSheetMotion.takeIf { !reducePlayerMotion },
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                }
                                 Spacer(Modifier.height(8.dp))
                             }
                         }
@@ -5100,7 +5206,9 @@ internal fun BitChordApp(
                     onNext = { controller?.seekToNextMediaItem() },
                     onPrevious = { controller?.seekToPrevious() },
                     menuSong = sheets.songMenu.song?.takeIf { sheets.songMenu.fromPlayer },
-                    menuAnchor = { sheets.playerMenuAnchor },
+                    menuAnchor = {
+                        sheets.songMenu.queueAnchor?.takeIf { sheets.songMenu.fromQueue } ?: sheets.playerMenuAnchor
+                    },
                     onDismissMenu = { sheets.songMenu.song = null },
                     songMenuBody = songMenuBody,
                     nowPlaying = nowPlaying,
@@ -5871,7 +5979,13 @@ private fun RootPage(
             autoDownloadSongs = downloadedCollection?.autoDownload,
             onToggleAutoDownloadSongs = downloadedCollection?.let { collection ->
                 {
-                    Downloads.setAutoDownloadNewSongs(collection.id, !collection.autoDownload)
+                    // Liked Music's switch is also the Downloads setting's, so
+                    // it goes through the one place that keeps the two in step.
+                    if (com.music.bitchord.download.samePlaylist(collection.id, YtMusicRepository.LIKED_MUSIC)) {
+                        com.music.bitchord.download.DownloadedPlaylistSync.setKeepLiked(context, !collection.autoDownload)
+                    } else {
+                        Downloads.setAutoDownloadNewSongs(collection.id, !collection.autoDownload)
+                    }
                 }
             },
             // A Super Mix has no last page: it grows a page at a
@@ -6199,7 +6313,9 @@ private fun RootPage(
                 searchSource == SearchSource.SPOTIFY ->
                     com.music.bitchord.data.model.SearchFilter.entries.filter {
                         it != com.music.bitchord.data.model.SearchFilter.VIDEOS &&
-                            it != com.music.bitchord.data.model.SearchFilter.PODCASTS
+                            it != com.music.bitchord.data.model.SearchFilter.PODCASTS &&
+                            // An account's YouTube library isn't Spotify's.
+                            it != com.music.bitchord.data.model.SearchFilter.LIBRARY
                     }
                 podcastsEnabled -> com.music.bitchord.data.model.SearchFilter.entries
                 else -> com.music.bitchord.data.model.SearchFilter.entries
@@ -6768,7 +6884,11 @@ private fun RootOverlays(
     // A closed menu forgets where it was held, so whatever opens it next
     // — the ⋮, the player — starts from the sheet.
     LaunchedEffect(sheets.songMenu.song == null) {
-        if (sheets.songMenu.song == null) sheets.songMenu.origin = null
+        if (sheets.songMenu.song == null) {
+            sheets.songMenu.origin = null
+            sheets.songMenu.fromQueue = false
+            sheets.songMenu.queueAnchor = null
+        }
     }
     // A playlist or folder being renamed, handed over by its menu: the
     // frosted card every text prompt in the app uses.
@@ -8379,6 +8499,14 @@ internal class RootSheets {
          */
         var fromHistory by mutableStateOf(false)
         /**
+         * Whether it was opened by holding a row in the player's queue: drawn
+         * in the player, like [fromPlayer], but about that row's song, so the
+         * rows about the track playing now are left out.
+         */
+        var fromQueue by mutableStateOf(false)
+        /** The held queue row, in window coordinates, for the menu to hang off. */
+        var queueAnchor: androidx.compose.ui.unit.IntRect? = null
+        /**
          * The row or card that was held to open the track menu, or null when it
          * was opened any other way. Non-null lifts that item into
          * [HeldContextMenu]; null hangs the menu off [anchor] instead — which is
@@ -8720,6 +8848,7 @@ private fun AppGlassNav(
     onBlockedControl: () -> Unit,
     dock: PlayerDock?,
     pull: MiniPlayerPull?,
+    animationsActive: Boolean,
 ) {
     if (useFoldingNav) {
         GlassFoldingNavBar(
@@ -8740,6 +8869,7 @@ private fun AppGlassNav(
             onBlockedControl = onBlockedControl,
             dock = dock,
             pull = pull,
+            animationsActive = animationsActive,
             modifier = Modifier.fillMaxWidth(),
         )
     } else {
@@ -8759,6 +8889,7 @@ private fun AppGlassNav(
             onBlockedControl = onBlockedControl,
             dock = dock,
             pull = pull,
+            animationsActive = animationsActive,
             modifier = Modifier.fillMaxWidth(),
         )
     }
