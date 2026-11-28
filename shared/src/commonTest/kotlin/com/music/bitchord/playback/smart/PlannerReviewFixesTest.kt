@@ -373,4 +373,35 @@ class PlannerReviewFixesTest {
         assertTrue(gap < 1e-6 || gap > 2.0 - 1e-6,
             "cue ${p.incomingCueTime} against start ${p.transitionStart} is out of phase with the whole track's grid")
     }
+
+    @Test
+    fun aBlendWithNoCueInPhaseIsMixedAsAnUnmatchedPair() {
+        // No whole-track bar lines, and an opening grid at 0.5 + 2k s with the
+        // 14.5 s line missing: against the 190.25 s start, no bar line of
+        // either grid in reach gives a cue in beat phase.
+        val head = generateSequence(0.5) { it + 2.0 }.takeWhile { it < 40.0 }.filter { kotlin.math.abs(it - 14.5) > 1e-9 }.toList()
+        val next = track(120.0).copy(
+            downbeats = emptyList(),
+            mixInTime = 16.5,
+            mixInCandidates = listOf(MixCandidate(16.5, 1.0, "drop")),
+            headBeats = BeatSide(head.flatMap { listOf(it, it + 0.5, it + 1.0, it + 1.5) }, head, 120.0, 0.9),
+        )
+        val p = planTransition(
+            analysis = track(120.0).copy(contentEndTime = 198.25),
+            nextAnalysis = next,
+            currentTime = 100.0,
+            duration = 200.0,
+            mode = CrossfadeMode.SMART,
+            advanced = false,
+        )
+        assertTrue(!p.blocked, p.reason)
+        if (p.transitionStyle == TransitionStyle.DJ_BLEND) {
+            fun phase(t: Double, line: Double) = ((t - line) % 2.0 + 2.0) % 2.0
+            val gap = kotlin.math.abs(phase(p.incomingCueTime, 0.5) - phase(p.transitionStart, 0.5))
+            assertTrue(gap < 1e-6 || gap > 2.0 - 1e-6,
+                "a beat-matched blend cued at ${p.incomingCueTime} against start ${p.transitionStart} is out of phase")
+        } else {
+            assertEquals(TransitionStyle.DJ_FILTER, p.transitionStyle, p.reason)
+        }
+    }
 }

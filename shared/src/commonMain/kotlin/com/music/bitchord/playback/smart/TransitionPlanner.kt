@@ -1880,8 +1880,11 @@ private fun mixPlan(
         }
     val rawIncomingCueTime = incomingStartPoint(nextAnalysis)
 
-    val finalIncomingCueTime: Double
-    val transitionStart: Double
+    var finalIncomingCueTime = rawIncomingCueTime
+    var transitionStart = 0.0
+    // A beat-matched blend needs a cue in phase with its start; one with none
+    // to be had on either grid is mixed as an unmatched pair instead.
+    var blendInPhase = false
     // Where the incoming song is at the outgoing one's end: moved with the cue
     // when the cue is put back on the incoming grid below.
     var scheduledHandoffTime = incomingHandoffTime
@@ -1943,9 +1946,21 @@ private fun mixPlan(
             // whole track's grid is the one that applies there.
             phasedOn(nextAnalysis.headBeats?.downbeats) ?: phasedOn(nextAnalysis.downbeats)
         }
-        finalIncomingCueTime = phased ?: unsnappedCue
-        scheduledHandoffTime = incomingHandoffTime + (finalIncomingCueTime - unsnappedCue)
-    } else {
+        if (phased != null) {
+            blendInPhase = true
+            finalIncomingCueTime = phased
+            scheduledHandoffTime = incomingHandoffTime + (finalIncomingCueTime - unsnappedCue)
+        }
+    }
+    if (!blendInPhase) {
+        // An unmatched pair, or a matched one whose beats could not be put in
+        // phase: a blend there would run its beats against each other, half a
+        // beat apart at worst, for the whole overlap.
+        scheduledHandoffTime = if (maxIncomingHandoff >= incomingDropTime) {
+            min(incomingDropTime, maxIncomingHandoff)
+        } else {
+            incomingDropTime
+        }
         val clamped = clamp(overlap, min(handoffSeconds, maximumOverlap), maximumOverlap)
         val actualOverlap = if (traits != null) wholeBars(clamped, beatSeconds, maximumOverlap) else clamped
         val targetStart = max(0.0, mixEnd - actualOverlap)
@@ -1991,7 +2006,7 @@ private fun mixPlan(
             (analysis.vocalActivityMask.isEmpty() || nextAnalysis.vocalActivityMask.isEmpty())
         ) VOCAL_MASK_MISSING_PROTECTION else 0.0,
     )
-    val vocalSafeFallback = !sameBeatBlend && vocalOverlap >= VOCAL_SAFE_FALLBACK_THRESHOLD
+    val vocalSafeFallback = !blendInPhase && vocalOverlap >= VOCAL_SAFE_FALLBACK_THRESHOLD
     // No echo out: the only plans that ever asked for one were these unmatched
     // pairs, where repeats on the outgoing beat flam against the incoming grid
     // and the dry kill under them was heard as the song cutting out.
@@ -2013,15 +2028,15 @@ private fun mixPlan(
         // shorter than the beats first asked for; counted in the outgoing beat
         // that request was made in.
         transitionBeats = if (currentBpm > 0) (alignedOverlap * currentBpm / 60).roundToInt() else transitionBeats,
-        bassSwap = sameBeatBlend || hasBassContent,
-        transitionStyle = if (sameBeatBlend) TransitionStyle.DJ_BLEND else TransitionStyle.DJ_FILTER,
+        bassSwap = blendInPhase || hasBassContent,
+        transitionStyle = if (blendInPhase) TransitionStyle.DJ_BLEND else TransitionStyle.DJ_FILTER,
         // The two styles are alternatives, not a scale: a matched pair hands the
         // low end over on a beat and otherwise stays open, while an unmatched
         // pair has no shared grid to hand anything over on and instead pulls the
         // outgoing track behind a closing low-pass. Left at zero on the blend
         // branch so the renderer doesn't do both at once.
-        filterSweep = if (sameBeatBlend) 0.0 else FILTER_SWEEP,
-        filterVariant = if (sameBeatBlend) FilterTransitionVariant.SWEEP else resolvedFilterVariant,
+        filterSweep = if (blendInPhase) 0.0 else FILTER_SWEEP,
+        filterVariant = if (blendInPhase) FilterTransitionVariant.SWEEP else resolvedFilterVariant,
         vocalOverlap = vocalOverlap,
         beatSeconds = gridBeatSeconds,
         // Tempo is fixed while audible. Live phase-lock pulses changed
