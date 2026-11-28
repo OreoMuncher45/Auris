@@ -857,8 +857,11 @@ object AudioCache {
      * winner filed under another. The suffix stays last, so [isAltKey] still
      * reads it as a substitute bucket.
      */
-    internal fun altKeyOf(videoId: String, atmosSuffix: String): String =
-        "${AutomixAnalysisSource.playbackKey(videoId)}$ALT_SUFFIX$atmosSuffix"
+    internal fun altKeyOf(
+        videoId: String,
+        atmosSuffix: String,
+        rendition: String? = AutomixAnalysisSource.rendition(),
+    ): String = "${AutomixAnalysisSource.playbackKey(videoId, rendition)}$ALT_SUFFIX$atmosSuffix"
 
     /** Whether every byte of the entry [key] is on disk, contiguously from 0. */
     private fun isComplete(key: String): Boolean = runCatching {
@@ -2369,9 +2372,8 @@ object AudioCache {
      * loop checked the old one, and stop the pass early.
      */
     internal suspend fun cacheWholePass(videoId: String, total: Long, chunk: Long = CHUNK_BYTES): Boolean {
-        val key = prefetchKeyOf(videoId)
-        val rendition = AutomixAnalysisSource.rendition()
-        val routed = readAheadUriOf(videoId, rendition)
+        val (key, routed) = readAheadTarget(videoId)
+        val rendition = renditionOf(routed)
         return cacheRangesOnce(
             key = key,
             total = total,
@@ -2384,16 +2386,35 @@ object AudioCache {
             stillWanted = {
                 pendingQueue.firstOrNull() == videoId &&
                     AutomixAnalysisSource.rendition() == rendition &&
-                    prefetchKeyOf(videoId) == key
+                    prefetchKeyOf(videoId, rendition) == key
             },
             cachedAt = { position, length -> cache.getCachedBytes(key, position, length) },
             fetchRange = { position, length -> fetch(key, routed, position, length, pinKey = true) },
         )
     }
 
-    /** The entry [cacheWholeOnce] fills for [videoId]; see there. */
-    internal fun prefetchKeyOf(videoId: String): String =
-        if (SourceResolver.canSubstituteForYouTube()) altKeyOf(videoId, atmosKeySuffix()) else AutomixAnalysisSource.playbackKey(videoId)
+    /** The entry [cacheWholeOnce] fills for [videoId] under [rendition]; see there. */
+    internal fun prefetchKeyOf(videoId: String, rendition: String? = AutomixAnalysisSource.rendition()): String =
+        if (SourceResolver.canSubstituteForYouTube()) {
+            altKeyOf(videoId, atmosKeySuffix(), rendition)
+        } else {
+            AutomixAnalysisSource.playbackKey(videoId, rendition)
+        }
+
+    /**
+     * The key a read-ahead of [videoId] fills and the address it fetches
+     * through, both from one reading of the rendition: read twice, a switch
+     * between the reads paired the ordinary key with a Premium address, which
+     * the resolver's check (address against settings) could not see.
+     */
+    internal fun readAheadTarget(videoId: String): Pair<String, Uri> {
+        val rendition = AutomixAnalysisSource.rendition()
+        return prefetchKeyOf(videoId, rendition) to readAheadUriOf(videoId, rendition)
+    }
+
+    /** The rendition a read-ahead address carries; null for the ordinary one. */
+    private fun renditionOf(uri: Uri): String? =
+        uri.getQueryParameter(AutomixAnalysisSource.RENDITION_PARAMETER)?.ifEmpty { null }
 
     /**
      * Fills [key] a [chunk] at a time up to [total], checking and writing that
@@ -3776,8 +3797,10 @@ object AudioCache {
      * on `<id>#premium` while the probe's check read the bare id, so the fetch
      * stopped after the probe's 64 KiB.
      */
-    internal suspend fun fetch(videoId: String, position: Long, length: Long) =
-        fetch(prefetchKeyOf(videoId), readAheadUriOf(videoId), position, length, pinKey = true)
+    internal suspend fun fetch(videoId: String, position: Long, length: Long) {
+        val (key, uri) = readAheadTarget(videoId)
+        fetch(key, uri, position, length, pinKey = true)
+    }
 
     /**
      * The address a read-ahead of [videoId] fetches through: carrying the
