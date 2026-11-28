@@ -492,4 +492,27 @@ class PlannerReviewFixesTest {
         assertTrue(!withinSkipCap(cap + 1e-10, 60.0), "a cue just above the cap passed the phase search's test")
         assertTrue(!withinSkipCap(cap + 1e-12, 60.0))
     }
+
+    @Test
+    fun aMatchedPairWithNoBarLinesOnEitherGridIsMixedWithTheFilter() {
+        // Tempo and confidence that admit a beat-matched blend, but no bar line
+        // on either grid to put a cue in phase: the fallback itself must run.
+        val beats = generateSequence(0.5) { it + 0.5 }.takeWhile { it < 40.0 }.toList()
+        val next = track(120.0).copy(
+            downbeats = emptyList(),
+            mixInTime = 16.5,
+            mixInCandidates = listOf(MixCandidate(16.5, 1.0, "drop")),
+            headBeats = BeatSide(beats, emptyList(), 120.0, 0.9),
+        )
+        val p = planTransition(
+            analysis = track(120.0).copy(contentEndTime = 198.25),
+            nextAnalysis = next,
+            currentTime = 100.0,
+            duration = 200.0,
+            mode = CrossfadeMode.SMART,
+            advanced = false,
+        )
+        assertTrue(!p.blocked, "blocked: ${p.reason}")
+        assertEquals(TransitionStyle.DJ_FILTER, p.transitionStyle, p.reason)
+    }
 }

@@ -87,4 +87,22 @@ class AnalysisStoreEntryTest {
             assertEquals(window.endTime, restored.endTime)
         }
     }
+
+    @Test
+    fun twoIdsWithOneHashEachRestoreTheirOwnAnalysis() {
+        withStore { store, _ ->
+            // "Aa" and "BB" share String.hashCode() and length: under the old
+            // file name the second save replaced the first.
+            check("Aa".hashCode() == "BB".hashCode())
+            store.save("Aa", analysis().copy(bpm = 100.0), "Aa#analysis")
+            store.save("BB", analysis().copy(bpm = 140.0), "BB#analysis")
+
+            val a = assertNotNull(store.loadEntry("Aa"))
+            val b = assertNotNull(store.loadEntry("BB"))
+            assertEquals(100.0, a.analysis.bpm)
+            assertEquals("Aa#analysis", a.measuredOn)
+            assertEquals(140.0, b.analysis.bpm)
+            assertEquals("BB#analysis", b.measuredOn)
+        }
+    }
 }

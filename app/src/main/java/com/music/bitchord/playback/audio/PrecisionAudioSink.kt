@@ -997,7 +997,9 @@ class PrecisionAudioSink(
 
             // Process normalized Float32 samples through custom DSP chain
             BlockFinish.apply(audioBlock, skipDsp, userGain) { block ->
-                dspChain.mixing = outArm != null && loopRendering
+                // Only a block the deck was mixed into: pre-roll renders the
+                // decks without touching the song, which stays dry.
+                dspChain.mixing = outArm != null && loopCrossing
                 dspChain.process(block)
             }
 

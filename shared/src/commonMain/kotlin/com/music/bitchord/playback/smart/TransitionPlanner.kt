@@ -104,12 +104,13 @@ private val SPOKEN_TEXT = Regex(
  */
 private val LIVE_TEXT = Regex(
     // A bracketed tag: "(Live)", "(Acoustic Live)", "(Live Acoustic)", "[Live at Wembley]", "(Live Version)",
-    // "(Live 2016)", "(Live, 2016)", "(Live and Acoustic)", "(Live Remaster)".
+    // "(Live 2016)", "(Live, 2016)", "(Live and Acoustic)", "(Live Remaster)". "And" only before a
+    // recognised modifier: "Live and Let Die" is a song title, not a label.
     // "(Live: Wembley)" too: a colon after the word is a label, never a title.
-    """[(\[]\s*(?:(?:acoustic|unplugged|stripped|solo|piano|radio|remastered|remaster|full\s+band)\s+)?live(?:\s*,?\s+(?:(?:at|from|in|on|and|version|session|recording|performance|edit|acoustic|remaster|remastered)|\d{4})\b[^)\]]*|\s*:[^)\]]*)?\s*[)\]]""" +
+    """[(\[]\s*(?:(?:acoustic|unplugged|stripped|solo|piano|radio|remastered|remaster|full\s+band)\s+)?live(?:\s*,?\s+(?:(?:at|from|in|on|version|session|recording|performance|edit|acoustic|remaster|remastered|and\s+(?:acoustic|unplugged|stripped|remaster|remastered|orchestral))|\d{4})\b[^)\]]*|\s*:[^)\]]*)?\s*[)\]]""" +
         // A dash suffix: "Song - Live", "Song – Live from the Garden", "Song - Live 2016", "Song - Live Remaster",
         // "Song - Live: Wembley".
-        """|[-–—]\s*live(?:\s*,?\s+(?:(?:at|from|in|on|and|version|session|recording|performance|edit|acoustic|remaster|remastered)|\d{4})\b.*|\s*:.*)?\s*$""",
+        """|[-–—]\s*live(?:\s*,?\s+(?:(?:at|from|in|on|version|session|recording|performance|edit|acoustic|remaster|remastered|and\s+(?:acoustic|unplugged|stripped|remaster|remastered|orchestral))|\d{4})\b.*|\s*:.*)?\s*$""",
     RegexOption.IGNORE_CASE,
 )
 
@@ -190,12 +191,16 @@ data class TransitionPlan(
     val incomingCueTime: Double = 0.0,
     /** Where the incoming track's arrangement lands, on its own timeline. */
     val incomingHandoffTime: Double = 0.0,
+    /**
+     * The speed the incoming track plays at through the blend, to meet the
+     * outgoing tempo: above 1 for a slower incoming song, below 1 for a faster
+     * one (a trusted 120 to 130 BPM pair plays the incoming song at about
+     * 0.923). The only deck that changes speed.
+     */
     val incomingPlaybackRate: Double = 1.0,
     /**
-     * Advanced Automix: the speed-up the *outgoing* track is brought up to
-     * over its last beats before the blend, when it is the slower of the two.
-     * Tempo only ever moves up, so at most one of this and
-     * [incomingPlaybackRate] is above 1, and neither is ever below it.
+     * The outgoing track's speed through the blend. Kept at 1: an audible
+     * deck never changes speed, so the incoming one does all the matching.
      */
     val outgoingPlaybackRate: Double = 1.0,
     val handoffStartSeconds: Double = 0.0,
@@ -512,7 +517,11 @@ private fun incomingStartPoint(analysis: TrackAnalysis): Double =
 // Apple-style Automix: fixed-length phrase mixes (8 or 16 bars)
 // ---------------------------------------------------------------------------
 
-/** The two phrase lengths the listener may fix; see [planTransition]'s `phraseBars`. */
+/**
+ * The two phrase lengths [planTransition]'s `phraseBars` accepts. A planner
+ * option only: no playback caller passes it (both pass the default 0, the
+ * adaptive plan), so these run from tests until a setting is wired to it.
+ */
 const val PHRASE_BARS_SHORT = 8
 const val PHRASE_BARS_LONG = 16
 
@@ -1692,7 +1701,8 @@ private fun planTransitionInner(
         )
     }
 
-    // Apple-style Automix: when the listener fixed the phrase length, a
+    // Apple-style Automix: when a fixed phrase length is asked for (a planner
+    // option; no playback caller passes one yet), a
     // bar-aligned mix of exactly that many bars takes priority. A null answer
     // means the evidence will not support it, so the adaptive plan below runs
     // unchanged.
