@@ -120,9 +120,14 @@ class VocalTracker(
             session?.takeIf { sessionThreads == threads }?.let { return it }
             // Retired rather than closed: a run still in flight keeps it open
             // until it returns. See [SessionRetirement].
-            retirement.retire(session, sessionOptions)
+            // Unpublished first, then retired: a reader that already holds it
+            // is inside `using` and delays the close; one that comes later sees
+            // no session rather than a closed one.
+            val retiring = session
+            val retiringOptions = sessionOptions
             session = null
             sessionOptions = null
+            retirement.retire(retiring, retiringOptions)
             return runCatching {
                 val path = File(modelPath()).absolutePath
                 // Same fallback as BeatTracker, for the same reduced Android runtime.
@@ -292,9 +297,14 @@ class VocalTracker(
         synchronized(lock) {
             // Retired rather than closed: a run still in flight keeps it open
             // until it returns. See [SessionRetirement].
-            retirement.retire(session, sessionOptions)
+            // Unpublished first, then retired: a reader that already holds it
+            // is inside `using` and delays the close; one that comes later sees
+            // no session rather than a closed one.
+            val retiring = session
+            val retiringOptions = sessionOptions
             session = null
             sessionOptions = null
+            retirement.retire(retiring, retiringOptions)
             sessionThreads = 0
         }
     }

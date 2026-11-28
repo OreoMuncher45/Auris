@@ -119,6 +119,12 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      */
     @Volatile private var released = false
 
+    /** Taken by every publish and by [release]; see the publish in [request]. */
+    private val publishing = Any()
+
+    /** How many times each track has been re-measured for a window it lost to memory. */
+    private val incompleteRetries = ConcurrentHashMap<String, Int>()
+
     /**
      * When the player's own decoder was taken away by the system, the analyser
      * gives the codec back.
@@ -237,6 +243,14 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             headClaims.release(trackId, headAttempts)
         }
     }
+
+    /**
+     * The [headAttempts] key for [trackId]'s head attempts on [renditionKey].
+     * Per track as well as per copy: two source rows matched to one YouTube
+     * video share its copy, and a claim on the copy alone kept the second row
+     * from measuring a prefix only the first could use the result of.
+     */
+    private fun attemptKey(trackId: String, renditionKey: String): String = headAttemptKey(trackId, renditionKey)
 
     /** The head claim each published head result was measured under. */
     private val headClaims = HeadClaims()
@@ -401,7 +415,15 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
      * block. Returns an empty analysis for anything not yet finished, which
      * [assessTransitionTier] reads as no evidence rather than as a failure.
      */
-    fun analysisFor(trackId: String): TrackAnalysis = results[scoped(trackId)] ?: TrackAnalysis(trackId = trackId)
+    fun analysisFor(trackId: String): TrackAnalysis {
+        val cached = results[scoped(trackId)] ?: return TrackAnalysis(trackId = trackId)
+        // Filed under the rendition-scoped id, handed out under the track's
+        // own: the planner checks an analysis against the track it plans
+        // (`analysisReadyForTrack`), and `video#premium` read as another song's,
+        // so a measured track got the not-ready crossfade. A copy only under a
+        // rendition, and a shallow one.
+        return if (cached.trackId == trackId) cached else cached.copy(trackId = trackId)
+    }
 
     /**
      * [trackId] as the analyser files it: scoped to the rendition the resolver
@@ -648,7 +670,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                     // A restore made the queued head decode unnecessary: its
                     // claim was taken when it was queued, and nothing else would
                     // give the unchanged prefix back if the result is lost.
-                    headRendition?.let { headAttempts.remove(it.key, it.cachedPrefix) }
+                    headRendition?.let { headAttempts.remove(attemptKey(trackId, it.key), it.cachedPrefix) }
                     return@execute
                 }
                 // The queue this task sat in is single-threaded, so a party
@@ -657,7 +679,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                 // backlog without needing to reach into the executor's queue.
                 if (stopped) {
                     // Never reached the decoder: the head it claimed is still untried.
-                    headRendition?.let { headAttempts.remove(it.key, it.cachedPrefix) }
+                    headRendition?.let { headAttempts.remove(attemptKey(trackId, it.key), it.cachedPrefix) }
                     return@execute
                 }
                 if (usableComplete) {
@@ -668,13 +690,26 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                     val whole = outcome.analysis?.let { keepHeadGrid(trackId, it, measuredOn) }
                         ?.copy(measuredOn = measuredOn)
                         ?.let { if (outcome.withoutModels) it.withoutBeatMatch() else it }
-                    if (whole != null && released) return@execute
                     if (whole != null) {
+                        // The release check and the publish are one step that
+                        // release() also takes, so nothing is published once it
+                        // has cleared the state. The disk write stays outside, so
+                        // a release on the main thread never waits on it.
+                        val stored = synchronized(publishing) {
+                        if (released) return@execute
                         if (measuredOn != null) measuredCopies[trackId] = measuredOn
                         headClaims.drop(trackId)
                         remember(trackId, whole)
-                        provisional.remove(trackId)
                         shortDecodes.remove(trackId)
+                        // A pass missing a window it ran out of memory on is an
+                        // interim answer: kept as provisional, so a later tick
+                        // measures the track again (twice at most), and never
+                        // stored as complete.
+                        if (outcome.incomplete && incompleteRetries.merge(trackId, 1, Int::plus)!! <= MAX_INCOMPLETE_RETRIES) {
+                            provisional.add(trackId)
+                        } else {
+                            provisional.remove(trackId)
+                        }
                         // Only the whole-track pass is persisted. A head result
                         // is missing everything past its window — the outro, the
                         // mix-out anchor, the energy curve — and storing one
@@ -686,7 +721,9 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                         } else {
                             modelless.forget(trackId)
                         }
-                        if (outcome.persist) store.save(trackId, whole, measuredOn)
+                        whole.takeIf { outcome.persist }
+                        }
+                        stored?.let { if (!released) store.save(trackId, it, measuredOn) }
                         restoreAttempted.add(trackId)
                     } else if (outcome.decodedShort &&
                         shortDecodes.merge(trackId, 1, Int::plus)!! >= MAX_SHORT_DECODE_ATTEMPTS
@@ -716,28 +753,30 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                     // way to a model pass on the same bytes once they arrive.
                     val modelsBefore = modelsReady()
                     val headGeneration = AutomixModels.generation
-                    val head = analyzeHead(trackId, analysisUri, durationSeconds, headRendition!!)
-                    if (head != null && released) return@execute
+                    val head = analyzeHead(trackId, analysisUri, durationSeconds, headRendition!!, playingUri = uri)
                     if (head != null) {
-                        provisional.add(trackId)
-                        measuredCopies[trackId] = headRendition.key
-                        // The very object published, so the model-less record's
-                        // identity check matches what the cache holds.
-                        val withModels = modelsBefore && modelsReady() && AutomixModels.generation == headGeneration
-                        val published = head.copy(measuredOn = headRendition.key)
-                            .let { if (withModels) it else it.withoutBeatMatch() }
-                        // Its claim, so an eviction can hand it back: see [forget].
-                        headClaims.record(trackId, headRendition.key, headRendition.cachedPrefix)
-                        remember(trackId, published)
-                        if (withModels) {
-                            modelless.forget(trackId)
-                        } else {
-                            modelless.recordHead(trackId, published, headRendition.key, headRendition.cachedPrefix)
+                        synchronized(publishing) {
+                            if (released) return@execute
+                            provisional.add(trackId)
+                            measuredCopies[trackId] = headRendition.key
+                            // The very object published, so the model-less record's
+                            // identity check matches what the cache holds.
+                            val withModels = modelsBefore && modelsReady() && AutomixModels.generation == headGeneration
+                            val published = head.copy(measuredOn = headRendition.key)
+                                .let { if (withModels) it else it.withoutBeatMatch() }
+                            // Its claim, so an eviction can hand it back: see [forget].
+                            headClaims.record(trackId, attemptKey(trackId, headRendition.key), headRendition.cachedPrefix)
+                            remember(trackId, published)
+                            if (withModels) {
+                                modelless.forget(trackId)
+                            } else {
+                                modelless.recordHead(trackId, published, headRendition.key, headRendition.cachedPrefix)
+                            }
                         }
                     } else if (stopped) {
                         // Given up for the player (or a party), not failed: the
                         // same prefix gets another go once the decoder is free.
-                        headAttempts.remove(headRendition.key, headRendition.cachedPrefix)
+                        headAttempts.remove(attemptKey(trackId, headRendition.key), headRendition.cachedPrefix)
                     }
                 }
             } catch (error: Throwable) {
@@ -825,7 +864,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             // never reached. A track therefore got exactly one head attempt ever,
             // against whichever copy of it happened to rank highest at the time.
             .filter { rendition ->
-                val previous = headAttempts[rendition.key] ?: return@filter true
+                val previous = headAttempts[attemptKey(trackId, rendition.key)] ?: return@filter true
                 rendition.cachedPrefix >= previous * HEAD_RETRY_GROWTH
             }
             // Most *audio*, not most bytes: renditions differ in bitrate, so the
@@ -867,7 +906,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             return null
         }
 
-        headAttempts[candidate.key] = prefix
+        headAttempts[attemptKey(trackId, candidate.key)] = prefix
         return candidate
     }
 
@@ -922,6 +961,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         uri: Uri,
         durationSeconds: Double,
         rendition: AudioCache.Rendition,
+        playingUri: Uri = uri,
     ): TrackAnalysis? {
         fun openSource(): MediaDataSource? = cache.renditionDataSource(uri, rendition)
 
@@ -938,7 +978,12 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // A length that is readable and disagrees still turns it away.
         val ownCopy = uri.getQueryParameter("v")
             ?.let { rendition.key == AutomixAnalysisSource.analysisCacheKey(it) } == true
-        if (expected != null && rendition.key != cache.cacheKeyOf(uri)) {
+        // Exempt only the player's own copy, decided from the address that
+        // plays, not the matched analysis address: a matched YouTube copy of a
+        // source track is a borrowed one, can be seconds longer (the matcher
+        // allows 30), and is held to the same length check the whole-track
+        // pass applies to it.
+        if (expected != null && (uri != playingUri || rendition.key != cache.cacheKeyOf(uri))) {
             val length = openSource()?.use(AudioDecoder::containerDurationSeconds)
             if ((length == null || length <= 0) && ownCopy) {
                 Log.d(TAG, "Head rendition ${rendition.key} for $trackId has no readable duration yet; decoding anyway")
@@ -971,7 +1016,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // released here, so the same prefix gets another go once the decoder is
         // free.
         if (abort.tripped) {
-            headAttempts.remove(rendition.key, rendition.cachedPrefix)
+            headAttempts.remove(attemptKey(trackId, rendition.key), rendition.cachedPrefix)
             return null
         }
         if (head == null) {
@@ -1107,9 +1152,11 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             val length = cache.renditionDataSource(uri, candidate)
                 .use(AudioDecoder::containerDurationSeconds)
             if (length == null || length <= 0) {
-                // Every candidate here is complete, so no more bytes are coming
-                // to make the header readable: remembered for the reason below.
-                badRenditions.add(candidate.key)
+                // A complete candidate gets no more bytes to make its header
+                // readable, so it is remembered for the reason below. A long
+                // track's head-and-tail copy (see [wholeEnough]) is not
+                // complete, and is only skipped: the rest of it may still come.
+                if (candidate.isComplete) badRenditions.add(candidate.key)
                 continue
             }
             if (abs(length - expected) > RENDITION_DURATION_TOLERANCE) {
@@ -1291,6 +1338,8 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
          * DSP estimates. Never persisted; see [modelless].
          */
         val withoutModels: Boolean = false,
+        /** A window of the model pass ran out of memory: the result lacks what it would have measured. */
+        val incomplete: Boolean = false,
     )
 
     /**
@@ -1581,6 +1630,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                 // still answer in full. Kept for this session meanwhile.
                 persist = !outOfMemory && !windowOutOfMemory && !withoutModels,
                 withoutModels = withoutModels,
+                incomplete = windowOutOfMemory,
             )
         }
 
@@ -1646,6 +1696,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             ),
             persist = !windowOutOfMemory && !withoutModels,
             withoutModels = withoutModels,
+            incomplete = windowOutOfMemory,
         )
     }
 
@@ -2160,7 +2211,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
     }
 
     fun release() {
-        released = true
+        synchronized(publishing) { released = true }
         thermalUnwatch?.let { runCatching(it) }
         thermalUnwatch = null
         com.music.bitchord.util.MemoryPressure.unregister(onMemoryPressure)
@@ -2176,6 +2227,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         headAttempts.clear()
         headSkipLogged.clear()
         provisional.clear()
+        incompleteRetries.clear()
         headClaims.clear()
         restoreAttempted.clear()
         shortDecodes.clear()
@@ -2202,6 +2254,9 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
 
         /** Where a model-less result's confidence is capped: under [MIN_BEATMATCH_CONFIDENCE]. */
         const val MODELLESS_CONFIDENCE = MIN_BEATMATCH_CONFIDENCE - 0.05
+
+        /** Re-measurements a pass that lost a window to memory gets: see the publish in [request]. */
+        const val MAX_INCOMPLETE_RETRIES = 2
 
         /**
          * What an unmeasured instant reads as. Below the policy's VOCAL_ACTIVE_THRESHOLD by
@@ -2328,6 +2383,13 @@ internal fun mergeVocalMasks(
  * Results measured without the models, with the copy each was read from, so
  * both can be forgotten once the models arrive. See [TrackAnalyzer.request].
  */
+/**
+ * The [TrackAnalyzer] head-attempt key for [trackId]'s attempts on the copy
+ * [renditionKey]: per track as well as per copy, since two source rows can
+ * share one matched YouTube copy.
+ */
+internal fun headAttemptKey(trackId: String, renditionKey: String): String = "$trackId|$renditionKey"
+
 internal class ModellessResults {
     /** [headPrefix] is set for a head result: the prefix [TrackAnalyzer]'s head claim holds. */
     private class Entry(val analysis: TrackAnalysis, val copyKey: String?, val headPrefix: Long? = null)
@@ -2364,7 +2426,9 @@ internal class ModellessResults {
             // An evicted head result gives its prefix claim back too (only that
             // exact claim, never a newer one), or the unchanged prefix that
             // produced it would have to grow before it may be tried again.
-            if (entry.headPrefix != null && entry.copyKey != null) headAttempts?.remove(entry.copyKey, entry.headPrefix)
+            if (entry.headPrefix != null && entry.copyKey != null) {
+                headAttempts?.remove(headAttemptKey(trackId, entry.copyKey), entry.headPrefix)
+            }
             null
         }
     }
@@ -2392,7 +2456,7 @@ internal class ModellessResults {
             measured.remove(trackId, key)
             if (entry.headPrefix != null) {
                 provisional.remove(trackId)
-                headAttempts.remove(key, entry.headPrefix)
+                headAttempts.remove(headAttemptKey(trackId, key), entry.headPrefix)
             } else {
                 tried.remove(key)
             }
