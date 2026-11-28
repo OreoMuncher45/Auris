@@ -1926,18 +1926,22 @@ private fun mixPlan(
         // and never with its handoff past the clearance it needs.
         val outgoingBar = 4 * beatSeconds
         val incomingBar = if (alignedIncomingBpm > 0) 4 * 60 / alignedIncomingBpm else outgoingBar
-        val cueGrid = nextAnalysis.headBeats?.downbeats ?: nextAnalysis.downbeats
         val outgoingBarLine = analysis.downbeats.lastOrNull { it.isFinite() && it <= transitionStart + 1e-6 }
             ?.takeIf { transitionStart - it < outgoingBar + 1e-6 }
         val phased = outgoingBarLine?.let { line ->
             val offset = ((transitionStart - line) % outgoingBar) * incomingPlaybackRate
-            nearestValue(
-                cueGrid.filter { it.isFinite() }.map { it + offset }.filter {
-                    it >= rawIncomingCueTime - 0.05 && it + span <= maxIncomingHandoff + 0.05
-                },
-                unsnappedCue,
-                incomingBar / 2,
-            )
+            fun phasedOn(grid: List<Double>?): Double? = grid?.let { bars ->
+                nearestValue(
+                    bars.filter { it.isFinite() }.map { it + offset }.filter {
+                        it >= rawIncomingCueTime - 0.05 && it + span <= maxIncomingHandoff + 0.05
+                    },
+                    unsnappedCue,
+                    incomingBar / 2,
+                )
+            }
+            // A cue past the measured opening has no bar line of it near: the
+            // whole track's grid is the one that applies there.
+            phasedOn(nextAnalysis.headBeats?.downbeats) ?: phasedOn(nextAnalysis.downbeats)
         }
         finalIncomingCueTime = phased ?: unsnappedCue
         scheduledHandoffTime = incomingHandoffTime + (finalIncomingCueTime - unsnappedCue)
