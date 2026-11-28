@@ -73,7 +73,7 @@ class ModellessResultsTest {
         val tried = mutableSetOf("a#hifi")
         val measured = mutableMapOf("a" to "a#analysis")
         val provisional = mutableSetOf("a")
-        val headAttempts = mutableMapOf("a#analysis" to 400_000L)
+        val headAttempts = mutableMapOf(headAttemptKey("a", "a#analysis") to 400_000L)
         modelless.recordHead("a", head, "a#analysis", 400_000L)
 
         modelless.drop(results, tried, measured, provisional, headAttempts)
@@ -90,12 +90,12 @@ class ModellessResultsTest {
     fun `a head claim taken again on a larger prefix is kept`() {
         val modelless = ModellessResults()
         val head = analysis("a")
-        val headAttempts = mutableMapOf("a#analysis" to 900_000L)
+        val headAttempts = mutableMapOf(headAttemptKey("a", "a#analysis") to 900_000L)
         modelless.recordHead("a", head, "a#analysis", 400_000L)
 
         modelless.drop(cacheOf("a" to head), mutableSetOf(), mutableMapOf(), mutableSetOf("a"), headAttempts)
 
-        assertEquals(mapOf("a#analysis" to 900_000L), headAttempts)
+        assertEquals(mapOf(headAttemptKey("a", "a#analysis") to 900_000L), headAttempts)
     }
 
     @Test
@@ -117,14 +117,14 @@ class ModellessResultsTest {
         val results = ModellessResults()
         val head = TrackAnalysis(trackId = "a")
         results.recordHead("a", head, "copy", 400_000L)
-        val claims = mutableMapOf("copy" to 400_000L, "other" to 800_000L)
+        val claims = mutableMapOf(headAttemptKey("a", "copy") to 400_000L, "other" to 800_000L)
         results.release("a", claims) { null }
-        org.junit.Assert.assertNull(claims["copy"])
+        org.junit.Assert.assertNull(claims[headAttemptKey("a", "copy")])
         assertEquals(800_000L, claims["other"])
         // A newer claim on the same copy is left alone.
         results.recordHead("a", head, "copy", 400_000L)
-        claims["copy"] = 800_000L
+        claims[headAttemptKey("a", "copy")] = 800_000L
         results.release("a", claims) { null }
-        assertEquals(800_000L, claims["copy"])
+        assertEquals(800_000L, claims[headAttemptKey("a", "copy")])
     }
 }
