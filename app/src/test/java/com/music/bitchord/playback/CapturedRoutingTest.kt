@@ -1,5 +1,6 @@
 package com.music.bitchord.playback
 
+import android.app.Application
 import android.net.Uri
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.music.bitchord.playback.smart.AutomixAnalysisSource
@@ -16,7 +17,9 @@ import org.robolectric.annotation.Config
  * tier they were admitted under, or refused.
  */
 @RunWith(AndroidJUnit4::class)
-@Config(sdk = [34])
+// A plain Application, as the other resolver tests use: the app's own runs its
+// stream hooks on start, which load extractors built for a newer JDK than CI's.
+@Config(sdk = [34], application = Application::class)
 class CapturedRoutingTest {
 
     @After fun restore() {
