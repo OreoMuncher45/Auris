@@ -3392,8 +3392,6 @@ internal fun BitChordApp(
             lyricsUnavailable = lyricsChecked && lyrics.isNullOrEmpty(),
             lyricsOffsetOpen = sheets.showLyricsOffset,
             onDismissLyricsOffset = { sheets.showLyricsOffset = false },
-            automixPanelOpen = sheets.automixPanelOpen,
-            onAutomixPanelOpenChange = { sheets.automixPanelOpen = it },
             onOpenSing = { sheets.showSing = true },
             singActive = AppSettings.singLevel.collectAsStateWithLifecycle().value > 0.001f,
             spatialAudioOn = AppSettings.spatialAudio.collectAsStateWithLifecycle().value,
@@ -4132,18 +4130,6 @@ internal fun BitChordApp(
                 },
                 listenTogetherMembers = if (fromPlayer && partyState.inParty) {
                     partyState.members.size
-                } else {
-                    null
-                },
-                // The Automix panel: what was measured about this track, what
-                // was planned for the handoff, and the listener's own answer
-                // to both, kept with the song. Player-only, and the menu goes
-                // away behind it rather than over it.
-                onOpenAutomix = if (fromPlayer) {
-                    {
-                        sheets.songMenu.song = null
-                        sheets.automixPanelOpen = true
-                    }
                 } else {
                     null
                 },
@@ -8323,15 +8309,6 @@ internal class RootSheets {
     /** The track menu — see [SongMenu]. */
     val songMenu = SongMenu()
     var showLyricsOffset by mutableStateOf(false)
-    /**
-     * Whether the Automix panel is up over the player.
-     *
-     * Held here rather than inside the player because two different things
-     * open it: a hold on the handoff in the seek bar, and the row in the
-     * track menu. Both are outside the player's own state, and the panel has
-     * to know that the menu closed behind it.
-     */
-    var automixPanelOpen by mutableStateOf(false)
     var showSing by mutableStateOf(false)
     /**
      * Where the player's three-dot button sits, in the sheet window's own

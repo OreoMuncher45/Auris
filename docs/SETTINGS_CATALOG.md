@@ -62,7 +62,6 @@ at once.
 - [x] `playback.prefer_music_only` — Prefer music only
 - [x] `playback.crossfade` — Crossfade
 - [x] `playback.automix` — Automix
-- [x] `playback.automix_engine` — Automix engine
 - [x] `playback.automix_performance` — Automix performance
 - [x] `playback.skip_silence` — Skip silence
 - [x] `playback.spatial_audio` — Spatial audio

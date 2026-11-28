@@ -95,7 +95,7 @@ class VocalTracker(
      *
      * A path rather than a [Context]: this is the only thing the tracker ever
      * wanted the platform for, and each application already knows how to put
-     * its own copy of the weights somewhere readable — unpacked from assets on
+     * its own copy of the weights somewhere readable — downloaded on first use on
      * Android, from the jar's resources on the desktop.
      */
     private val modelPath: () -> String,
@@ -104,33 +104,63 @@ class VocalTracker(
 ) {
 
     @Volatile private var session: OrtSession? = null
+
+    /** The options [session] was opened with: native memory of their own, closed after it. */
+    @Volatile private var sessionOptions: OrtSession.SessionOptions? = null
     @Volatile private var sessionThreads = 0
     private val lock = Any()
+
+    /** Keeps a session open until every run on it has returned. */
+    private val retirement = SessionRetirement()
 
     private fun session(): OrtSession? {
         val threads = inferenceThreads()
         session?.takeIf { sessionThreads == threads }?.let { return it }
         synchronized(lock) {
             session?.takeIf { sessionThreads == threads }?.let { return it }
-            runCatching { session?.close() }
+            // Retired rather than closed: a run still in flight keeps it open
+            // until it returns. See [SessionRetirement].
+            // Unpublished first, then retired: a reader that already holds it
+            // is inside `using` and delays the close; one that comes later sees
+            // no session rather than a closed one.
+            val retiring = session
+            val retiringOptions = sessionOptions
             session = null
+            sessionOptions = null
+            retirement.retire(retiring, retiringOptions)
             return runCatching {
-                val file = File(modelPath())
-                val options = OrtSession.SessionOptions().apply {
-                    setIntraOpNumThreads(threads)
-                    setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
-                    // Same reasoning as BeatTracker: the arena retains every block it allocates for
-                    // the life of the session, which a backgrounded music player cannot justify.
-                    setCPUArenaAllocator(false)
-                    setMemoryPatternOptimization(false)
-                }
-                OrtEnvironment.getEnvironment().createSession(file.absolutePath, options)
+                val path = File(modelPath()).absolutePath
+                // Same fallback as BeatTracker, for the same reduced Android runtime.
+                runCatching { open(path, threads, OrtSession.SessionOptions.OptLevel.ALL_OPT) }
+                    .recoverCatching {
+                        AnalysisLog.warn("Vocal model failed at ALL_OPT; retrying at BASIC_OPT", it)
+                        open(path, threads, OrtSession.SessionOptions.OptLevel.BASIC_OPT)
+                    }
+                    .getOrThrow()
                     .also {
                         session = it
                         sessionThreads = threads
                     }
             }.onFailure { AnalysisLog.warn("Vocal model unavailable; no mask will be produced", it) }
                 .getOrNull()
+        }
+    }
+
+    private fun open(path: String, threads: Int, level: OrtSession.SessionOptions.OptLevel): OrtSession {
+        val options = OrtSession.SessionOptions()
+        // Closed here if the session never opens, a setter that throws
+        // included; on success they belong with it.
+        return try {
+            options.setIntraOpNumThreads(threads)
+            options.setOptimizationLevel(level)
+            // Same reasoning as BeatTracker: the arena retains every block it allocates for
+            // the life of the session, which a backgrounded music player cannot justify.
+            options.setCPUArenaAllocator(false)
+            options.setMemoryPatternOptimization(false)
+            OrtEnvironment.getEnvironment().createSession(path, options).also { sessionOptions = options }
+        } catch (error: Throwable) {
+            runCatching { options.close() }
+            throw error
         }
     }
 
@@ -154,42 +184,47 @@ class VocalTracker(
         }
         val active = session() ?: return null
 
-        return runCatching {
-            val bins = spectrogram.bins
-            // Direct, and sized for the model rather than for the input, so the
-            // ~16MB of mix never lands on the Java heap and ORT reads it where it
-            // lies instead of copying it into native memory. Both matter: this
-            // runs on devices whose whole Java heap is 256MB, and the two copies
-            // this replaces were together enough to end the process.
-            val backing = ByteBuffer
-                .allocateDirect(VocalSpectrogram.CHANNELS * bins * FIXED_FRAMES * Float.SIZE_BYTES)
-                .order(ByteOrder.nativeOrder())
-            fillFixedFrames(backing.asFloatBuffer(), spectrogram.values, bins, spectrogram.frames)
-            val environment = OrtEnvironment.getEnvironment()
-            val shape = longArrayOf(1, VocalSpectrogram.CHANNELS.toLong(), bins.toLong(), FIXED_FRAMES.toLong())
+        // See [retirement]. A session closed or replaced since it was handed out
+        // gives no curve for this window rather than a run on a closed session.
+        return retirement.using {
+            if (active !== session) return@using null
+            runCatching {
+                val bins = spectrogram.bins
+                // Direct, and sized for the model rather than for the input, so the
+                // ~16MB of mix never lands on the Java heap and ORT reads it where it
+                // lies instead of copying it into native memory. Both matter: this
+                // runs on devices whose whole Java heap is 256MB, and the two copies
+                // this replaces were together enough to end the process.
+                val backing = ByteBuffer
+                    .allocateDirect(VocalSpectrogram.CHANNELS * bins * FIXED_FRAMES * Float.SIZE_BYTES)
+                    .order(ByteOrder.nativeOrder())
+                fillFixedFrames(backing.asFloatBuffer(), spectrogram.values, bins, spectrogram.frames)
+                val environment = OrtEnvironment.getEnvironment()
+                val shape = longArrayOf(1, VocalSpectrogram.CHANNELS.toLong(), bins.toLong(), FIXED_FRAMES.toLong())
 
-            // A fresh view per reader rather than rewinding one: FloatBuffer's own
-            // rewind() and position(int) are Java 9 covariant overrides that
-            // Android's FloatBuffer does not declare, so they compile against the
-            // current SDK and throw NoSuchMethodError on the API 28 devices this
-            // has to run on. asFloatBuffer() hands back a view at position 0 and
-            // has been there since API 1.
-            OnnxTensor.createTensor(environment, backing.asFloatBuffer(), shape).use { tensor ->
-                active.run(mapOf(active.inputNames.first() to tensor)).use { outputs ->
-                    // The output tensor's buffer, not `outputs.get(0).value`: that
-                    // property boxes this [1, 2, bins, FIXED_FRAMES] result into
-                    // one FloatArray per bin per channel — 4098 objects and ~16MB
-                    // per call — when the only thing read from it is a band
-                    // average.
-                    val target = (outputs.get(0) as OnnxTensor).floatBuffer
-                    val curve = reduceToBandCurve(backing.asFloatBuffer(), target, bins, spectrogram.frames)
-                    AnalysisLog.warn("vocal mask ${spectrogram.frames} frames in " +
-                            "${System.currentTimeMillis() - started}ms",
-                    )
-                    curve
+                // A fresh view per reader rather than rewinding one: FloatBuffer's own
+                // rewind() and position(int) are Java 9 covariant overrides that
+                // Android's FloatBuffer does not declare, so they compile against the
+                // current SDK and throw NoSuchMethodError on the API 28 devices this
+                // has to run on. asFloatBuffer() hands back a view at position 0 and
+                // has been there since API 1.
+                OnnxTensor.createTensor(environment, backing.asFloatBuffer(), shape).use { tensor ->
+                    active.run(mapOf(active.inputNames.first() to tensor)).use { outputs ->
+                        // The output tensor's buffer, not `outputs.get(0).value`: that
+                        // property boxes this [1, 2, bins, FIXED_FRAMES] result into
+                        // one FloatArray per bin per channel — 4098 objects and ~16MB
+                        // per call — when the only thing read from it is a band
+                        // average.
+                        val target = (outputs.get(0) as OnnxTensor).floatBuffer
+                        val curve = reduceToBandCurve(backing.asFloatBuffer(), target, bins, spectrogram.frames)
+                        AnalysisLog.warn("vocal mask ${spectrogram.frames} frames in " +
+                                "${System.currentTimeMillis() - started}ms",
+                        )
+                        curve
+                    }
                 }
-            }
-        }.onFailure { AnalysisLog.warn("Vocal inference failed", it) }.getOrNull()
+            }.onFailure { AnalysisLog.warn("Vocal inference failed", it) }.getOrNull()
+        }
     }
 
     /**
@@ -260,8 +295,16 @@ class VocalTracker(
 
     fun release() {
         synchronized(lock) {
-            runCatching { session?.close() }
+            // Retired rather than closed: a run still in flight keeps it open
+            // until it returns. See [SessionRetirement].
+            // Unpublished first, then retired: a reader that already holds it
+            // is inside `using` and delays the close; one that comes later sees
+            // no session rather than a closed one.
+            val retiring = session
+            val retiringOptions = sessionOptions
             session = null
+            sessionOptions = null
+            retirement.retire(retiring, retiringOptions)
             sessionThreads = 0
         }
     }

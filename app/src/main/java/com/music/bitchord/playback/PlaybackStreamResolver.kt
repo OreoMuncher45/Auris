@@ -18,6 +18,7 @@ import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
+import com.music.bitchord.data.sources.StreamRequest
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.data.sources.mornye.SflxSegments
 import com.music.bitchord.playback.smart.AutomixAnalysisSource
@@ -120,6 +121,12 @@ internal class PlaybackStreamResolver(
         // are fetching. Read-ahead means the track being resolved here is
         // usually *not* the one playing, which is exactly why the lines
         // have to say. See [TrackLog.about].
+        // One guard for every read that carries a captured routing (an
+        // analysis round's opens, a whole-track read-ahead's ranges): served the
+        // rendition and tier it was admitted under, or refused, so the round or
+        // pass ends short and its retry starts fresh. Never two streams, or two
+        // renditions, in one entry.
+        checkCapturedRouting(dataSpec.uri)
         val about = TrackLog.about(mediaIdIn(dataSpec.uri))
         // A source-backed track is resolved by whichever source can serve
         // it, which is not necessarily the one it was queued from — see
@@ -149,6 +156,12 @@ internal class PlaybackStreamResolver(
         // been found — see [QualityUpgrade]. Answered before anything
         // else, and without re-resolving: this exact URL is what the
         // player was told it was getting when it agreed to the swap.
+        // The analyser's light read of a catalogue row goes ahead of the
+        // player's shortcuts: the forced upgrade and the pin both serve the
+        // listener's tier, which is the master the light read exists to avoid.
+        if (videoId.startsWith(SPOTIFY_ROW_PREFIX) && isLightAnalysisRead(dataSpec)) {
+            return resolveSpotifyRow(dataSpec, videoId, about)
+        }
         QualityUpgrade.forcedStream(dataSpec.uri)?.let { upgraded ->
             return serveUpgraded(dataSpec, videoId, upgraded)
         }
@@ -181,6 +194,58 @@ internal class PlaybackStreamResolver(
         val fullMediaId = mediaIdIn(dataSpec.uri)
         val trackParam = dataSpec.uri.getQueryParameter("t")
         val configId = dataSpec.uri.getQueryParameter("s")
+        // The analyser's read of a recording only a source holds (no YouTube
+        // match to measure instead), at a lossless or immersive playback tier:
+        // answered with a capped lossy copy, without the upgrade or the pin,
+        // as for a catalogue row. See [AutomixAnalysisSource.analysisRead].
+        if (!directYouTube && isLightAnalysisRead(dataSpec)) {
+            // One stream for the whole round: see [AnalysisReadPins].
+            val rowId = "$configId|$trackParam"
+            // Nothing at the capped rate (a source that only offers lossless,
+            // or a slow one): the player's own pin, else a playback-quality
+            // resolve, as before the light read, rather than leaving the
+            // analyser with no copy to measure. Whichever answers is the one
+            // pinned for the round, so its later opens read that same stream.
+            val light = AnalysisReadPins.lightRead(
+                rowId,
+                capped = {
+                    try {
+                        runBlocking(about) {
+                            withTimeout(RESOLVE_TIMEOUT_MS) {
+                                SourceResolver.resolve(dataSpec.uri, StreamRequest.Capped(AutomixAnalysisSource.ANALYSIS_KBPS))
+                            }
+                        }
+                    } catch (e: TimeoutCancellationException) {
+                        null
+                    }
+                },
+                fallback = fallback@{
+                    val pin = fullMediaId?.let { StreamChoice.of(it) }
+                    if (pin != null) {
+                        // A pin from a source the listener has since turned off
+                        // (kept near the playhead) is not served, and nothing is
+                        // resolved in its place: the entry may hold that source's
+                        // bytes, and another source's would mix renditions. The
+                        // light read fails, and the round retries.
+                        val active = pin.sourceConfigId?.let { id ->
+                            SourceRegistry.activeForPlayback().any { it.configId == id }
+                        } ?: true
+                        return@fallback pin.takeIf { active }
+                    }
+                    try {
+                        runBlocking(about) { withTimeout(RESOLVE_TIMEOUT_MS) { SourceResolver.resolve(dataSpec.uri) } }
+                    } catch (e: TimeoutCancellationException) {
+                        null
+                    }
+                },
+            )
+            // Neither answering has already failed the read: the ordinary path
+            // below is never a light read's, since what it serves is not pinned.
+            return dataSpec.buildUpon()
+                .setUri(Uri.parse(light.url))
+                .setHttpRequestHeaders(light.headers)
+                .build()
+        }
         if (!directYouTube) {
             // An upgraded item carries a marker and its stream has
             // already been found — see [QualityUpgrade]. Answered
@@ -347,6 +412,16 @@ internal class PlaybackStreamResolver(
 
     /** YouTube's Opus for Automix analysis; never what the listener hears. */
     private fun serveAutomixOpus(dataSpec: DataSpec, videoId: String, about: CoroutineContext): DataSpec {
+        // Asked under a rendition that is no longer current (Premium switched
+        // since the round took its key): refused rather than served, so the
+        // round's entry never takes the new rendition's bytes. The round ends
+        // short, and its retry is keyed and asked under the current one.
+        if (!AutomixAnalysisSource.renditionIsCurrent(
+                dataSpec.uri.getQueryParameter(AutomixAnalysisSource.RENDITION_PARAMETER),
+            )
+        ) {
+            throw java.io.IOException("analysis read for $videoId asked under a rendition no longer served")
+        }
         // Analysis reads YouTube's own Opus encoding, and it reads it
         // under a marker that playback never sends: this URI is built
         // only by [AutomixAnalysisSource.opusUri], and the queue never
@@ -377,6 +452,17 @@ internal class PlaybackStreamResolver(
             }
         } catch (e: TimeoutCancellationException) {
             throw java.io.IOException("Automix Opus resolution timed out for $videoId", e)
+        }
+        // Checked again now the resolve has returned: it reads the Premium
+        // setting during its own walk, so a switch between the check above and
+        // that read hands back the other rendition's URL, whose bytes would land
+        // under the key the round captured. Refused the same way; the round
+        // retries under the current rendition.
+        if (!AutomixAnalysisSource.renditionIsCurrent(
+                dataSpec.uri.getQueryParameter(AutomixAnalysisSource.RENDITION_PARAMETER),
+            )
+        ) {
+            throw java.io.IOException("analysis read for $videoId resolved under a rendition switched mid-resolve")
         }
         val headers = StreamResolver.mediaHeadersFor(streamUrl)
         return dataSpec.buildUpon()
@@ -515,7 +601,35 @@ internal class PlaybackStreamResolver(
     }
 
     /** A row that exists only in Spotify's catalogue, served by whichever source holds it. */
+    /**
+     * Whether [dataSpec] is the analyser's read at a lossless or immersive
+     * playback tier, which is answered with a capped copy instead: see
+     * [AutomixAnalysisSource.analysisRead].
+     */
+    private fun isLightAnalysisRead(dataSpec: DataSpec): Boolean =
+        // As admitted: [checkCapturedRouting] has already refused a read whose
+        // tier changed since its round began.
+        AutomixAnalysisSource.isLightRead(dataSpec.uri.getQueryParameter(AutomixAnalysisSource.ANALYSIS_READ_PARAMETER))
+
     private fun resolveSpotifyRow(dataSpec: DataSpec, videoId: String, about: CoroutineContext): DataSpec {
+        // The analyser's read of a row the listener plays lossless or
+        // immersive is answered with a capped lossy copy instead, and kept
+        // apart from the player's pin both ways: it neither reads the
+        // master the pin holds nor pins its lighter copy for playback. See
+        // [AutomixAnalysisSource.analysisRead]. At a lossy playback tier the
+        // pin is already a lossy copy, and the read shares it as before.
+        val playbackRequest = SourceResolver.requestForNow()
+        val lightRead = isLightAnalysisRead(dataSpec)
+        val request = if (lightRead) StreamRequest.Capped(AutomixAnalysisSource.ANALYSIS_KBPS) else playbackRequest
+        // One stream for the whole round: see [AnalysisReadPins].
+        if (lightRead) {
+            AnalysisReadPins.get(videoId)?.let { pinned ->
+                return dataSpec.buildUpon()
+                    .setUri(Uri.parse(pinned.url))
+                    .setHttpRequestHeaders(pinned.headers)
+                    .build()
+            }
+        }
         // The pin: the copy already chosen for this row.
         //
         // Every writer for a catalogue row — the player's own open,
@@ -525,7 +639,7 @@ internal class PlaybackStreamResolver(
         // panel is waiting on. The pin is what the class exists for:
         // one server fills this track's entry, so the second writer
         // reads the same bytes rather than a second answer.
-        val pinned = StreamChoice.of(videoId)?.takeIf { serving ->
+        val playbackPin = StreamChoice.of(videoId)?.takeIf { serving ->
             // A source turned off after the pin was made does not get
             // to keep serving: "Off" has to mean off for a row queued
             // earlier too.
@@ -533,6 +647,7 @@ internal class PlaybackStreamResolver(
                 SourceRegistry.activeForPlayback().any { it.configId == id }
             } ?: true
         }
+        val pinned = if (lightRead) null else playbackPin
         if (pinned != null) {
             return dataSpec.buildUpon()
                 .setUri(Uri.parse(pinned.url))
@@ -553,7 +668,7 @@ internal class PlaybackStreamResolver(
         var fallbackFailure: Throwable? = null
         val resolved = runBlocking(about) {
             val fromSources = withTimeoutOrNull(SUBSTITUTE_TIMEOUT_MS) {
-                SourceResolver.substituteForYouTube(target)
+                SourceResolver.substituteForYouTube(target, request)
             }
             if (fromSources != null) return@runBlocking fromSources
             // Nobody holds this recording, but YouTube is still switched
@@ -610,10 +725,48 @@ internal class PlaybackStreamResolver(
                         SourceStream(url, headers = StreamResolver.mediaHeadersFor(url))
                     }
             }
-        } ?: throw java.io.IOException(
-            "no enabled source could serve '${target.title}'",
-            fallbackFailure,
-        )
+        } ?: run {
+            // A light read that found nothing at the capped rate still has the
+            // player's own copy, which is what it read before the light read:
+            // measured at the playback tier rather than not at all.
+            if (lightRead && playbackPin != null) {
+                // Pinned for the round like a capped answer: its later opens
+                // read this same stream. See [AnalysisReadPins].
+                AnalysisReadPins.put(videoId, playbackPin)
+                return dataSpec.buildUpon()
+                    .setUri(Uri.parse(playbackPin.url))
+                    .setHttpRequestHeaders(playbackPin.headers)
+                    .build()
+            }
+            // No pin either: the row resolved at the playback tier, as before the
+            // light read (a source holding it only lossless still has a copy to
+            // measure), and pinned for the round the same way. The capped lookup
+            // above kept its ceiling; this is the stated fallback, not an
+            // over-cap answer to it.
+            if (lightRead) {
+                val playbackCopy = runBlocking(about) {
+                    withTimeoutOrNull(SUBSTITUTE_TIMEOUT_MS) { SourceResolver.substituteForYouTube(target, playbackRequest) }
+                }
+                if (playbackCopy != null) {
+                    AnalysisReadPins.put(videoId, playbackCopy)
+                    return dataSpec.buildUpon()
+                        .setUri(Uri.parse(playbackCopy.url))
+                        .setHttpRequestHeaders(playbackCopy.headers)
+                        .build()
+                }
+            }
+            throw java.io.IOException(
+                "no enabled source could serve '${target.title}'",
+                fallbackFailure,
+            )
+        }
+        if (lightRead) {
+            AnalysisReadPins.put(videoId, resolved)
+            return dataSpec.buildUpon()
+                .setUri(Uri.parse(resolved.url))
+                .setHttpRequestHeaders(resolved.headers)
+                .build()
+        }
         val serving = pinOrPinned(videoId, resolved, substituted = !viaYouTube)
         val sourceName = serving.sourceConfigId
             ?.let { SourceRegistry.config(it)?.displayName }

@@ -1,0 +1,55 @@
+package com.music.bitchord.playback.smart
+
+import kotlin.test.Test
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
+
+class SpokenOrLiveTest {
+    @Test
+    fun ordinarySongsWithLiveInTheTitleStillMix() {
+        assertFalse(isSpokenOrLiveForTest("Live It Up (feat. Pitbull)", "Nicky Jam, Will Smith & Era Istrefi"))
+        assertFalse(isSpokenOrLiveForTest("Live Your Life", "T.I."))
+        assertFalse(isSpokenOrLiveForTest("Live While We're Young", "One Direction"))
+        assertFalse(isSpokenOrLiveForTest("Live Forever", "Oasis", "Definitely Maybe"))
+        assertFalse(isSpokenOrLiveForTest("Lightning Crashes", "Live", "Throwing Copper"))
+        assertFalse(isSpokenOrLiveForTest("Performance", "Some Artist"))
+        assertFalse(isSpokenOrLiveForTest("Live in Love", "Some Artist"))
+        assertFalse(isSpokenOrLiveForTest("Live on the Edge", "Some Artist"))
+        assertFalse(isSpokenOrLiveForTest("Song (We Live in Harmony)", "Some Artist"))
+        assertFalse(isSpokenOrLiveForTest("Live and Let Die", "Wings"))
+        assertFalse(isSpokenOrLiveForTest("Medley - Live and Let Die", "Some Artist"))
+        assertFalse(isSpokenOrLiveForTest("Song (Live and Let Die Cover)", "Some Artist"))
+    }
+
+    @Test
+    fun labelledLiveRecordingsAreLeftAlone() {
+        assertTrue(isSpokenOrLiveForTest("Bohemian Rhapsody (Live)", "Queen"))
+        assertTrue(isSpokenOrLiveForTest("Creep [Live]", "Radiohead"))
+        assertTrue(isSpokenOrLiveForTest("Yellow (Live at Glastonbury 2016)", "Coldplay"))
+        assertTrue(isSpokenOrLiveForTest("Song (Acoustic Live)", "Artist"))
+        assertTrue(isSpokenOrLiveForTest("Song (Live Acoustic)", "Artist"))
+        assertTrue(isSpokenOrLiveForTest("Song - Live Acoustic", "Artist"))
+        assertTrue(isSpokenOrLiveForTest("Hello - Live", "Adele"))
+        assertTrue(isSpokenOrLiveForTest("Song (Live 2016)", "Artist"))
+        assertTrue(isSpokenOrLiveForTest("Song (Live, 2016)", "Artist"))
+        assertTrue(isSpokenOrLiveForTest("Song - Live, 2016", "Artist"))
+        assertTrue(isSpokenOrLiveForTest("Song (Live and Acoustic)", "Artist"))
+        assertTrue(isSpokenOrLiveForTest("Song (Live Remaster)", "Artist"))
+        assertTrue(isSpokenOrLiveForTest("Song (Live Remastered)", "Artist"))
+        assertTrue(isSpokenOrLiveForTest("Song - Live Remaster", "Artist"))
+        assertTrue(isSpokenOrLiveForTest("Song [Live 1977 Remaster]", "Artist"))
+        assertTrue(isSpokenOrLiveForTest("Song - Live 2016", "Artist"))
+        assertTrue(isSpokenOrLiveForTest("Hello – Live from the Royal Albert Hall", "Adele"))
+        assertTrue(isSpokenOrLiveForTest("Song", "Artist", "Live at Wembley"))
+        assertTrue(isSpokenOrLiveForTest("Song", "Artist", "Live: At The Hall"))
+        assertTrue(isSpokenOrLiveForTest("Song (Live: Wembley)", "Artist"))
+        assertTrue(isSpokenOrLiveForTest("Song [Live: Budokan 1978]", "Artist"))
+        assertTrue(isSpokenOrLiveForTest("Song - Live: Wembley", "Artist"))
+    }
+
+    @Test
+    fun spokenWordIsLeftAlone() {
+        assertTrue(isSpokenOrLiveForTest("Episode 12: Interview", "Some Podcast"))
+        assertTrue(isSpokenOrLiveForTest("Chapter 1", "Narrator", "The Hobbit (Audiobook)"))
+    }
+}

@@ -210,7 +210,6 @@ class MenuOpenCostProbe {
             spatialAudioOn = if (player) false else null,
             onToggleSpatialAudio = if (player) noop else null,
             onOpenListenTogether = if (player) noop else null,
-            onOpenAutomix = if (player) noop else null,
             presentation = presentation,
         )
     }

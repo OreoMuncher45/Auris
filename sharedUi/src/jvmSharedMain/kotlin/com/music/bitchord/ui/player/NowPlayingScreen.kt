@@ -1377,8 +1377,6 @@ fun NowPlayingScreen(
      * seekbar's long-press have to agree about whether the panel is already
      * showing.
      */
-    automixPanelOpen: Boolean = false,
-    onAutomixPanelOpenChange: (Boolean) -> Unit = {},
     /** Opens the Sing vocal-level sheet. A no-op on hosts without one. */
     onOpenSing: () -> Unit = {},
     /** Whether the vocal cut is currently engaged, for the lyrics mic disc. */
@@ -1670,8 +1668,6 @@ fun NowPlayingScreen(
         overlays = overlays,
         lyricsOffsetOpen = lyricsOffsetOpen,
         onDismissLyricsOffset = onDismissLyricsOffset,
-        automixPanelOpen = automixPanelOpen,
-        onAutomixPanelOpenChange = onAutomixPanelOpenChange,
         lyricPicker = lyricPicker,
     )
 
@@ -2072,7 +2068,11 @@ fun NowPlayingScreen(
 
     // The scrubber's two halves, shared by both layouts so a drop point is held
     // the same way in each — see [PlayerScrub.pendingSeek].
-    val onScrub: (Float) -> Unit = scrub::drag
+    val scrubControlsLocked = rememberUpdatedState(controlsLocked)
+    val onScrub: (Float) -> Unit = { fraction ->
+        if (!scrubControlsLocked.value) PlayerPlatform.host.onAutoMixScrubIntent()
+        scrub.drag(fraction)
+    }
     val onScrubFinished: () -> Unit = {
         // On release only. Ticking the whole way along the bar turns a scrub
         // into a rattle, and the beat that matters is the one that says where
@@ -2119,8 +2119,6 @@ fun NowPlayingScreen(
             onSelectLyricsProvider = onSelectLyricsProvider,
             lyricsOffsetOpen = lyricsOffsetOpen,
             onDismissLyricsOffset = onDismissLyricsOffset,
-            automixPanelOpen = automixPanelOpen,
-            onAutomixPanelOpenChange = onAutomixPanelOpenChange,
             onAddToQueue = onAddToQueue,
             onPlayNext = onPlayNext,
         )
@@ -2471,8 +2469,6 @@ fun NowPlayingScreen(
                 onOpenArtist = onOpenArtist,
                 lyrics = lyrics,
                 lyricsUnavailable = lyricsUnavailable,
-                automixPanelOpen = automixPanelOpen,
-                onAutomixPanelOpenChange = onAutomixPanelOpenChange,
                 playerHaze = playerHaze,
                 overlays = overlays,
                 controlsLocked = controlsLocked,
@@ -3413,8 +3409,6 @@ fun NowPlayingScreen(
                 versionSwitching = versionSwitching,
                 mixing = mixing,
                 scrub = scrub,
-                automixPanelOpen = automixPanelOpen,
-                onAutomixPanelOpenChange = onAutomixPanelOpenChange,
                 onScrub = onScrub,
                 onScrubFinished = onScrubFinished,
                 isLoading = isLoading,

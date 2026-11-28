@@ -152,13 +152,14 @@ object SourceResolver {
      * @param uri a `bitchord://source?...` URI as built by [SourceRegistry.trackUri].
      * @return the stream, or null when nothing enabled could serve the track.
      */
-    suspend fun resolve(uri: Uri): SourceStream? {
+    suspend fun resolve(uri: Uri, request: StreamRequest = requestForNow()): SourceStream? {
         val configId = uri.getQueryParameter("s") ?: return null
         val trackId = uri.getQueryParameter("t") ?: return null
         return resolve(
             configId = configId,
             trackId = trackId,
             target = targetIn(uri),
+            request = request,
         )
     }
 
@@ -188,8 +189,8 @@ object SourceResolver {
         configId: String,
         trackId: String,
         target: TrackMatcher.Target,
+        request: StreamRequest = requestForNow(),
     ): SourceStream? {
-        val request = requestForNow()
         val active = SourceRegistry.activeForPlayback()
         // A pin identifies where the row originally came from; it does not
         // override the source switch. Looking the instance up directly used to
@@ -235,9 +236,17 @@ object SourceResolver {
             }
         }
 
+        // A capped request (the analyser's light read) allows only an answer at
+        // or under its ceiling, and some sources answer above it regardless
+        // (JioSaavn's 320 kbps AAC). Such an answer is held back while the
+        // others are asked, and served only if none of them does better: a
+        // recording is still measured, at worst at the cost the cap meant to
+        // avoid.
+        var overCeiling: SourceStream? = null
         if (pinned != null) {
             attempt(pinned) { pinned.stream(trackId, request) }
-                ?.let { return it.copy(sourceConfigId = pinned.configId) }
+                ?.copy(sourceConfigId = pinned.configId)
+                ?.let { answer -> if (withinCeiling(answer, request)) return answer else overCeiling = answer }
         }
 
         // Last resort. A track whose own source is down is still a track the
@@ -248,8 +257,13 @@ object SourceResolver {
         // Sources that serve no audio are left out of the walk: a metadata
         // catalogue cannot answer a stream, and asking one spends a search
         // and a call to be told what was already known — that it cannot.
-        val (fallbackSource, stream) =
-            bestAcross(
+        // The ceiling is applied while the race picks its winner, not after:
+        // an over-cap answer that happened to finish first would otherwise beat
+        // an in-cap one still on its way. For any request without a ceiling
+        // every answer is accepted, as before. With an over-cap pinned answer
+        // held back, the search is bounded so the held answer is returned well
+        // inside the caller's own resolve timeout instead of being lost to it.
+        suspend fun search() = bestAcross(
                 active.filterNot { it.configId == configId }.filter { it.servesAudio },
                 target,
                 request,
@@ -258,9 +272,37 @@ object SourceResolver {
                 // runtime is what says so, and a row that states none cannot
                 // be checked.
                 strictLength = target.durationSec != null,
-            ) ?: return null
+                // For the analyser's capped read, the same artist too: a title
+                // and a runtime alone can match another artist's recording, and
+                // measuring that would plan the mix on the wrong song. Playback
+                // fallbacks keep their rule.
+                requireSharedArtist = request is StreamRequest.Capped && target.artist.isNotBlank(),
+                accept = { _, answer -> withinCeiling(answer, request) },
+            )
+        val (fallbackSource, stream) =
+            (if (overCeiling != null) withTimeoutOrNull(CAPPED_FALLBACK_WAIT_MS) { search() } else search())
+                ?: return overCeiling
         TrackLog.d(TAG, "fallback: '${target.title}' served by ${fallbackSource.displayName}")
         return stream
+    }
+
+    /**
+     * Whether [stream] honours [request]'s ceiling: a [StreamRequest.Capped]
+     * answer is lossy and, where its rate is known, at or under `maxKbps`.
+     * Every other request has no ceiling to break.
+     */
+    /**
+     * How long a capped resolve holding an over-ceiling answer searches the
+     * other sources before returning that answer: well inside the caller's
+     * resolve timeout, so the held answer is never lost to it.
+     */
+    private const val CAPPED_FALLBACK_WAIT_MS = 20_000L
+
+    internal fun withinCeiling(stream: SourceStream, request: StreamRequest): Boolean {
+        if (request !is StreamRequest.Capped) return true
+        if (stream.format.isLossless == true || stream.format.isDolbyAtmos) return false
+        val kbps = stream.format.kbps ?: return true
+        return kbps <= request.maxKbps
     }
 
     /**
@@ -290,14 +332,16 @@ object SourceResolver {
      * runs with sound already playing and is where a slow source's better answer
      * gets its hearing.
      */
-    suspend fun substituteForYouTube(target: TrackMatcher.Target): SourceStream? {
+    suspend fun substituteForYouTube(
+        target: TrackMatcher.Target,
+        request: StreamRequest = requestForNow(),
+    ): SourceStream? {
         // Video rows always use YouTube's own stream unless the listener
         // explicitly converts the current item in the player. A module match
         // is another recording and can be a wrong song altogether.
         if (target.title.isBlank() || target.isVideo) return null
         val candidates = candidatesForYouTube(SourceRegistry.activeForPlayback())
         if (candidates.isEmpty()) return null
-        val request = requestForNow()
         // A substitution, and so held to the length: what plays in place of
         // the requested track has to be the same recording, and the runtime is
         // the one statement about a recording that cannot be argued with.
@@ -306,6 +350,13 @@ object SourceResolver {
             target,
             request,
             strictLength = target.durationSec != null,
+            // A capped request (the analyser's light read) takes only an answer
+            // under its ceiling: see [withinCeiling]. Unchanged for playback.
+            accept = { _, answer -> withinCeiling(answer, request) },
+            // And only the same artist's recording, as resolve's capped
+            // fallback requires: a title and a runtime alone can match another
+            // artist's, and the mix would be planned on the wrong song.
+            requireSharedArtist = request is StreamRequest.Capped && target.artist.isNotBlank(),
         ) ?: return null
         // Says what was found, not what the caller will do with it. This
         // line used to read "substituted" unconditionally, including for
@@ -455,86 +506,6 @@ object SourceResolver {
             TAG,
             "prepared next: '${target.title}' from ${source.displayName} at ${stream.format.summary}" +
                 if (stream.belowRequest) " (below request)" else "",
-        )
-        return stream
-    }
-
-    /**
-     * A cheap copy of [target] for the analyser to measure, or null when no
-     * enabled source has one.
-     *
-     * The analyser needs the *recording*, not the quality: a tempo, a key and a
-     * beat grid are the same numbers whether they were read off a 24-bit/96kHz
-     * master or off a 320kbps transcode of it. So the copy asked for here is
-     * deliberately the cheap one — [StreamRequest.Best] — and the point of
-     * asking for it separately is the size:
-     *
-     *  - twelve seconds of a 96kHz ALAC master is 6.7MB, and the analyser
-     *    wants twelve seconds of *something*;
-     *  - twelve seconds of a 320kbps AAC is 480kB, a fifteenth of the traffic,
-     *    and it arrives before the listener has finished waiting for the first
-     *    note of the next track.
-     *
-     * That difference is the whole of the "Automix analysis fails nine times
-     * in ten on a Spotify catalogue" report. A catalogue row is matched to
-     * whichever source holds it, and that source is then asked for the quality
-     * the listener chose — a lossless master — so the bytes the analyser
-     * waited for were the master's. On a connection that serves them at a few
-     * hundred kilobytes a second they take half a minute to arrive, and they
-     * arrive *competing with the track actually playing* for the same link,
-     * which is where the stutter came from too.
-     *
-     * The copy is the same recording, matched the same way — on title, artist
-     * and runtime — so the evidence it produces describes the track being
-     * played. A copy whose runtime disagrees is refused by the analyser
-     * itself; see [com.music.bitchord.playback.smart.TrackAnalyzer].
-     *
-     * When the track's own source and track id are known, that source is asked
-     * first, for the cheap tier of the very track already in hand: one
-     * `/stream` call, no search, and no question of whether the answer is the
-     * same recording. Only when it cannot answer is the name-matched walk
-     * above used.
-     */
-    suspend fun analysisCopy(
-        target: TrackMatcher.Target,
-        configId: String? = null,
-        trackId: String? = null,
-    ): SourceStream? {
-        if (target.title.isBlank() || target.isVideo) return null
-        val active = SourceRegistry.activeForPlayback()
-        if (active.isEmpty()) return null
-
-        // The track's own source, at the cheap tier. No search: the track id is
-        // already in hand, and the tier is the only thing that changes.
-        if (configId != null && trackId != null) {
-            val own = active.firstOrNull { it.configId == configId }
-            if (own != null) {
-                val stream = attempt(own) { own.stream(trackId, StreamRequest.Best) }
-                    ?.copy(sourceConfigId = own.configId)
-                if (stream != null) {
-                    TrackLog.d(
-                        TAG,
-                        "analysis copy: '${target.title}' from ${own.displayName} at ${stream.format.summary}",
-                    )
-                    return stream
-                }
-            }
-        }
-
-        // Otherwise the same question every other cross-source path asks, at
-        // the cheap tier rather than the requested one.
-        val candidates = candidatesForYouTube(active)
-        if (candidates.isEmpty()) return null
-        val (source, stream) = bestAcross(
-            candidates,
-            target,
-            StreamRequest.Best,
-            strictLength = target.durationSec != null,
-            requireSharedArtist = true,
-        ) ?: return null
-        TrackLog.d(
-            TAG,
-            "analysis copy: '${target.title}' from ${source.displayName} at ${stream.format.summary}",
         )
         return stream
     }
@@ -1543,6 +1514,11 @@ object SourceResolver {
         val wantsAtmos = DeviceCodecs.playsDolbyAtmos && request.wantsAtmos
         val ordered = preferred(matches, target, wantsLossless, wantsAtmos)
         var settleFor: SourceStream? = null
+        // A capped request's over-ceiling answers, held while later rows are
+        // tried: the first row's 256 kbps must not end the walk when a later
+        // row of the same source answers within the cap. The lightest of them
+        // is returned only if no row fits; see [withinCeiling].
+        var overCeiling: SourceStream? = null
         for (match in ordered.take(STREAM_ATTEMPTS)) {
             val trackId = SourceRegistry.parseTrackKey(match.videoId)?.second ?: match.videoId
             val opened = attempt(source) { source.stream(trackId, request) } ?: continue
@@ -1564,6 +1540,16 @@ object SourceResolver {
                     "${source.displayName} offered ${served.summary} for '${match.title}'; " +
                         "over this lossy request — passing",
                 )
+                continue
+            }
+            if (!withinCeiling(stream, request)) {
+                TrackLog.d(
+                    TAG,
+                    "${source.displayName} offered ${served.summary} for '${match.title}'; over the cap — trying further",
+                )
+                if (overCeiling == null || (served.kbps ?: Int.MAX_VALUE) < (overCeiling.format.kbps ?: Int.MAX_VALUE)) {
+                    overCeiling = stream
+                }
                 continue
             }
             if (!wantsLossless || served.isLossless == true || served.isDolbyAtmos || served.statesNothingLossy) {
@@ -1590,7 +1576,7 @@ object SourceResolver {
             // first.
             settleFor = betterOf(settleFor, stream.copy(belowRequest = true))
         }
-        return settleFor
+        return settleFor ?: overCeiling
     }
 
     /**

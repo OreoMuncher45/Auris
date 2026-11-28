@@ -113,4 +113,21 @@ class AudioCacheSiblingTest {
         )
         assertEquals(false, asked)
     }
+
+    @Test
+    fun `online, the direct Premium entry still borrows a complete kept copy`() {
+        // The listener removed a substitute source: the complete JioSaavn copy
+        // under #alt2 plays instead of a fresh download, under a rendition too.
+        com.music.bitchord.playback.smart.AutomixAnalysisSource.rendition = { "premium" }
+        try {
+            // The substitute buckets are the rendition's own too.
+            val premiumAlt = AudioCache.altKeyOf(id, "")
+            val premiumAltNoAtmos = AudioCache.altKeyOf(id, "-noatmos")
+            assertEquals(premiumAlt, choose(preferred = "$id#premium", offline = false, complete = setOf(premiumAlt)))
+            // Still not for a substitute bucket preferred online.
+            assertNull(choose(preferred = premiumAlt, offline = false, complete = setOf(premiumAltNoAtmos)))
+        } finally {
+            com.music.bitchord.playback.smart.AutomixAnalysisSource.rendition = { null }
+        }
+    }
 }

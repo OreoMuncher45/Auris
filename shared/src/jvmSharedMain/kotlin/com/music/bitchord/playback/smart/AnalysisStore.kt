@@ -7,6 +7,7 @@ import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.math.roundToInt
 
 /**
  * Analysis results kept on disk, so a track is measured once and stays measured.
@@ -70,16 +71,48 @@ class AnalysisStore(
      */
     private val known = ConcurrentHashMap<String, Boolean>()
 
+    /**
+     * Serialises reads that may delete a file with writes of one. The restore
+     * lane and the analysis lane both load; one that read an outdated file and
+     * then paused could otherwise delete the replacement the other had just
+     * saved under the same name.
+     */
+    private val files = Any()
+
     private val json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
     }
 
     /** Reads [trackId]'s stored analysis, or null when there isn't one. */
-    fun load(trackId: String): TrackAnalysis? {
+    fun load(trackId: String): TrackAnalysis? = loadEntry(trackId)?.analysis
+
+    /**
+     * A stored analysis with the copy it was measured on.
+     *
+     * [measuredOn] is the cache key of the rendition the grid was read off, or
+     * null for an entry written before it was recorded. A loop deck is cut
+     * from that exact copy and from no other: two renditions of one length can
+     * still have their beats in different places.
+     */
+    class Entry(val analysis: TrackAnalysis, val measuredOn: String?)
+
+    /** [load], with the copy the result was measured on. */
+    fun loadEntry(trackId: String): Entry? {
         if (trackId.isBlank()) return null
         if (known[trackId] == false) return null
         val file = File(directory, fileNameFor(trackId))
+        return synchronized(files) {
+            // An entry under the old hash-based name cannot say whose it is:
+            // two ids can share a hash and a length, and the second save then
+            // replaced the first. It is dropped unread, and the track measured
+            // again once.
+            File(directory, legacyFileNameFor(trackId)).takeIf { it.exists() }?.delete()
+            loadLocked(trackId, file)
+        }
+    }
+
+    private fun loadLocked(trackId: String, file: File): Entry? {
         if (!file.exists()) {
             known[trackId] = false
             return null
@@ -90,7 +123,10 @@ class AnalysisStore(
             // way, and a wrong beat grid is worse than none — so it is dropped
             // and re-earned rather than migrated.
             require(stored.version == SCHEMA_VERSION) { "schema ${stored.version}" }
-            stored.toAnalysis(trackId)
+            // Whose analysis this is, as stored with it: one track never
+            // restores another's grid and copy.
+            require(stored.trackId == trackId) { "stored for another track" }
+            Entry(stored.toAnalysis(trackId).copy(measuredOn = stored.measuredOn), stored.measuredOn)
         }
             .onFailure {
                 // A half-written or outdated file is worth exactly nothing and
@@ -108,22 +144,32 @@ class AnalysisStore(
      * tempo: a failure is cheap to rediscover and worth rediscovering, since
      * the reason for it is usually missing bytes rather than the track itself.
      */
-    fun save(trackId: String, analysis: TrackAnalysis) {
+    fun save(trackId: String, analysis: TrackAnalysis, measuredOn: String? = null) {
         if (trackId.isBlank() || !analysis.isUsable) return
+        val encoded = runCatching {
+            json.encodeToString(
+                Stored.serializer(),
+                Stored.of(analysis).copy(measuredOn = measuredOn ?: analysis.measuredOn, trackId = trackId),
+            )
+        }
+            .onFailure { AnalysisLog.warn("Could not store analysis for $trackId", it) }
+            .getOrNull() ?: return
         runCatching {
             directory.mkdirs()
             val file = File(directory, fileNameFor(trackId))
             // Written aside and moved into place, so a kill mid-write leaves the old entry
             // rather than a truncated one.
             val temporary = File(directory, file.name + ".tmp")
-            try {
-                temporary.writeText(json.encodeToString(Stored.serializer(), Stored.of(analysis)))
-                moveInto(temporary, file)
-            } finally {
-                // A no-op once the move has taken it.
-                temporary.delete()
+            synchronized(files) {
+                try {
+                    temporary.writeText(encoded)
+                    moveInto(temporary, file)
+                } finally {
+                    // A no-op once the move has taken it.
+                    temporary.delete()
+                }
+                known[trackId] = true
             }
-            known[trackId] = true
         }.onFailure { AnalysisLog.warn("Could not store analysis for $trackId", it) }
         prune()
     }
@@ -155,15 +201,36 @@ class AnalysisStore(
      * analysis.
      */
     private fun prune() {
-        val files = directory.listFiles() ?: return
-        if (files.size <= MAX_ENTRIES) return
-        files.sortedBy { it.lastModified() }
-            .take(files.size - MAX_ENTRIES)
+        synchronized(files) { pruneLocked() }
+    }
+
+    private fun pruneLocked() {
+        // Under the same lock as a save's replacement, listing and age checks
+        // included: otherwise a save could refresh the entry chosen as oldest
+        // between the choice and the delete, and the fresh result was the one
+        // thrown away.
+        val entries = directory.listFiles() ?: return
+        if (entries.size <= MAX_ENTRIES) return
+        entries.sortedBy { it.lastModified() }
+            .take(entries.size - MAX_ENTRIES)
             .forEach { it.delete() }
     }
 
     /** Hashed rather than used raw: a track id is not guaranteed to be a legal filename. */
-    private fun fileNameFor(trackId: String): String = "${trackId.hashCode().toUInt()}_${trackId.length}.json"
+    /**
+     * A collision-resistant name for [trackId]'s entry (a track id is not
+     * guaranteed to be a legal filename, so it is hashed). SHA-256, not
+     * [String.hashCode]: YouTube ids all share one length, and 32-bit hashes
+     * collide across a large library, which let one track's save replace
+     * another's. The id itself is stored in the entry and checked on load.
+     */
+    private fun fileNameFor(trackId: String): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(trackId.toByteArray(Charsets.UTF_8))
+        return digest.joinToString("", limit = 16, truncated = "") { "%02x".format(it) } + ".json"
+    }
+
+    /** The name entries used before [fileNameFor]: see [loadEntry]. */
+    private fun legacyFileNameFor(trackId: String): String = "${trackId.hashCode().toUInt()}_${trackId.length}.json"
 
     /**
      * The persisted subset, kept separate from [TrackAnalysis] so that adding a
@@ -176,6 +243,8 @@ class AnalysisStore(
     @Serializable
     private data class Stored(
         val version: Int = SCHEMA_VERSION,
+        /** The id this entry was saved for; see [fileNameFor]. Absent from entries of older builds. */
+        val trackId: String? = null,
         val duration: Double = 0.0,
         val bpm: Double = 0.0,
         val beatInterval: Double = 0.0,
@@ -198,6 +267,12 @@ class AnalysisStore(
         val lowEnergyCurve: List<StoredEnergy> = emptyList(),
         val vocalActivityMask: List<Double> = emptyList(),
         val vocalProbability: Double = 0.0,
+        val headBeats: StoredBeats? = null,
+        val tailBeats: StoredBeats? = null,
+        val vocalWindows: List<StoredCurve> = emptyList(),
+        val levelWindows: List<StoredCurve> = emptyList(),
+        /** See [Entry.measuredOn]. Optional, so entries from before it still read. */
+        val measuredOn: String? = null,
     ) {
         fun toAnalysis(trackId: String) = TrackAnalysis(
             status = TrackAnalysis.STATUS_READY,
@@ -224,6 +299,10 @@ class AnalysisStore(
             lowEnergyCurve = lowEnergyCurve.map { it.toSample() },
             vocalActivityMask = vocalActivityMask,
             vocalProbability = vocalProbability,
+            headBeats = headBeats?.toSide(),
+            tailBeats = tailBeats?.toSide(),
+            vocalWindows = vocalWindows.map { it.toWindow() },
+            levelWindows = levelWindows.map { it.toWindow() },
         )
 
         companion object {
@@ -250,6 +329,10 @@ class AnalysisStore(
                 lowEnergyCurve = analysis.lowEnergyCurve.map(StoredEnergy::of),
                 vocalActivityMask = analysis.vocalActivityMask.map(::round),
                 vocalProbability = analysis.vocalProbability,
+                headBeats = analysis.headBeats?.let(StoredBeats::of),
+                tailBeats = analysis.tailBeats?.let(StoredBeats::of),
+                vocalWindows = analysis.vocalWindows.map { StoredCurve.of(it, keepingSidesOf = VOCAL_ACTIVE_THRESHOLD) },
+                levelWindows = analysis.levelWindows.map { StoredCurve.of(it, scale = LEVEL_SCALE) },
             )
         }
     }
@@ -260,6 +343,78 @@ class AnalysisStore(
 
         companion object {
             fun of(cue: MixCandidate) = StoredCue(round(cue.time), round(cue.score), cue.type)
+        }
+    }
+
+    @Serializable
+    private data class StoredBeats(
+        val beats: List<Double>,
+        val downbeats: List<Double>,
+        val bpm: Double,
+        val confidence: Double,
+    ) {
+        fun toSide() = BeatSide(beats, downbeats, bpm, confidence)
+
+        companion object {
+            fun of(side: BeatSide) = StoredBeats(
+                side.beats.map(::round),
+                side.downbeats.map(::round),
+                side.bpm,
+                // Not rounded: it is compared against eligibility thresholds,
+                // and 0.5496 stored as 0.55 passed one it failed in memory.
+                side.confidence,
+            )
+        }
+    }
+
+    /**
+     * Values in hundredths, clamped to 0..1: the mask is a soft estimate and the
+     * level is only ever compared with itself, and this keeps a window to a few
+     * kilobytes. A vocal window keeps each value on its own side of the active
+     * threshold: 0.254 stays sung (0.26) and 0.246 stays clear (0.24), where
+     * plain rounding made both 0.25.
+     */
+    @Serializable
+    private data class StoredCurve(
+        val startTime: Double,
+        val frameRate: Double,
+        val values: List<Int>,
+        /**
+         * Steps per unit each value is stored in. Hundredths for the vocal
+         * curve, whose threshold side is kept anyway; finer for the level curve,
+         * whose loop screening compares bars against each other, and hundredths
+         * (about ±0.3 dB a bar) let a borderline loop pass before a reload and
+         * fail after it. Absent from older entries, which were hundredths.
+         */
+        val scale: Int = 100,
+    ) {
+        fun toWindow() = CurveWindow(startTime, frameRate, FloatArray(values.size) { values[it] / scale.toFloat() })
+
+        companion object {
+            fun of(window: CurveWindow, keepingSidesOf: Double? = null, scale: Int = 100): StoredCurve {
+                val threshold = keepingSidesOf?.let { (it * scale).roundToInt() }
+                return StoredCurve(
+                    // Unrounded: a millisecond off the start moves the restored
+                    // window's end, and a loop whose coverage sits at the bar
+                    // could pass before a reload and fail after it.
+                    window.startTime,
+                    window.frameRate,
+                    window.values.map { value ->
+                        // A NaN from the model would throw in roundToInt and lose the
+                        // whole entry; stored as clear, which is what an unmeasured
+                        // point means to the mask.
+                        if (value.isNaN()) return@map 0
+                        val stored = (value.coerceIn(0f, 1f) * scale).roundToInt()
+                        when {
+                            keepingSidesOf == null || threshold == null -> stored
+                            value >= keepingSidesOf && stored < threshold -> threshold
+                            value < keepingSidesOf && stored >= threshold -> threshold - 1
+                            else -> stored
+                        }
+                    },
+                    scale,
+                )
+            }
         }
     }
 
@@ -275,13 +430,16 @@ class AnalysisStore(
     private companion object {
         const val DIRECTORY = "smart_analysis"
 
+        /** Ten-thousandths: see [StoredCurve.scale]. */
+        const val LEVEL_SCALE = 10_000
+
         /**
          * Bump whenever a stored number starts being computed differently.
          * Entries from an older schema are ignored rather than migrated: a
          * re-analysis costs seconds, and a beat grid interpreted under the wrong
          * assumptions is silently wrong for the life of the file.
          */
-        const val SCHEMA_VERSION = 1
+        const val SCHEMA_VERSION = 3
 
         /** A few thousand tracks' worth, at tens of kilobytes each. */
         const val MAX_ENTRIES = 2_000

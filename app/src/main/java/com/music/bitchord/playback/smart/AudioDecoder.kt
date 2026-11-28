@@ -50,22 +50,14 @@ object AudioDecoder {
     private const val TAG = "BitChordAudioDecoder"
     private const val TIMEOUT_US = 10_000L
 
-    /** The buffer's size when the region's length is not known, and its least growth step. */
+    /** What [SampleBuffer] starts at when the region's length is not known. */
     private const val INITIAL_SAMPLES = 1 shl 16
 
-    /**
-     * Room a region's buffer leaves for audio ahead of what was asked for: the
-     * seek lands on the sync sample at or before the start, and the decoder's
-     * priming comes out first.
-     */
-    private const val PRE_ROLL_SECONDS = 1.0
+    /** Head-room over a region's length for the sync-sample seek and the decoder's priming. */
+    private const val PRE_ROLL_SECONDS = 2.0
 
-    /**
-     * The most a region's buffer is sized for up front (32 MB): past it the
-     * buffer grows as the audio actually arrives, so a nonsensical end time
-     * cannot turn into one enormous allocation before a sample is decoded.
-     */
-    private const val MAX_PRESIZE_SAMPLES = 1 shl 23
+    /** The most [SampleBuffer] presizes to; anything longer grows by half. */
+    private const val MAX_PRESIZE_SAMPLES = 1 shl 25
 
     /** Decoded mono PCM at the container's own sample rate; the caller resamples. */
     data class Pcm(val samples: FloatArray, val sampleRate: Double)
@@ -130,17 +122,24 @@ object AudioDecoder {
         endSeconds: Double,
         abort: () -> Boolean = { false },
     ): Pair<Pcm, Double>? {
-        com.music.bitchord.data.PerfCounters.bump(
-            com.music.bitchord.data.PerfCounters.Counter.ANALYSER_PASS,
-        )
         val samples = SampleBuffer(endSeconds - startSeconds)
         var scratch = FloatArray(0)
+        // As in [decodeRegionStereo]: chunks ending more than [PRE_ROLL_SECONDS]
+        // before the start are dropped, so a late window after a sparse sync
+        // point does not hold most of the track, and the start reported is the
+        // first chunk kept, so offsets still match the samples.
+        val keepFrom = startSeconds - PRE_ROLL_SECONDS
+        var firstKept = Double.NaN
         val decoded = decodeRaw(source, startSeconds, endSeconds, abort) { buffer, info, channels, rate ->
             scratch = scratchFor(scratch, info, channels)
             val frames = toMono(buffer, info, channels, scratch)
+            val chunkStart = info.presentationTimeUs / 1_000_000.0
+            if (rate > 0 && chunkStart + frames.toDouble() / rate < keepFrom) return@decodeRaw
+            if (firstKept.isNaN()) firstKept = chunkStart
             samples.add(scratch, frames, rate)
         } ?: return null
-        return Pcm(samples.toArray(), decoded.first) to decoded.second
+        val start = if (firstKept.isNaN()) decoded.second else firstKept
+        return Pcm(samples.toArray(), decoded.first) to start
     }
 
     /**
@@ -148,18 +147,19 @@ object AudioDecoder {
      * region is never held at the container's own rate.
      *
      * This is the whole-track pass's decode. Decoded first and resampled after,
-     * a seven-minute song at 44.1 kHz grew its buffer to one 64 MiB block with
-     * the 32 MiB one it replaced still live, and a ten-minute 96 kHz file would
-     * have asked for 256 MiB: an OutOfMemoryError on a 192 MB heap, and the
-     * track written off for the session. Streamed, the only buffer that scales
-     * with the track is the output, at [outputRate] — about 2.6 MB a minute at
-     * the analyser's 11 kHz, whatever the source was. See [StreamingResampler]
-     * for why the samples are the ones a single resample call would produce.
+     * the whole track sat on the heap as mono float at the container's rate —
+     * ten megabytes a minute at 44.1 kHz, twenty-three at 96 kHz, an hour-long
+     * mix well over half a gigabyte — and then again as the list of chunks it
+     * was flattened from. Streamed, the only buffer that scales with the track
+     * is the output, at [outputRate]: about 2.6 MB a minute at the analyser's
+     * 11 kHz, whatever the source was. See [StreamingResampler] for why the
+     * samples are the ones a single resample call would produce.
      *
      * [resample] is the whole-array resampler the stream is cut into, normally
-     * [TrackFeatures.resample]; a block it fails on fails the decode. The
-     * returned [Pcm.sampleRate] is [outputRate], or the container's own rate
-     * when the two are within a hertz and nothing was converted.
+     * [TrackFeatures.resample]; a block it fails on fails the decode, and so
+     * does an output rate that changes mid-stream. The returned
+     * [Pcm.sampleRate] is [outputRate], or the container's own rate when the
+     * two are within a hertz and nothing was converted.
      */
     fun decodeRegionResampled(
         source: MediaDataSource,
@@ -169,9 +169,6 @@ object AudioDecoder {
         resample: (FloatArray, Double, Double) -> FloatArray?,
         abort: () -> Boolean = { false },
     ): Pair<Pcm, Double>? {
-        com.music.bitchord.data.PerfCounters.bump(
-            com.music.bitchord.data.PerfCounters.Counter.ANALYSER_PASS,
-        )
         var stream: StreamingResampler? = null
         var streamRate = 0
         var broken = false
@@ -220,15 +217,53 @@ object AudioDecoder {
         val right = SampleBuffer(endSeconds - startSeconds)
         var leftScratch = FloatArray(0)
         var rightScratch = FloatArray(0)
+        // The extractor seeks to the sync sample before the start, which in a
+        // file with sparse sync points can be minutes early: everything from
+        // there on was kept, so a late window could hold most of the track.
+        // Whole chunks ending more than [PRE_ROLL_SECONDS] before the start
+        // are dropped, and the start reported is the first chunk kept.
+        val keepFrom = startSeconds - PRE_ROLL_SECONDS
+        var firstKept = Double.NaN
         val decoded = decodeRaw(source, startSeconds, endSeconds, abort) { buffer, info, channels, rate ->
             leftScratch = scratchFor(leftScratch, info, channels)
             rightScratch = scratchFor(rightScratch, info, channels)
             val frames = toStereo(buffer, info, channels, leftScratch, rightScratch)
+            val chunkStart = info.presentationTimeUs / 1_000_000.0
+            if (rate > 0 && chunkStart + frames.toDouble() / rate < keepFrom) return@decodeRaw
+            if (firstKept.isNaN()) firstKept = chunkStart
             left.add(leftScratch, frames, rate)
             right.add(rightScratch, frames, rate)
         } ?: return null
-        return StereoPcm(left.toArray(), right.toArray(), decoded.first) to decoded.second
+        val start = if (firstKept.isNaN()) decoded.second else firstKept
+        return StereoPcm(left.toArray(), right.toArray(), decoded.first) to start
     }
+
+    /**
+     * As [decodeRegion], but handing each decoded mono chunk to [onChunk] instead
+     * of keeping it, so a caller that only reduces the audio never holds the
+     * region. Returns the output rate paired with the region's real start.
+     */
+    fun streamRegion(
+        source: MediaDataSource,
+        startSeconds: Double,
+        endSeconds: Double,
+        abort: () -> Boolean = { false },
+        keepFrom: Double = Double.NEGATIVE_INFINITY,
+        onChunk: (samples: FloatArray, atSeconds: Double, sampleRate: Int) -> Unit,
+    ): Pair<Double, Double>? =
+        decodeRaw(source, startSeconds, endSeconds, abort) { buffer, info, channels, rate ->
+            val frames = info.size / 2 / max(1, channels)
+            // A chunk ending before [keepFrom] (the caller's earliest useful
+            // time) is not downmixed at all: a sparse seek can land minutes
+            // early, and each of those chunks cost an array and a mix only to be
+            // thrown away. The codec is still fed from the sync point; a chunk
+            // that overlaps the boundary is kept.
+            val at = info.presentationTimeUs / 1_000_000.0
+            if (rate > 0 && at + frames.toDouble() / rate < keepFrom) return@decodeRaw
+            val mono = FloatArray(frames)
+            toMono(buffer, info, channels, mono)
+            onChunk(mono, info.presentationTimeUs / 1_000_000.0, rate)
+        }
 
     /**
      * One growable buffer of decoded samples.
@@ -239,12 +274,9 @@ object AudioDecoder {
      *
      * So the samples go into one buffer, sized for the region the moment the
      * first output buffer says what rate it is at: [seconds] of audio plus
-     * [PRE_ROLL_SECONDS] for the sync-sample seek and the decoder's priming.
-     * It used to start at [INITIAL_SAMPLES] and double its way there, which for
-     * a 30 s stereo window at 96 kHz meant six copies per channel and a final
-     * 16 MiB buffer per channel holding 11 MB of audio, with the 8 MiB one it
-     * replaced live beside it. A decoder that produces more than that still
-     * grows, by half rather than double.
+     * [PRE_ROLL_SECONDS] for the sync-sample seek and the decoder's priming. A
+     * decoder that produces more than that still grows, by half rather than
+     * double.
      */
     private class SampleBuffer(private val seconds: Double) {
         private var samples = FloatArray(0)
@@ -300,7 +332,9 @@ object AudioDecoder {
 
             val startUs = (startSeconds * 1_000_000).toLong()
             val endUs = (endSeconds * 1_000_000).toLong()
-            extractor.seekTo(startUs, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
+            // At or before the start, never after it: callers want coverage from
+            // the start, and the returned real start lets them drop the extra.
+            extractor.seekTo(startUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
 
             codec = runCatching { MediaCodec.createDecoderByType(mime) }
                 .onFailure { Log.w(TAG, "No decoder for $mime", it) }
@@ -329,64 +363,76 @@ object AudioDecoder {
                 // costs in both time and heap. `finally` still tears the codec
                 // and extractor down.
                 if (abort()) return null
-                if (!inputDone) {
-                    val inputIndex = codec.dequeueInputBuffer(TIMEOUT_US)
-                    if (inputIndex >= 0) {
-                        val inputBuffer = codec.getInputBuffer(inputIndex)
-                        if (inputBuffer == null) {
-                            // Nothing to feed this cycle; try again next iteration.
-                        } else {
-                            val sampleSize = extractor.readSampleData(inputBuffer, 0)
-                            val sampleTimeUs = extractor.sampleTime
-                            if (sampleSize < 0 || (sampleTimeUs in 0..Long.MAX_VALUE && sampleTimeUs > endUs)) {
-                                codec.queueInputBuffer(inputIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
-                                inputDone = true
-                            } else {
-                                codec.queueInputBuffer(inputIndex, 0, sampleSize, sampleTimeUs, 0)
-                                extractor.advance()
-                            }
-                        }
+                // Every free input slot is filled, and every ready output
+                // drained, before anything waits. Feeding one packet and then
+                // blocking for its frame left the loop waiting on the codec's
+                // latency once per 20 ms Opus frame: about 6 ms each, which is
+                // most of what decoding a region cost. It only blocks now when
+                // neither side could move.
+                var progressed = false
+                while (!inputDone) {
+                    if (abort()) return null
+                    val inputIndex = codec.dequeueInputBuffer(0L)
+                    if (inputIndex < 0) break
+                    val inputBuffer = codec.getInputBuffer(inputIndex) ?: break
+                    progressed = true
+                    val sampleSize = extractor.readSampleData(inputBuffer, 0)
+                    val sampleTimeUs = extractor.sampleTime
+                    if (sampleSize < 0 || (sampleTimeUs in 0..Long.MAX_VALUE && sampleTimeUs > endUs)) {
+                        codec.queueInputBuffer(inputIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                        inputDone = true
+                    } else {
+                        codec.queueInputBuffer(inputIndex, 0, sampleSize, sampleTimeUs, 0)
+                        extractor.advance()
                     }
                 }
 
-                when (val outputIndex = codec.dequeueOutputBuffer(bufferInfo, TIMEOUT_US)) {
-                    MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
-                        val newFormat = codec.outputFormat
-                        outputRate = newFormat.intOrNull(MediaFormat.KEY_SAMPLE_RATE) ?: outputRate
-                        outputChannels = newFormat.intOrNull(MediaFormat.KEY_CHANNEL_COUNT) ?: outputChannels
-                        outputEncoding = PcmNarrowing.outputEncodingOf(newFormat.intOrNull(MediaFormat.KEY_PCM_ENCODING))
-                        Log.d(TAG, "Output format: ${outputRate}Hz x$outputChannels, encoding $outputEncoding")
-                        if (!PcmNarrowing.supports(outputEncoding)) {
-                            Log.w(TAG, "Unsupported PCM encoding $outputEncoding; giving up")
-                            return null
-                        }
-                    }
-                    MediaCodec.INFO_TRY_AGAIN_LATER, MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED -> Unit
-                    else -> if (outputIndex >= 0) {
-                        if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
-                            outputDone = true
-                        }
-                        if (bufferInfo.size > 0) {
-                            if (!sawFirstSample) {
-                                actualStartSeconds = bufferInfo.presentationTimeUs / 1_000_000.0
-                                sawFirstSample = true
+                var timeout = if (progressed) 0L else TIMEOUT_US
+                while (!outputDone) {
+                    // Also polled per buffer: a long drain, or one that ends
+                    // the stream, otherwise runs on past a yield.
+                    if (abort()) return null
+                    val outputIndex = codec.dequeueOutputBuffer(bufferInfo, timeout)
+                    if (outputIndex == MediaCodec.INFO_TRY_AGAIN_LATER) break
+                    timeout = 0L
+                    when (outputIndex) {
+                        MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                            val newFormat = codec.outputFormat
+                            outputRate = newFormat.intOrNull(MediaFormat.KEY_SAMPLE_RATE) ?: outputRate
+                            outputChannels = newFormat.intOrNull(MediaFormat.KEY_CHANNEL_COUNT) ?: outputChannels
+                            outputEncoding = PcmNarrowing.outputEncodingOf(newFormat.intOrNull(MediaFormat.KEY_PCM_ENCODING))
+                            if (!PcmNarrowing.supports(outputEncoding)) {
+                                Log.w(TAG, "Unsupported PCM encoding $outputEncoding; giving up")
+                                return null
                             }
-                            codec.getOutputBuffer(outputIndex)?.let { output ->
-                                if (outputEncoding == PcmNarrowing.PCM_16BIT) {
-                                    onBuffer(output, bufferInfo, outputChannels, outputRate)
-                                } else {
-                                    val (shorts, info) = narrowed.of(output, bufferInfo, outputEncoding)
-                                    onBuffer(shorts, info, outputChannels, outputRate)
+                        }
+                        MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED -> Unit
+                        else -> if (outputIndex >= 0) {
+                            if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
+                                outputDone = true
+                            }
+                            if (bufferInfo.size > 0) {
+                                if (!sawFirstSample) {
+                                    actualStartSeconds = bufferInfo.presentationTimeUs / 1_000_000.0
+                                    sawFirstSample = true
                                 }
+                                codec.getOutputBuffer(outputIndex)?.let { output ->
+                                    if (outputEncoding == PcmNarrowing.PCM_16BIT) {
+                                        onBuffer(output, bufferInfo, outputChannels, outputRate)
+                                    } else {
+                                        val (shorts, info) = narrowed.of(output, bufferInfo, outputEncoding)
+                                        onBuffer(shorts, info, outputChannels, outputRate)
+                                    }
+                                }
+                                if (bufferInfo.presentationTimeUs > endUs) outputDone = true
                             }
-                            if (bufferInfo.presentationTimeUs > endUs) outputDone = true
+                            codec.releaseOutputBuffer(outputIndex, false)
                         }
-                        codec.releaseOutputBuffer(outputIndex, false)
                     }
                 }
             }
 
-            if (!sawFirstSample || outputRate <= 0) return null
+            if (!sawFirstSample || outputRate <= 0 || abort()) return null
             return outputRate.toDouble() to actualStartSeconds
         } catch (error: Exception) {
             Log.w(TAG, "Region decode failed", error)
@@ -418,8 +464,7 @@ object AudioDecoder {
         /**
          * Bulk-copied out of the codec's buffer and converted with plain array
          * indexing ([PcmNarrowing.narrow]): a per-sample read from a direct
-         * buffer costs a bounds check and a call for every one of the ~115 M
-         * samples in ten minutes of 96 kHz stereo.
+         * buffer costs a bounds check and a call for every sample.
          */
         fun of(source: ByteBuffer, from: MediaCodec.BufferInfo, encoding: Int): Pair<ByteBuffer, MediaCodec.BufferInfo> {
             val width = PcmNarrowing.widthOf(encoding)

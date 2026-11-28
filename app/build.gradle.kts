@@ -645,3 +645,44 @@ val verifyDevInstall = tasks.register("verifyDevInstall") {
     }
 }
 tasks.matching { it.name == "installDevDebug" }.configureEach { finalizedBy(verifyDevInstall) }
+
+/**
+ * Third-party licences that have to travel inside the APK, not just in the
+ * repository: the loop-mix renderer compiles Signalsmith Stretch and
+ * Signalsmith Linear into the app's native library, and their MIT licences
+ * ask for the copyright notice and permission text to go wherever the code
+ * goes. Packaged as `assets/licenses/<name>.txt`, copied from the vendored
+ * trees so there is one copy to keep current. The draft-APK workflow fails a
+ * build whose APK lacks them.
+ */
+abstract class ThirdPartyNotices : DefaultTask() {
+    @get:InputFiles
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val licences: ConfigurableFileCollection
+
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @TaskAction
+    fun copy() {
+        val dir = outputDir.get().asFile.resolve("licenses")
+        dir.deleteRecursively()
+        dir.mkdirs()
+        // Named after the vendored directory each licence sits in.
+        licences.files.forEach { file -> file.copyTo(dir.resolve("${file.parentFile.name}.txt")) }
+    }
+}
+
+val thirdPartyNotices = tasks.register<ThirdPartyNotices>("thirdPartyNotices") {
+    val vendored = rootProject.layout.projectDirectory.dir("native/third_party")
+    licences.from(
+        vendored.file("signalsmith-stretch/LICENSE.txt"),
+        vendored.file("signalsmith-linear/LICENSE.txt"),
+    )
+}
+
+androidComponents {
+    onVariants { variant ->
+        variant.sources.assets?.addGeneratedSourceDirectory(thirdPartyNotices, ThirdPartyNotices::outputDir)
+    }
+}

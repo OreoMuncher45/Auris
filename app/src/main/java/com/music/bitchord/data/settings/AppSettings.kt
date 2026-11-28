@@ -356,15 +356,6 @@ object AppSettings {
      */
     val homeProvider = MutableStateFlow(HomeProvider.YOUTUBE)
 
-    /**
-     * The transition planner Automix runs.
-     *
-     * Pinned to the phrase-aware engine: the legacy plan it replaced is gone,
-     * so there is nothing to switch back to. Kept as a setting because the
-     * plan reads it, and because an install that still has the old engine
-     * name in its preferences has to land somewhere that resolves.
-     */
-    val automixEngine = MutableStateFlow(AutomixEngine.V2)
     val skipSilence = MutableStateFlow(false)
 
     /** Requested PCM representation at the Android AudioTrack boundary. */
@@ -1384,6 +1375,23 @@ object AppSettings {
      */
     val smartMixBlend = MutableStateFlow<MixBlend?>(null)
 
+    /** The Automix blend in flight laid out for the mix popup, or null between blends. */
+    val smartMixView = MutableStateFlow<MixTransitionView?>(null)
+
+    /** How far through [smartMixView]'s blend playback is, 0..1. Read it in draw. */
+    val smartMixProgress = MutableStateFlow(0f)
+
+    /**
+     * The *next* Automix transition laid out for the mix popup, as the plan
+     * stands right now — for a popup opened by hand from the player's menu
+     * between blends. Only published while [mixViewOpen], and null whenever
+     * [smartMixView] has a blend to show instead.
+     */
+    val smartMixPreview = MutableStateFlow<MixTransitionView?>(null)
+
+    /** The mix popup is up. Written by the player; tells the crossfade controller someone is looking. */
+    val mixViewOpen = MutableStateFlow(false)
+
     /**
      * True while a version switch is fetching and analysing the other cut
      * before playback actually moves. Drains into the loading bar drawn along
@@ -1400,16 +1408,6 @@ object AppSettings {
      * that knows which two tracks the next transition is between.
      */
     val smartAnalysis = MutableStateFlow(SmartAnalysis())
-
-    /**
-     * Everything the Automix panel shows: the analysis in full, the plan that
-     * came out of it, and the listener's own choice for this track.
-     *
-     * Published by the crossfade controller, which is the only thing that
-     * knows which two tracks the next transition is between and what the
-     * planner made of them.
-     */
-    val automixPanel = MutableStateFlow(AutomixPanelState())
 
     /**
      * Where on the *playing* track the next transition is planned to happen, as
@@ -1553,11 +1551,10 @@ object AppSettings {
         offlineModeFlow.value =
             runCatching { prefs.getBoolean(KEY_OFFLINE_MODE, false) }.getOrDefault(false)
         com.music.bitchord.data.spotify.LocalPlaylistStore.init(context)
-        // The listener's own Automix choices, kept with the songs. Initialized
-        // here because this is the first point at which the app has a place to
-        // keep files, and a choice that forgets itself when the app closes is
-        // not a choice.
-        com.music.bitchord.playback.AutomixProfiles.init(context.filesDir)
+        // Once, on the first launch with BitChord's Automix engine: the old
+        // engine's analysis store and profiles go, and its engine switch with
+        // them. Before [readAll], so nothing reads a key that is on its way out.
+        com.music.bitchord.playback.smart.AutomixMigration.run(prefs, context.filesDir)
         readAll()
         watchConnection(context)
         // The offline verdict, published to the one place every request in the
@@ -1615,13 +1612,6 @@ object AppSettings {
         // An unknown name lands on YouTube rather than on nothing: the provider
         // a listener never chose is the one that works without an account.
         homeProvider.value = HomeProvider.of(prefs.getString(KEY_HOME_PROVIDER, null))
-        // An install that still has the removed engine's name in its
-        // preferences fails the lookup and lands on the one engine there is.
-        automixEngine.value = runCatching {
-            AutomixEngine.valueOf(
-                prefs.getString(KEY_AUTOMIX_ENGINE, null) ?: AutomixEngine.V2.name,
-            )
-        }.getOrDefault(AutomixEngine.V2)
         skipSilence.value = prefs.getBoolean(KEY_SKIP_SILENCE, false)
         outputPcmMode.value = runCatching {
             OutputPcmMode.valueOf(
@@ -2181,17 +2171,6 @@ object AppSettings {
         // process dies is a switch that reports success and comes back on the
         // old provider — which is exactly what it did.
         prefs.edit().putString(KEY_HOME_PROVIDER, value.name).commit()
-    }
-
-    /**
-     * Records the engine in the preferences.
-     *
-     * The only engine is the phrase-aware one, so this writes what it is
-     * given and nothing can be moved off it.
-     */
-    fun setAutomixEngine(value: AutomixEngine) {
-        automixEngine.value = value
-        prefs.edit().putString(KEY_AUTOMIX_ENGINE, value.name).apply()
     }
 
     fun setSkipSilence(value: Boolean) {
@@ -3247,6 +3226,9 @@ object AppSettings {
         "downloaded_collections",
         KEY_LOCAL_MUSIC_FOLDER_URI,
         KEY_LAST_VERSION_CODE,
+        // Whether this install's old Automix store has been cleared: a backup
+        // from before the move would otherwise run it again over the new one.
+        com.music.bitchord.playback.smart.AutomixMigration.KEY_DONE,
     )
 
     const val DEFAULT_CACHE_LIMIT_BYTES = 512L * 1024 * 1024
@@ -3290,7 +3272,6 @@ object AppSettings {
     private const val KEY_AUTO_UPGRADE_LOCAL_STORAGE = "auto_upgrade_local_storage"
     private const val KEY_AUTOMIX_PERFORMANCE_MODE = "automix_performance_mode"
     private const val KEY_HOME_PROVIDER = "home_provider"
-    private const val KEY_AUTOMIX_ENGINE = "automix_engine"
     private const val KEY_SKIP_SILENCE = "skip_silence"
     private const val KEY_OUTPUT_PCM_MODE = "output_pcm_mode"
     private const val KEY_BIT_PERFECT = "bit_perfect"

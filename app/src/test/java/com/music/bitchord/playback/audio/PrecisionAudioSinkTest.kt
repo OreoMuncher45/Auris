@@ -42,6 +42,8 @@ class PrecisionAudioSinkTest {
         var lastHandledBuffer: ByteBuffer? = null
         var handleBufferCallCount: Int = 0
         var lastPresentationTimeUs: Long = C.TIME_UNSET
+        /** Every write: its presentation time and its byte count. */
+        val writes = mutableListOf<Pair<Long, Int>>()
         var lastEncodedAccessUnitCount: Int = 0
 
         var formatSupportReturn: Int = AudioSink.SINK_FORMAT_SUPPORTED_DIRECTLY
@@ -85,6 +87,7 @@ class PrecisionAudioSinkTest {
             encodedAccessUnitCount: Int,
         ): Boolean {
             handleBufferCallCount++
+            writes += presentationTimeUs to buffer.remaining()
             lastHandledBuffer = buffer
             lastPresentationTimeUs = presentationTimeUs
             lastEncodedAccessUnitCount = encodedAccessUnitCount
@@ -267,6 +270,103 @@ class PrecisionAudioSinkTest {
             assertEquals("sample $i altered", expected, bypassed[i])
         }
         assertTrue(AudioOutputStatus.current.value.dspBypassed)
+    }
+
+    /**
+     * The sleep timer's fade can't turn a bit-perfect player down (its volume
+     * is held at unity), so the sink fades the samples for it, and only then.
+     */
+    @Test
+    fun `the sleep fade turns bit-perfect samples down, and only while it runs`() {
+        val samples = shortArrayOf(0, 1000, -1000, 20000, -20000, 4096, -4096, 2)
+
+        fun output(bitPerfect: Boolean, fade: Float): Pair<ByteBuffer, ShortArray> {
+            val fakeDelegate = FakeAudioSink()
+            val sink = PrecisionAudioSink(
+                delegate = fakeDelegate,
+                dspChain = idleDspChain(),
+                enableFloatOutput = false,
+                bitPerfect = { bitPerfect },
+                sleepFade = { fade },
+            )
+            sink.configure(AudioSink.AudioSinkConfig.Builder(rawFormat(C.ENCODING_PCM_16BIT)).build())
+            val input = ByteBuffer.allocate(samples.size * 2).order(ByteOrder.nativeOrder())
+            samples.forEach(input::putShort)
+            input.flip()
+            sink.handleBuffer(input, 0L, 1)
+            val handed = fakeDelegate.lastHandledBuffer!!
+            val read = handed.duplicate().order(ByteOrder.nativeOrder()).also { it.rewind() }
+            return input to ShortArray(samples.size) { read.getShort() }
+        }
+
+        val (_, halfway) = output(bitPerfect = true, fade = 0.5f)
+        samples.forEachIndexed { i, s ->
+            assertEquals("sample $i at half the fade", s / 2.0, halfway[i].toDouble(), 1.0)
+        }
+        // No fade running: the decoder's own buffer, untouched.
+        val (input, whole) = output(bitPerfect = true, fade = 1f)
+        assertTrue(whole.contentEquals(samples))
+        // Off bit-perfect the player's volume carries the fade: not applied twice.
+        val (_, mixed) = output(bitPerfect = false, fade = 0.5f)
+        assertTrue("the fade was applied on top of the player's volume", mixed.contentEquals(samples))
+    }
+
+    /**
+     * Under bit-perfect the decoder's own buffer goes straight to the
+     * delegate, even with a chain that isn't idle (an EQ switched on, or a
+     * limiter hold left by a loop mix): the chain never runs there, so its
+     * state is no reason for a decode and encode round trip.
+     */
+    @Test
+    fun `bit-perfect passes the decoder's buffer through whatever the chain's state`() {
+        val fakeDelegate = FakeAudioSink()
+        val equalizer = EqualizerProcessor()
+        val sink = PrecisionAudioSink(
+            delegate = fakeDelegate,
+            dspChain = DspChain(equalizer = equalizer),
+            enableFloatOutput = false,
+            bitPerfect = { true },
+        )
+        sink.configure(AudioSink.AudioSinkConfig.Builder(rawFormat(C.ENCODING_PCM_16BIT)).build())
+        val gains = FloatArray(EqLayout.SLOTS).also { it[3] = 6.0f }
+        equalizer.setTuning(enabled = true, EqCurve(gains, FloatArray(EqLayout.SLOTS) { 0.707f }, 0f), balance = 0f)
+        equalizer.flush()
+
+        val input = ByteBuffer.allocate(8).order(ByteOrder.nativeOrder())
+        shortArrayOf(1, -1, 1000, -1000).forEach(input::putShort)
+        input.flip()
+        sink.handleBuffer(input, 0L, 1)
+
+        assertSame(input, fakeDelegate.lastHandledBuffer)
+    }
+
+    /**
+     * An outgoing loop arm built for another rate than the sink now runs at
+     * (armed before a reset and reconfigure, or for a sink that changed rate)
+     * is called off on the next buffer, not spliced with the wrong timing.
+     */
+    @Test
+    fun `an outgoing loop arm at another sample rate is interrupted, not spliced`() {
+        val fakeDelegate = FakeAudioSink()
+        val chain = idleDspChain()
+        val sink = createSink(fakeDelegate, enableFloatOutput = false, dspChain = chain)
+        sink.configure(AudioSink.AudioSinkConfig.Builder(rawFormat(C.ENCODING_PCM_16BIT)).build())
+        val port = chain.transition.loop
+        port.armOutgoing(
+            com.music.bitchord.playback.loopmix.LoopMixPort.OutArm(
+                com.music.bitchord.playback.loopmix.LoopMixRenderer(44_100),
+                takeoverUs = 0L,
+                sampleRate = 44_100,
+                firstFrame = 0L,
+            ),
+        )
+        val input = ByteBuffer.allocate(8).order(ByteOrder.nativeOrder())
+        shortArrayOf(1, -1, 1000, -1000).forEach(input::putShort)
+        input.flip()
+        sink.handleBuffer(input, 0L, 1)
+
+        assertTrue(port.interrupted)
+        assertFalse(port.tookOver)
     }
 
     /**
@@ -515,6 +615,125 @@ class PrecisionAudioSinkTest {
         assertEquals(1, fakeDelegate.handleBufferCallCount)
         assertEquals(1_000_000L, fakeDelegate.lastPresentationTimeUs)
         assertSame(input, fakeDelegate.lastHandledBuffer)
+    }
+
+    /**
+     * A loop mix that lined the incoming player up by inserting silence leaves
+     * the delegate's clock that far ahead of the track until a flush. Once the
+     * loop disarms, the buffer forwarded untouched must still carry the
+     * shifted time, or the delegate sees a gap and resyncs.
+     */
+    @Test
+    fun `the forwarded buffer keeps the loop mix's shift after it disarms`() {
+        val fakeDelegate = FakeAudioSink()
+        val transition = TransitionFilterProcessor()
+        val sink = createSink(
+            fakeDelegate,
+            enableFloatOutput = false,
+            dspChain = DspChain(
+                spatial = SpatialAudioProcessor(),
+                equalizer = EqualizerProcessor(),
+                transition = transition,
+            ),
+        )
+        sink.configure(AudioSink.AudioSinkConfig.Builder(rawFormat(C.ENCODING_PCM_16BIT)).build())
+        fun block(): ByteBuffer = ByteBuffer.allocate(480 * 2 * 2).order(ByteOrder.nativeOrder()).also {
+            repeat(480 * 2) { _ -> it.putShort(0) }
+            it.flip()
+        }
+
+        val port = transition.loop
+        port.armIncoming(com.music.bitchord.playback.loopmix.LoopMixPort.InArm(handoverUs = 10_000_000L))
+        port.requestShift(-480) // 10 ms of silence ahead of the song
+        assertTrue(sink.handleBuffer(block(), 0L, 1))
+        // The silence really went out, then the song's block after it.
+        assertEquals(listOf(0L to 480 * 2 * 2, 10_000L to 480 * 2 * 2), fakeDelegate.writes)
+
+        port.disarm()
+        val next = block()
+        assertTrue(sink.handleBuffer(next, 10_000L, 1))
+
+        assertSame("forwarded untouched", next, fakeDelegate.lastHandledBuffer)
+        assertEquals(20_000L, fakeDelegate.lastPresentationTimeUs)
+    }
+
+    /**
+     * A format change after an arm but before the sink saw a buffer for it ends
+     * that arm: adopting it on the next buffer must not clear the interruption.
+     */
+    @Test
+    fun `an arm a format change preceded its first buffer stays interrupted`() {
+        val fakeDelegate = FakeAudioSink()
+        val transition = TransitionFilterProcessor()
+        val sink = createSink(
+            fakeDelegate,
+            enableFloatOutput = false,
+            dspChain = DspChain(
+                spatial = SpatialAudioProcessor(),
+                equalizer = EqualizerProcessor(),
+                transition = transition,
+            ),
+        )
+        sink.configure(AudioSink.AudioSinkConfig.Builder(rawFormat(C.ENCODING_PCM_16BIT)).build())
+        val port = transition.loop
+        port.armIncoming(com.music.bitchord.playback.loopmix.LoopMixPort.InArm(handoverUs = 10_000_000L))
+        sink.configure(AudioSink.AudioSinkConfig.Builder(rawFormat(C.ENCODING_PCM_16BIT, channelCount = 1)).build())
+        assertTrue(port.interrupted)
+        port.requestShift(-480)
+        val next = ByteBuffer.allocate(480 * 2).order(ByteOrder.nativeOrder()).also {
+            repeat(480) { _ -> it.putShort(1000) }
+            it.flip()
+        }
+        assertTrue(sink.handleBuffer(next, 0L, 1))
+        assertTrue("still interrupted after the first buffer", port.interrupted)
+        assertSame("forwarded untouched, not muted or shifted", next, fakeDelegate.lastHandledBuffer)
+        assertEverySample(1000, fakeDelegate.lastHandledBuffer!!, 480)
+    }
+
+    /**
+     * A flush after the incoming side started ends the mix: the next buffer is
+     * neither muted nor shifted for it, even before the controller disarms.
+     */
+    @Test
+    fun `an incoming arm a flush interrupted is no longer applied`() {
+        val fakeDelegate = FakeAudioSink()
+        val transition = TransitionFilterProcessor()
+        val sink = createSink(
+            fakeDelegate,
+            enableFloatOutput = false,
+            dspChain = DspChain(
+                spatial = SpatialAudioProcessor(),
+                equalizer = EqualizerProcessor(),
+                transition = transition,
+            ),
+        )
+        sink.configure(AudioSink.AudioSinkConfig.Builder(rawFormat(C.ENCODING_PCM_16BIT)).build())
+        fun block(): ByteBuffer = ByteBuffer.allocate(480 * 2 * 2).order(ByteOrder.nativeOrder()).also {
+            repeat(480 * 2) { _ -> it.putShort(1000) }
+            it.flip()
+        }
+
+        val port = transition.loop
+        port.armIncoming(com.music.bitchord.playback.loopmix.LoopMixPort.InArm(handoverUs = 10_000_000L))
+        assertTrue(sink.handleBuffer(block(), 0L, 1))
+        assertNotNull(fakeDelegate.lastHandledBuffer)
+
+        sink.flush()
+        assertTrue(port.interrupted)
+        port.requestShift(-480)
+        val next = block()
+        assertTrue(sink.handleBuffer(next, 0L, 1))
+
+        assertSame("forwarded untouched, not muted", next, fakeDelegate.lastHandledBuffer)
+        // The same buffer, and its samples as they were: not zeroed in place.
+        assertEverySample(1000, fakeDelegate.lastHandledBuffer!!, 480 * 2)
+        assertEquals(0L, fakeDelegate.lastPresentationTimeUs)
+    }
+
+    private fun assertEverySample(expected: Short, buffer: ByteBuffer, count: Int) {
+        val read = buffer.duplicate().order(ByteOrder.nativeOrder())
+        read.rewind()
+        repeat(count) { i -> assertEquals("sample $i", expected, read.getShort()) }
     }
 
     /** Switched on, the chain is reached and does colour the audio. */
@@ -1011,6 +1230,7 @@ class PrecisionAudioSinkTest {
         sink.flush()
         assertTrue(fakeDelegate.flushed)
         assertTrue(sink.isPrecisionActive) // flush maintains configured format
+        assertTrue(sink.dspChain.transition.loop.supportsLoopMix)
 
         // Reset
         sink.reset()
@@ -1019,6 +1239,7 @@ class PrecisionAudioSinkTest {
         assertNull(sink.inputPcmEncoding)
         assertNull(sink.targetOutputEncoding)
         assertNull(sink.activeFormat)
+        assertFalse(sink.dspChain.transition.loop.supportsLoopMix)
     }
 
     @Test
