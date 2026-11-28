@@ -293,8 +293,12 @@ class PlannerReviewFixesTest {
                 advanced = advanced,
             )
             assertEquals(TransitionStyle.DJ_BLEND, p.transitionStyle, "advanced=$advanced: ${p.reason}")
-            val offBar = ((p.incomingCueTime - 0.75) % 2.0 + 2.0) % 2.0
-            assertTrue(offBar < 1e-6 || offBar > 2.0 - 1e-6, "advanced=$advanced: cue ${p.incomingCueTime} is off the opening's bar lines")
+            // On the opening's grid, in phase with the start on the outgoing one
+            // (bars of 2 s at rate 1): the same offset into a bar on each side.
+            fun phase(t: Double, line: Double) = ((t - line) % 2.0 + 2.0) % 2.0
+            val gap = kotlin.math.abs(phase(p.incomingCueTime, 0.75) - phase(p.transitionStart, 0.5))
+            assertTrue(gap < 1e-6 || gap > 2.0 - 1e-6,
+                "advanced=$advanced: cue ${p.incomingCueTime} against start ${p.transitionStart} is out of phase with the opening's grid")
         }
     }
 
@@ -307,5 +311,39 @@ class PlannerReviewFixesTest {
             mixInCandidates = listOf(MixCandidate(14.99, 1.0, "drop")),
         )
         assertEquals(14.05, incomingMixInPoint(next, latest = 15.0, grid = next.downbeats, strict = true))
+    }
+
+    @Test
+    fun anAdaptiveBlendStaysInPhaseWhenTheOutgoingEndIsOffItsGrid() {
+        // As above, with the outgoing content end at 198.25 s, off its own bar
+        // lines: the overlap is then not whole bars, and the cue it leaves
+        // would sit between the incoming beats.
+        val head = generateSequence(0.75) { it + 2.0 }.takeWhile { it < 40.0 }.toList()
+        val next = track(120.0).copy(
+            mixInTime = 16.5,
+            mixInCandidates = listOf(MixCandidate(16.5, 1.0, "drop")),
+            headBeats = BeatSide(head.flatMap { listOf(it, it + 0.5, it + 1.0, it + 1.5) }, head, 120.0, 0.9),
+        )
+        val outgoing = track(120.0).copy(contentEndTime = 198.25)
+        for (advanced in listOf(false, true)) {
+            val p = planTransition(
+                analysis = outgoing,
+                nextAnalysis = next,
+                currentTime = 100.0,
+                duration = 200.0,
+                mode = CrossfadeMode.SMART,
+                advanced = advanced,
+            )
+            assertEquals(TransitionStyle.DJ_BLEND, p.transitionStyle, "advanced=$advanced: ${p.reason}")
+            // The incoming beat at the cue meets the outgoing beat at the start:
+            // the same offset into a bar on each side (bars of 2 s, rate 1).
+            fun phase(t: Double, line: Double) = ((t - line) % 2.0 + 2.0) % 2.0
+            val gap = kotlin.math.abs(phase(p.incomingCueTime, 0.75) - phase(p.transitionStart, 0.5))
+            assertTrue(gap < 1e-6 || gap > 2.0 - 1e-6,
+                "advanced=$advanced: cue ${p.incomingCueTime} against start ${p.transitionStart} is out of phase")
+            // The handoff moves with the cue: the incoming song is where the overlap says at the outgoing end.
+            val span = (p.transitionEnd - p.transitionStart) * p.incomingPlaybackRate
+            assertEquals(p.incomingCueTime + span, p.incomingHandoffTime, 1e-6, "advanced=$advanced")
+        }
     }
 }
