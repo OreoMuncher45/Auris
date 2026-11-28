@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.Extension
@@ -59,6 +60,7 @@ internal fun AudioSettings(
     val cellularQuality by AppSettings.audioQualityCellular.collectAsStateWithLifecycle()
     val metered by AppSettings.meteredConnection.collectAsStateWithLifecycle()
     val seamlessQualityUpgrade by AppSettings.seamlessQualityUpgrade.collectAsStateWithLifecycle()
+    val youtubePremiumAudio by AppSettings.youtubePremiumAudio.collectAsStateWithLifecycle()
     val outputPcmMode by AppSettings.outputPcmMode.collectAsStateWithLifecycle()
     val bitPerfect by AppSettings.bitPerfect.collectAsStateWithLifecycle()
     val preferUsbDac by AppSettings.preferUsbDac.collectAsStateWithLifecycle()
@@ -144,6 +146,24 @@ internal fun AudioSettings(
                 badge = stringResource(R.string.in_use).takeIf { metered == true },
                 value = cellularQuality.localizedLabel(),
                 onClick = { sheets.pickingQuality = QualityTarget.CELLULAR },
+            )
+        }
+        // With the two ceilings because it is a third answer to the same
+        // question — how good may the YouTube stream be — for an account that
+        // has Premium. Only a signed-in Premium session is offered that rung.
+        val youtubePremiumTitle = stringResource(R.string.youtube_premium_audio)
+        row(youtubePremiumTitle, "premium", "opus", "256", "youtube", "streaming quality") {
+            SettingsRow(
+                icon = Icons.Rounded.AutoAwesome,
+                title = youtubePremiumTitle,
+                subtitle = stringResource(R.string.youtube_premium_audio_subtitle),
+                trailing = {
+                    SettingsSwitch(
+                        checked = youtubePremiumAudio,
+                        onCheckedChange = AppSettings::setYoutubePremiumAudio,
+                    )
+                },
+                onClick = { AppSettings.setYoutubePremiumAudio(!youtubePremiumAudio) },
             )
         }
         val outputPrecisionTitle = stringResource(R.string.output_precision)

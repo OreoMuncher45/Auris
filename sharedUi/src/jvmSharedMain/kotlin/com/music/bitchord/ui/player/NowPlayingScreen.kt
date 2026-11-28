@@ -1410,6 +1410,8 @@ fun NowPlayingScreen(
 ) {
     val density = LocalDensity.current
     val haptics = rememberHaptics()
+    // The Best Part pill leaves composition under panels; this screen stays for every track.
+    LaunchedEffect(song.videoId) { bestPartTrackChanged(song.videoId) }
 
     // The size of the copy of the cover this player draws: the width of the
     // window it is drawn in, capped at the largest rung on the ladder — see
@@ -1821,6 +1823,17 @@ fun NowPlayingScreen(
     // never fires again. Keyed on the cover there is nothing to reset: the
     // bitmap really is still loaded, so the state stays true.
     val art = rememberPlayerArtwork(remoteArt, artPx)
+    // Automix's artwork transition: the next cover spreads over this one in
+    // step with the audio blend, when the listener has it switched on. See
+    // [AutoMixCoverState].
+    val coverEntry = remember(song.videoId, song.queueEntryId, queue, queueIndex) {
+        coverOccurrence(song, queue, queueIndex)
+    }
+    val autoMixGate = autoMixStillArtworkGate(coverEntry, canvasShown = canvas != null)
+    val autoMixCover = rememberAutoMixCover(coverEntry, art, autoMixGate)
+    val autoMixFrames: () -> AutoMixCoverFrames? = remember(autoMixCover, coverEntry, autoMixGate) {
+        { autoMixCover.framesFor(coverEntry, autoMixGate) }
+    }
     // Sticky, unlike [PlayerArtwork.loaded]: the banner is the shape of the player rather
     // than a property of the track in it. Waiting on each new cover would
     // collapse the banner into a card and blow it back out on every skip —
@@ -2368,13 +2381,18 @@ fun NowPlayingScreen(
                 lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
         }
     }
+    // Only the portrait sleeve draws the reveal: landscape keeps its slide.
+    val trackMotionAllowed: () -> Boolean = remember(trackMotionVisible, autoMixCover, landscape) {
+        { TrackMotionVeto.allows(trackMotionVisible(), landscape, autoMixCover::holdsCover) }
+    }
     val trackCoverLoaded: () -> Boolean = remember(art) { { art.loaded } }
     SideEffect {
         trackMotion.widthPx = with(density) { windowWidth.toPx() }
         trackMotion.banner = heroMode && !landscape
         trackMotion.reduced = reduceAnimation
         trackMotion.hasNext = hasNext
-        trackMotion.canAnimate = trackMotionVisible
+        // A track change the Automix reveal is drawing needs no slide of its own.
+        trackMotion.canAnimate = trackMotionAllowed
         trackMotion.coverLoaded = trackCoverLoaded
     }
     LaunchedEffect(song.videoId, queueIndex) { trackMotion.onTrackChanged(song.videoId, queueIndex) }
@@ -2511,6 +2529,18 @@ fun NowPlayingScreen(
                 sleeveLayer = sleeveLayer,
                 dockHost = dockHost,
                 modifier = modifier,
+                bestPart = { pillModifier ->
+                    BestPartPill(
+                        song = song,
+                        position = position,
+                        isLoading = isLoading,
+                        durationMs = durationMs,
+                        lyrics = { lyrics },
+                        lyricsUnavailable = { lyricsUnavailable },
+                        onSeek = onSeek,
+                        modifier = pillModifier,
+                    )
+                },
             )
         }
         return
@@ -3193,6 +3223,21 @@ fun NowPlayingScreen(
                     song = song,
                     spotifyChromeAlpha = { spotifyChromeAlpha },
                     onDismissBandTop = { measures.dismissBandTop = it },
+                    autoMixFrames = autoMixFrames,
+                    bestPart = { pillModifier ->
+                        BestPartPill(
+                            song = song,
+                            position = position,
+                            isLoading = isLoading,
+                            durationMs = durationMs,
+                            lyrics = { lyrics },
+                            lyricsUnavailable = { lyricsUnavailable },
+                            onSeek = onSeek,
+                            // Faded out with Spotify's controls, it must not take taps.
+                            interactive = { spotifyChromeAlpha > 0f },
+                            modifier = pillModifier,
+                        )
+                    },
                 )
 
                 // ---- Title + menu ----

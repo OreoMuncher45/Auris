@@ -111,6 +111,7 @@ import com.music.bitchord.ui.LocalPageHidden
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import com.music.bitchord.ui.player.bestPartTrackChanged
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -339,6 +340,7 @@ import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.ui.components.ListenBrainzTokenAlert
 import com.music.bitchord.ui.components.MiniPlayer
+import com.music.bitchord.ui.components.LocalMiniAutoMixArtwork
 import com.music.bitchord.ui.components.QueueActionNotice
 import com.music.bitchord.ui.components.QueueActionNoticeHost
 import com.music.bitchord.ui.components.TopBarAccountButton
@@ -364,6 +366,7 @@ import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.ui.player.HardwareVolume
 import com.music.bitchord.ui.player.ListenTogetherMembersSheet
 import com.music.bitchord.ui.player.NowPlayingScreen
+import com.music.bitchord.ui.player.rememberMiniAutoMixArtwork
 import com.music.bitchord.ui.player.PlayerPlatform
 import com.music.bitchord.ui.components.VolumeHud
 import com.music.bitchord.ui.components.VolumeHudOverlay
@@ -1283,6 +1286,14 @@ internal fun BitChordApp(
     }
     val controller = rememberMediaController()
     val player = rememberPlayerReads(controller)
+    // The best part's "heard" mark follows the track even while the player is
+    // closed: the now-playing screen, which also reports it, is only composed
+    // while open. Read in a flow, so the root does not recompose per track.
+    LaunchedEffect(player) {
+        snapshotFlow { player.song?.videoId }.collect { id ->
+            id?.let(::bestPartTrackChanged)
+        }
+    }
     // A resume in a party is performed on the instant the server schedules, not
     // when it was pressed, and nothing about the player moves in between — so
     // the transport spends that round trip drawn as though the tap never landed.
@@ -4977,36 +4988,42 @@ internal fun BitChordApp(
                         // component they are stacked to imitate: the now playing
                         // controls dock into the tab bar rather than riding above it,
                         // and the pair folds together on scroll. See [GlassNavBar].
-                        AppGlassNav(
-                            useFoldingNav = useFoldingNav,
-                            tabs = tabs,
-                            selectedIndex = selectedTabIndex,
-                            onTabSelected = onTabSelected,
-                            scrollConnection = navBarScroll,
-                            search = navSearchState,
-                            placeholder = org.jetbrains.compose.resources.stringResource(
-                                if (searchSourceState.value == SearchSource.LIBRARY) {
-                                    SharedRes.string.search_library_hint
+                        val miniArtwork = rememberMiniAutoMixArtwork(player.song, player.queue, player.queueIndex)
+                        CompositionLocalProvider(LocalMiniAutoMixArtwork provides miniArtwork) {
+                            AppGlassNav(
+                                useFoldingNav = useFoldingNav,
+                                tabs = tabs,
+                                selectedIndex = selectedTabIndex,
+                                onTabSelected = onTabSelected,
+                                scrollConnection = navBarScroll,
+                                search = navSearchState,
+                                placeholder = org.jetbrains.compose.resources.stringResource(
+                                    if (searchSourceState.value == SearchSource.LIBRARY) {
+                                        SharedRes.string.search_library_hint
+                                    } else {
+                                        SharedRes.string.search_hint
+                                    },
+                                ),
+                                song = player.song,
+                                isPlaying = player.isPlaying,
+                                isLoading = playPauseBusy,
+                                onPlayPause = { togglePlayPause() },
+                                onNext = { controller?.seekToNextMediaItem() },
+                                onPrevious = { controller?.seekToPrevious() },
+                                onExpand = if (reducePlayerMotion) {
+                                    { showNowPlaying = true }
                                 } else {
-                                    SharedRes.string.search_hint
+                                    playerSheetMotion::open
                                 },
-                            ),
-                            song = player.song,
-                            isPlaying = player.isPlaying,
-                            isLoading = playPauseBusy,
-                            onPlayPause = { togglePlayPause() },
-                            onNext = { controller?.seekToNextMediaItem() },
-                            onPrevious = { controller?.seekToPrevious() },
-                            onExpand = if (reducePlayerMotion) {
-                                { showNowPlaying = true }
-                            } else {
-                                playerSheetMotion::open
-                            },
-                            controlsLocked = controlsLocked,
-                            onBlockedControl = showHostOnlyNotice,
-                            dock = activeDock,
-                            pull = playerSheetMotion.takeIf { !reducePlayerMotion },
-                        )
+                                controlsLocked = controlsLocked,
+                                onBlockedControl = showHostOnlyNotice,
+                                // Still in the tree under the full player: no motion
+                                // there for a tap nobody can see.
+                                animationsActive = !showNowPlaying,
+                                dock = activeDock,
+                                pull = playerSheetMotion.takeIf { !reducePlayerMotion },
+                            )
+                        }
                     }
                 } else Box(
                     modifier = Modifier
@@ -5041,28 +5058,32 @@ internal fun BitChordApp(
                         // buffering flip. In here they re-run the mini player.
                         IsolatedScope {
                             QueueActionNoticeHost(queueNotice)
+                            val miniArtwork = rememberMiniAutoMixArtwork(player.song, player.queue, player.queueIndex)
                             player.song?.let { song ->
-                                MiniPlayer(
-                                    song = song,
-                                    isPlaying = player.isPlaying,
-                                    isLoading = playPauseBusy,
-                                    hazeState = hazeState,
-                                    onPlayPause = {
-                                        togglePlayPause()
-                                    },
-                                    onNext = { controller?.seekToNextMediaItem() },
-                                    onPrevious = { controller?.seekToPrevious() },
-                                    onExpand = if (reducePlayerMotion) {
-                                        { showNowPlaying = true }
-                                    } else {
-                                        playerSheetMotion::open
-                                    },
-                                    controlsLocked = controlsLocked,
-                                    onBlockedControl = showHostOnlyNotice,
-                                    dock = activeDock,
-                                    pull = playerSheetMotion.takeIf { !reducePlayerMotion },
-                                    modifier = Modifier.fillMaxWidth(),
-                                )
+                                CompositionLocalProvider(LocalMiniAutoMixArtwork provides miniArtwork) {
+                                    MiniPlayer(
+                                        song = song,
+                                        isPlaying = player.isPlaying,
+                                        isLoading = playPauseBusy,
+                                        hazeState = hazeState,
+                                        onPlayPause = {
+                                            togglePlayPause()
+                                        },
+                                        onNext = { controller?.seekToNextMediaItem() },
+                                        onPrevious = { controller?.seekToPrevious() },
+                                        onExpand = if (reducePlayerMotion) {
+                                            { showNowPlaying = true }
+                                        } else {
+                                            playerSheetMotion::open
+                                        },
+                                        controlsLocked = controlsLocked,
+                                        onBlockedControl = showHostOnlyNotice,
+                                        dock = activeDock,
+                                        animationsActive = !showNowPlaying,
+                                        pull = playerSheetMotion.takeIf { !reducePlayerMotion },
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                }
                                 Spacer(Modifier.height(8.dp))
                             }
                         }
@@ -5871,7 +5892,13 @@ private fun RootPage(
             autoDownloadSongs = downloadedCollection?.autoDownload,
             onToggleAutoDownloadSongs = downloadedCollection?.let { collection ->
                 {
-                    Downloads.setAutoDownloadNewSongs(collection.id, !collection.autoDownload)
+                    // Liked Music's switch is also the Downloads setting's, so
+                    // it goes through the one place that keeps the two in step.
+                    if (com.music.bitchord.download.samePlaylist(collection.id, YtMusicRepository.LIKED_MUSIC)) {
+                        com.music.bitchord.download.DownloadedPlaylistSync.setKeepLiked(context, !collection.autoDownload)
+                    } else {
+                        Downloads.setAutoDownloadNewSongs(collection.id, !collection.autoDownload)
+                    }
                 }
             },
             // A Super Mix has no last page: it grows a page at a
@@ -8720,6 +8747,7 @@ private fun AppGlassNav(
     onBlockedControl: () -> Unit,
     dock: PlayerDock?,
     pull: MiniPlayerPull?,
+    animationsActive: Boolean,
 ) {
     if (useFoldingNav) {
         GlassFoldingNavBar(
@@ -8740,6 +8768,7 @@ private fun AppGlassNav(
             onBlockedControl = onBlockedControl,
             dock = dock,
             pull = pull,
+            animationsActive = animationsActive,
             modifier = Modifier.fillMaxWidth(),
         )
     } else {
@@ -8759,6 +8788,7 @@ private fun AppGlassNav(
             onBlockedControl = onBlockedControl,
             dock = dock,
             pull = pull,
+            animationsActive = animationsActive,
             modifier = Modifier.fillMaxWidth(),
         )
     }

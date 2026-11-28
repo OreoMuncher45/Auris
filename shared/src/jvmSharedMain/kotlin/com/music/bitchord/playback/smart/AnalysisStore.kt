@@ -438,8 +438,13 @@ class AnalysisStore(
          * Entries from an older schema are ignored rather than migrated: a
          * re-analysis costs seconds, and a beat grid interpreted under the wrong
          * assumptions is silently wrong for the life of the file.
+         *
+         * 4: earlier builds with the models downloaded on first use saved
+         * results measured before the models arrived (a DSP-only grid and
+         * vocal mask) as if they were final. Nothing marks those entries, so
+         * every schema-3 entry is measured again on its next request.
          */
-        const val SCHEMA_VERSION = 3
+        const val SCHEMA_VERSION = 4
 
         /** A few thousand tracks' worth, at tens of kilobytes each. */
         const val MAX_ENTRIES = 2_000

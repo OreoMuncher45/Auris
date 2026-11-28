@@ -3,6 +3,7 @@ package com.music.bitchord.ui.player
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.IntSize
 import com.music.bitchord.data.canvas.CanvasArtwork
 import com.music.bitchord.data.listentogether.PartyMember
@@ -38,11 +39,37 @@ interface PlayerHost {
     /** Visual-only seek intent, before the scrubber dispatches its transport command. */
     fun onAutoMixScrubIntent() = Unit
 
+    /**
+     * How the incoming cover is revealed over the outgoing one during an
+     * Automix transition: a plain fade unless the platform has something
+     * better. Incoming layer only. [blur] is off for thumbnails, independently
+     * of the reveal.
+     */
+    @Composable
+    fun autoMixIncomingReveal(
+        eased: () -> Float,
+        reducedMotion: () -> Boolean,
+        generation: Long,
+        blur: Boolean,
+    ): Modifier = Modifier.graphicsLayer { alpha = eased() }
+
     /** A Canvas already settled for [song], without a lookup. */
     fun cachedCanvas(song: Song): CanvasArtwork?
 
     /** Looks a Canvas up for [song]; null is the normal answer. */
     suspend fun canvasFor(song: Song): CanvasArtwork?
+
+    /**
+     * Where [song]'s best part starts, in ms: the stretch listeners replay most,
+     * or failing that its chorus. Null when neither is known — a guess is not
+     * worth a button — and for local files. [lyrics] waits for the words the
+     * player is already loading, so the lookup never fetches lyrics of its own.
+     */
+    suspend fun bestPartMs(
+        song: Song,
+        durationMs: Long,
+        lyrics: suspend () -> List<LyricLine>?,
+    ): Long? = null
 
     /** The looping clip over the cover, decoded however this platform decodes video. */
     @Composable
@@ -208,6 +235,8 @@ interface PlayerSettingsSource {
     val fullBleedArtwork: StateFlow<Boolean>
     /** Whether the album art is drawn a little smaller inside its card. */
     val zoomOutAlbumArt: StateFlow<Boolean>
+    /** Whether the scrubber's right label is the track's length rather than the time left. */
+    val showTotalDuration: StateFlow<Boolean>
     val hideSongStatus: StateFlow<Boolean>
     /** Hide the device status bar while the player is up. Always false where there is none. */
     val hideStatusBar: StateFlow<Boolean>
@@ -231,6 +260,8 @@ interface PlayerSettingsSource {
     val reduceAnimation: StateFlow<Boolean>
     val reduceDynamicBlur: StateFlow<Boolean>
     val showNerdStats: StateFlow<Boolean>
+    /** Whether the "Best Part" button is offered on the artwork. */
+    val showBestPart: StateFlow<Boolean>
     /** Whether the Automix "this song / next song" line under the sleeve is drawn. */
     val showNextTrackStatus: StateFlow<Boolean>
     /** Whether the "Upgrading quality" badge is drawn while a better copy is sought. */
@@ -241,6 +272,8 @@ interface PlayerSettingsSource {
     val showHiResBadge: StateFlow<Boolean>
     val smartAnalysis: StateFlow<SmartAnalysis>
     val smartFadeEnabled: StateFlow<Boolean>
+    /** Whether Automix's artwork transitions run; both off where a platform keeps no such setting. */
+    val autoMixArtwork: StateFlow<AutoMixArtworkPreferences> get() = defaultAutoMixArtwork
     /** True only while an analysed Automix transition is audibly mixing two tracks. */
     val smartMixInProgress: StateFlow<Boolean>
     /** The Automix blend in flight, for the scrubber's beat glow; null between blends. */
@@ -267,6 +300,8 @@ interface PlayerSettingsSource {
     /** Draws the album art a little smaller inside its card, or not. */
     fun setZoomOutAlbumArt(value: Boolean)
 }
+
+private val defaultAutoMixArtwork: StateFlow<AutoMixArtworkPreferences> = MutableStateFlow(AutoMixArtworkPreferences())
 
 /** The player's name for the installed host's settings, read where AppSettings used to be. */
 internal val PlayerSettings: PlayerSettingsSource

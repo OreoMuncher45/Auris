@@ -256,4 +256,6 @@
     <string name="queue_suggest_album">From album</string>
     <string name="queue_search_nothing_here">Nothing here yet</string>
     <string name="home_chip_all">All</string>
+    <string name="best_part">Best Part</string>
+    <string name="best_part_description">Skip to the best part</string>
 </resources>
