@@ -216,13 +216,21 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
 
     /** Publishes [analysis] for [trackId], keeping the in-memory results bounded. */
     private fun remember(trackId: String, analysis: TrackAnalysis) {
-        results.put(trackId, analysis, ::inFlight)
+        // Every result write (a pass, a restore, a failure record) shares the
+        // release guard: nothing is written once [release] has cleared the
+        // state. Re-entrant for the publish that already holds it.
+        synchronized(publishing) {
+            if (released) return
+            results.put(trackId, analysis, ::inFlight)
+        }
     }
 
     /** [remember], unless a result is already there; returns whichever is cached. */
-    private fun rememberIfAbsent(trackId: String, analysis: TrackAnalysis): TrackAnalysis {
-        return results.putIfAbsent(trackId, analysis, ::inFlight).first
-    }
+    private fun rememberIfAbsent(trackId: String, analysis: TrackAnalysis): TrackAnalysis =
+        synchronized(publishing) {
+            if (released) return analysis
+            results.putIfAbsent(trackId, analysis, ::inFlight).first
+        }
 
     /**
      * Lets go of what was kept beside evicted results. The once-guard on the
@@ -705,7 +713,14 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                         // interim answer: kept as provisional, so a later tick
                         // measures the track again (twice at most), and never
                         // stored as complete.
-                        if (outcome.incomplete && incompleteRetries.merge(trackId, 1, Int::plus)!! <= MAX_INCOMPLETE_RETRIES) {
+                        // Measured off an address that is no longer the settled one
+                        // (a fallback, with a YouTube match found while it ran):
+                        // an interim answer too, superseded by the match's copy.
+                        // Read under the same guard the match is recorded under.
+                        val superseded = sourceAnalysisUris[trackId]?.let { it != analysisUri } == true
+                        if (superseded ||
+                            (outcome.incomplete && incompleteRetries.merge(trackId, 1, Int::plus)!! <= MAX_INCOMPLETE_RETRIES)
+                        ) {
                             provisional.add(trackId)
                         } else {
                             provisional.remove(trackId)
@@ -1269,10 +1284,14 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                 val match = findYouTubeMatch(target)
                 answered = true
                 if (match != null) {
-                    sourceAnalysisUris[trackId] = Uri.parse(AutomixAnalysisSource.opusUri(match.videoId))
-                    // A result measured on the fallback meanwhile is an interim
-                    // one now: superseded by the match's copy once it is whole.
-                    if (sourceFallbackUris.remove(trackId) != null && results[trackId] != null) provisional.add(trackId)
+                    // Under the publish guard: a fallback pass publishing at the
+                    // same moment sees the match and stays provisional.
+                    synchronized(publishing) {
+                        sourceAnalysisUris[trackId] = Uri.parse(AutomixAnalysisSource.opusUri(match.videoId))
+                        // A result measured on the fallback meanwhile is an interim
+                        // one now: superseded by the match's copy once it is whole.
+                        if (sourceFallbackUris.remove(trackId) != null && results[trackId] != null) provisional.add(trackId)
+                    }
                     Log.d(TAG, "Automix analysis for $trackId will use YouTube Opus ${match.videoId}")
                 } else {
                     sourceAnalysisUris[trackId] = playbackUri
@@ -1603,10 +1622,13 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // Published so the pair still beatmatches, and kept out of the store after an OOM, which a
         // later session with more room can still answer in full.
         if (features == null) {
+            // Retried like a partial grid when memory took every window, not
+            // when the windows ran and found no beats.
             val grid = leading ?: return WholeTrack(
                 empty(trackId, effectiveDuration),
                 persist = !outOfMemory && !windowOutOfMemory && !withoutModels,
                 withoutModels = withoutModels,
+                incomplete = windowOutOfMemory,
             )
             Log.d(TAG, "Analysed $trackId head and tail only: bpm=${grid.bpm} conf=${grid.beatConfidence}")
             return WholeTrack(
@@ -2168,20 +2190,22 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         val analysisUri = if (uri.getQueryParameter("v") != null || uri.authority != "source") {
             uri
         } else {
-            // A result restored after a restart arrives before any catalogue
-            // match: the copy it names is the matched YouTube copy.
-            sourceAnalysisUris[trackId]
-                ?: sourceFallbackUris[trackId]
-                ?: published?.measuredOn?.let { key ->
-                    when {
-                        // Measured on the source's own audio (a recording with no
-                        // YouTube match): the source address is the copy's address.
-                        '|' in key -> uri
-                        // A bare video id is the canonical copy too.
-                        else -> (AutomixAnalysisSource.videoIdOfAnalysisKey(key) ?: key.takeIf(BARE_VIDEO_ID::matches))
-                            ?.let { Uri.parse(AutomixAnalysisSource.opusUri(it)) }
-                    }
+            // The published result's own copy first: the search maps can already
+            // point at a newer match whose analysis is not published yet, and the
+            // waveform must come from the copy the markers were measured on.
+            // The maps answer only when the result names no copy.
+            published?.measuredOn?.let { key ->
+                when {
+                    // Measured on the source's own audio (a recording with no
+                    // YouTube match): the source address is the copy's address.
+                    '|' in key -> uri
+                    // A bare video id is the canonical copy too.
+                    else -> (AutomixAnalysisSource.videoIdOfAnalysisKey(key) ?: key.takeIf(BARE_VIDEO_ID::matches))
+                        ?.let { Uri.parse(AutomixAnalysisSource.opusUri(it)) }
                 }
+            }
+                ?: sourceAnalysisUris[trackId]
+                ?: sourceFallbackUris[trackId]
                 ?: return null
         }
         val began = SystemClock.elapsedRealtime()

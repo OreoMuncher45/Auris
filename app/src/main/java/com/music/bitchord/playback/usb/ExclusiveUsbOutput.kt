@@ -88,6 +88,12 @@ class ExclusiveUsbOutput(
     @Volatile private var configuredRateHz = 0
     @Volatile private var configuredChannelCount = 0
     @Volatile private var softwareGainValue = 1f
+
+    /** Hardware-level writes and the writer's attenuation while one is refused: see [DacLevelState]. */
+    private val dacLevel = DacLevelState(
+        setDb = { db -> featureVolume?.setDb(db) == true },
+        nowMs = { SystemClock.elapsedRealtime() },
+    )
     @Volatile private var lastHardwareRate = 0
 
     /**
@@ -122,8 +128,6 @@ class ExclusiveUsbOutput(
      */
     @Volatile private var volumeDirty = false
 
-    /** After a DAC that took no level write, when to try again: not on every chunk the writer sends. */
-    @Volatile private var volumeRetryAtMs = 0L
 
     /** When the DAC's own level was last re-read. */
     @Volatile private var lastDacLevelCheckMs = 0L
@@ -954,33 +958,25 @@ class ExclusiveUsbOutput(
                 val needsWrite = !alreadyThere &&
                     (written == null || kotlin.math.abs(target - written) > 0.05)
                 if (needsWrite) {
-                    if (control.setDb(target)) {
+                    if (dacLevel.write(level, target, written ?: current)) {
                         lastWrittenDb = target
                         softwareGainValue = 1f
                         return
                     }
-                    // Software gain only scales on top of the DAC's level, which
-                    // may be a faded one (the sleep fade rides on it): back to
-                    // the DAC's base first, or try the level again.
-                    when (DacLevelFallback.afterFailedWrite(base, control::setDb)) {
-                        DacLevelFallback.Outcome.SOFTWARE_FROM_BASE -> {
-                            Log.w(TAG, "Feature Unit SET_CUR failed; DAC at its base, perceptual software gain from here")
-                            lastWrittenDb = base
-                            hardwareVolume = false
-                        }
-                        DacLevelFallback.Outcome.RETRY_HARDWARE -> {
-                            Log.w(TAG, "Feature Unit SET_CUR failed twice; keeping the level pending")
-                            volumeRetryAtMs = SystemClock.elapsedRealtime() + DAC_LEVEL_RETRY_MS
-                            volumeDirty = true
-                            return
-                        }
-                    }
+                    // Kept on the hardware path and written again shortly, never
+                    // switched to software gain mid-stream; louder than asked
+                    // meanwhile, the writer makes up the difference on every
+                    // chunk it sends: see [DacLevelState].
+                    Log.w(TAG, "Feature Unit SET_CUR failed; keeping the level pending")
+                    volumeDirty = true
+                    return
                 } else {
                     // The DAC is already where it should be — at full volume
                     // with the knob where the listener left it, nothing is
                     // written to it at all.
                     lastWrittenDb = target
                     softwareGainValue = 1f
+                    dacLevel.settled()
                     return
                 }
             } else {
@@ -990,6 +986,7 @@ class ExclusiveUsbOutput(
             }
         }
         softwareGainValue = ListenerVolumePolicy.perceptualGain(level)
+        dacLevel.settled()
     }
 
     /**
@@ -1090,6 +1087,12 @@ class ExclusiveUsbOutput(
             try {
                 val floats = next.floats
                 val raw = next.raw
+                if (floats != null && next.encoding == 0) {
+                    dacLevel.attenuate(floats, next.count)
+                } else if (raw != null) {
+                    val attenuation = dacLevel.pendingAttenuation
+                    if (attenuation < 1f - 1e-6f) scalePcmBytes(raw, next.encoding, attenuation, next.byteSize)
+                }
                 if (floats != null && next.encoding == 0) target.write(floats, next.count)
                 else if (raw != null) target.writeRaw(raw, next.encoding, next.count)
             } finally {
@@ -1125,7 +1128,7 @@ class ExclusiveUsbOutput(
 
     private fun maybeApplyVolume() {
         if (!volumeDirty) return
-        if (SystemClock.elapsedRealtime() < volumeRetryAtMs) return
+        if (!dacLevel.mayWrite(listenerLevel)) return
         withLockUnlessStopping {
             if (!volumeDirty) return
             volumeDirty = false
@@ -1238,6 +1241,7 @@ class ExclusiveUsbOutput(
         configuredChannelCount = 0
         active = false
         softwareGainValue = 1f
+        dacLevel.settled()
         dacBaseDb = 0.0
         dacBaseKnown = false
         lastWrittenDb = null
@@ -1322,7 +1326,6 @@ class ExclusiveUsbOutput(
 
     private companion object {
         const val TAG = "ExclusiveUsb"
-        const val DAC_LEVEL_RETRY_MS = 1_000L
         const val VOLUME_CHANGED_ACTION = "android.media.VOLUME_CHANGED_ACTION"
         const val EXTRA_VOLUME_STREAM_TYPE = "android.media.EXTRA_VOLUME_STREAM_TYPE"
         const val KEY_BLOCK_PREFIX = "blocked_dac_"
