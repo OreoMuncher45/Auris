@@ -30,4 +30,13 @@ class HandoffBookkeepingTest {
     fun anAdvanceTheSleepTimerPausedIsNotHandedToAPlayingStandby() {
         assertFalse(HandoffBookkeeping.lateHandoffAllowed(standbyFailed = false, standbyIdle = false, advancedPlayerPlaying = false))
     }
+
+    @Test
+    fun aRejectedAdvanceKeepsThePlayerItsSkipWasPostedOn() {
+        // Strict mode blocked the track the outgoing player advanced to: its
+        // posted skip must act on the session, so no handoff.
+        assertFalse(HandoffBookkeeping.lateHandoffAllowed(
+            standbyFailed = false, standbyIdle = false, advancedPlayerPlaying = true, advanceRejected = true,
+        ))
+    }
 }

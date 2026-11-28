@@ -184,6 +184,13 @@ class CrossfadeController(
      */
     private val analysisProvisionalFor: (MediaItem) -> Boolean = { false },
     /**
+     * Whether the service rejects a media item it advanced to on its own
+     * (strict mode: a blocked track), posting a skip on that player. A late
+     * handoff onto the standby would leave that skip acting on a player that
+     * is no longer the session.
+     */
+    private val rejectsAdvance: (MediaItem) -> Boolean = { false },
+    /**
      * The track about to be loaded onto the standby player, announced at the
      * moment [begin] arms rather than at the handoff.
      *
@@ -894,6 +901,7 @@ class CrossfadeController(
                         standbyFailed = into.playerError != null,
                         standbyIdle = into.playbackState == Player.STATE_IDLE,
                         advancedPlayerPlaying = out.playWhenReady,
+                        advanceRejected = out.currentMediaItem?.let(rejectsAdvance) == true,
                     )
                 ) {
                     // The advance the outgoing player made stands: bail() puts it
