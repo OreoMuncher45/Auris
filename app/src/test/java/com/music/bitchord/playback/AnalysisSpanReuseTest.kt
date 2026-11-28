@@ -67,4 +67,52 @@ class AnalysisSpanReuseTest {
         // An empty entry has nothing to mix with.
         assertTrue(AudioCache.spansReusable(false, null, null, 0L, length))
     }
+
+    @Test
+    fun aTailLeftWithNoHeadIsClearedNotExtended() {
+        // An eviction took the head and left the old stream's tail: the entry
+        // has spans though byte 0 is empty, and it is cleared before a new head
+        // is written in front of it.
+        var removed = false
+        val prepared = AudioCache.prepareAnalysisEntry(
+            hasSpans = true,
+            recordedIdentity = AudioCache.streamIdentity(first),
+            identity = AudioCache.streamIdentity(second),
+            recordedLength = length,
+            total = length,
+            remove = { removed = true; true },
+        )
+        assertEquals(AudioCache.EntryPreparation.CLEARED, prepared)
+        assertTrue(removed)
+    }
+
+    @Test
+    fun aFailedClearStopsTheRoundBeforeAnythingIsStampedOrWritten() {
+        // The old spans are held by a reader: the clear fails, and the entry is
+        // refused, so the round neither stamps the new identity nor writes.
+        val prepared = AudioCache.prepareAnalysisEntry(
+            hasSpans = true,
+            recordedIdentity = AudioCache.streamIdentity(first),
+            identity = AudioCache.streamIdentity(second),
+            recordedLength = length,
+            total = length,
+            remove = { false },
+        )
+        assertEquals(AudioCache.EntryPreparation.REFUSED, prepared)
+    }
+
+    @Test
+    fun theSameStreamsSpansAreKeptWithoutAClear() {
+        var removed = false
+        val prepared = AudioCache.prepareAnalysisEntry(
+            hasSpans = true,
+            recordedIdentity = AudioCache.streamIdentity(first),
+            identity = AudioCache.streamIdentity(first),
+            recordedLength = length,
+            total = length,
+            remove = { removed = true; true },
+        )
+        assertEquals(AudioCache.EntryPreparation.REUSED, prepared)
+        assertFalse(removed)
+    }
 }
