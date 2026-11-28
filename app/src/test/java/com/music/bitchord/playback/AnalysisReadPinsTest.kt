@@ -76,4 +76,20 @@ class AnalysisReadPinsTest {
         assertEquals("https://a/opus", stream?.url)
         assertEquals(0, fallbackAsks)
     }
+
+    @Test
+    fun aLightReadNothingAnsweredFailsInsteadOfBeingServedUnpinned() {
+        // Neither the capped resolve nor the player's copy answered the head
+        // probe: the read fails here rather than falling through to a resolve
+        // whose stream is not pinned for the round.
+        try {
+            AnalysisReadPins.lightRead(row, capped = { null }, fallback = { null })
+            org.junit.Assert.fail("a light read with no copy was served")
+        } catch (expected: java.io.IOException) {
+            // The round ends short.
+        }
+        // Nothing pinned, so no later open of this round can append a stream
+        // that a later capped resolve happened to find.
+        org.junit.Assert.assertNull(AnalysisReadPins.get(row))
+    }
 }
