@@ -346,4 +346,31 @@ class PlannerReviewFixesTest {
             assertEquals(p.incomingCueTime + span, p.incomingHandoffTime, 1e-6, "advanced=$advanced")
         }
     }
+
+    @Test
+    fun aCuePastTheMeasuredOpeningIsPhasedOnTheWholeTracksGrid() {
+        // The opening's grid stops at 10 s; the cue lands past it, where the
+        // whole track's bar lines (0.5 + 2k s) are the ones that apply.
+        val head = generateSequence(0.75) { it + 2.0 }.takeWhile { it < 10.0 }.toList()
+        val next = track(120.0).copy(
+            mixInTime = 16.5,
+            mixInCandidates = listOf(MixCandidate(16.5, 1.0, "drop")),
+            headBeats = BeatSide(head.flatMap { listOf(it, it + 0.5, it + 1.0, it + 1.5) }, head, 120.0, 0.9),
+        )
+        val outgoing = track(120.0).copy(contentEndTime = 198.25)
+        val p = planTransition(
+            analysis = outgoing,
+            nextAnalysis = next,
+            currentTime = 100.0,
+            duration = 200.0,
+            mode = CrossfadeMode.SMART,
+            advanced = false,
+        )
+        assertEquals(TransitionStyle.DJ_BLEND, p.transitionStyle, p.reason)
+        assertTrue(p.incomingCueTime > 10.0, "cue ${p.incomingCueTime} is inside the opening; the fixture means past it")
+        fun phase(t: Double, line: Double) = ((t - line) % 2.0 + 2.0) % 2.0
+        val gap = kotlin.math.abs(phase(p.incomingCueTime, 0.5) - phase(p.transitionStart, 0.5))
+        assertTrue(gap < 1e-6 || gap > 2.0 - 1e-6,
+            "cue ${p.incomingCueTime} against start ${p.transitionStart} is out of phase with the whole track's grid")
+    }
 }
