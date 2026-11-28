@@ -34,6 +34,18 @@ class LoopAlignmentState {
     fun handoffAllowed(maxErrorMs: Double): Boolean = confirmed && abs(errorMs) <= maxErrorMs
 
     companion object {
+        /** How many alignment attempts one loop mix gets before the handoff gate decides. */
+        const val MAX_ATTEMPTS = 3
+
+        /**
+         * Whether alignment should be started again after an attempt ended:
+         * never once confirmed (a confirmed alignment is not re-measured), and
+         * otherwise while attempts remain. An attempt whose rounds all stalled
+         * or lacked readings ends unconfirmed; without a retry the handoff later
+         * refuses a player both clocks could by then have measured.
+         */
+        fun retryAfterAttempt(confirmed: Boolean, attempts: Int): Boolean = !confirmed && attempts < MAX_ATTEMPTS
+
         /**
          * Whether an incoming player's [playbackState] change must drop the
          * alignment: it buffers while the loop still runs ahead of the handoff.

@@ -1546,6 +1546,60 @@ class SourcesTest {
 
     private fun raceTarget() = TrackMatcher.Target(RACE_TITLE, RACE_ARTIST, durationSec = 120)
 
+    /** One source holding [rows] matching rows, each answering its own format. */
+    private class RowsSource(private val formats: List<StreamFormat>) : MusicSource {
+        override val displayName = "Rows"
+        override val configId = "rows"
+        override val kind = SourceKind.MODULE
+        val opened = mutableListOf<String>()
+
+        override suspend fun health() = SourceHealth.Ok()
+
+        override suspend fun search(
+            query: String,
+            limit: Int,
+            waitForAll: Boolean,
+            request: StreamRequest?,
+            target: TrackMatcher.Target?,
+        ): List<Song> = formats.indices.map { index ->
+            Song(videoId = "row$index", title = RACE_TITLE, artist = RACE_ARTIST, thumbnailUrl = null, durationText = "2:00")
+        }
+
+        override suspend fun stream(trackId: String, request: StreamRequest): SourceStream? {
+            opened += trackId
+            val index = trackId.removePrefix("row").toInt()
+            return SourceStream(url = "https://rows/$trackId", format = formats[index])
+        }
+    }
+
+    @Test
+    fun `a capped request tries the next row of a source when the first answers over the cap`() = runBlocking {
+        // The first eligible row answers 256 kbps for a 128 kbps request; the
+        // second answers 96. The walk inside the source must reach the second.
+        val source = RowsSource(listOf(StreamFormat("mp4", kbps = 256), StreamFormat("mp4", kbps = 96)))
+        val capped = StreamRequest.Capped(128)
+
+        val (_, stream) = SourceResolver.bestAcross(
+            listOf(source),
+            raceTarget(),
+            capped,
+            accept = { _, answer -> SourceResolver.withinCeiling(answer, capped) },
+        )!!
+
+        assertEquals(96, stream.format.kbps)
+        assertEquals(listOf("row0", "row1"), source.opened)
+    }
+
+    @Test
+    fun `a capped request settles for the lightest over-cap row only when no row fits`() = runBlocking {
+        val source = RowsSource(listOf(StreamFormat("mp4", kbps = 320), StreamFormat("mp4", kbps = 256)))
+        val capped = StreamRequest.Capped(128)
+
+        val (_, stream) = SourceResolver.bestAcross(listOf(source), raceTarget(), capped)!!
+
+        assertEquals(256, stream.format.kbps)
+    }
+
     @Test
     fun `JioSaavn substitution refuses conflicting albums without a target album`() = runBlocking {
         val source = FakeSource(

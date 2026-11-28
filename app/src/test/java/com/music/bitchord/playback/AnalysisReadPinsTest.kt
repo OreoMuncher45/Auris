@@ -92,4 +92,23 @@ class AnalysisReadPinsTest {
         // that a later capped resolve happened to find.
         org.junit.Assert.assertNull(AnalysisReadPins.get(row))
     }
+
+    @Test
+    fun aNewAnalysisRoundResolvesItsLightCopyAfresh() {
+        // The production round start, not the helper: the first round's pin is
+        // dropped there, so the second round resolves a new stream.
+        AnalysisReadPins.streamFor(row) { SourceStream("https://first/expired") }
+        AudioCache.startAnalysisRound(row)
+        val second = AnalysisReadPins.streamFor(row) { SourceStream("https://second/fresh") }
+        assertEquals("https://second/fresh", second?.url)
+    }
+
+    @Test
+    fun aYouTubeRoundLeavesNoLightPinToDrop() {
+        // A YouTube id is not a catalogue row: nothing it reads goes through the pins.
+        AnalysisReadPins.put("abcdefghijk", SourceStream("https://kept"))
+        AudioCache.startAnalysisRound("abcdefghijk")
+        assertEquals("https://kept", AnalysisReadPins.get("abcdefghijk")?.url)
+        AnalysisReadPins.forget("abcdefghijk")
+    }
 }

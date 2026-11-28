@@ -16,6 +16,12 @@ interface StreamVolume {
 
     /** Ask the receiver for [level]; false when it refused or did not answer. */
     suspend fun set(level: Double): Boolean
+
+    /**
+     * Every restore attempt was refused: put [level] back the next time the
+     * listener plays on this same Cast session, so that play is not silent.
+     */
+    fun restoreLater(level: Double) {}
 }
 
 /**
@@ -235,8 +241,12 @@ object SleepTimer {
                 if (!playing()) return CastFade.LISTENER_PAUSED
                 val left = (end - now()).coerceAtLeast(0L)
                 if (fading && volume != null && original != null) {
+                    // Before the request: a reply that times out, or a wait
+                    // cancelled, can still leave the receiver turned down,
+                    // and a restore to the level it already has is harmless.
+                    touched = true
                     // Refused: no more fading, but the pause keeps its deadline.
-                    if (volume.set(original * fadeVolume(left, spanMs))) touched = true else fading = false
+                    if (!volume.set(original * fadeVolume(left, spanMs))) fading = false
                 }
                 // Read again: a receiver can take seconds to answer a volume
                 // step, and waiting out the time measured before it would put
@@ -255,7 +265,13 @@ object SleepTimer {
             }
             return CastFade.PAUSE_FAILED
         } finally {
-            if (touched && volume != null && original != null) withContext(NonCancellable) { restoreVolume(volume, original) }
+            if (touched && volume != null && original != null) {
+                withContext(NonCancellable) {
+                    // The pause stands either way; a refused restore is kept
+                    // for the next play on this session rather than dropped.
+                    if (!restoreVolume(volume, original)) volume.restoreLater(original)
+                }
+            }
         }
     }
 

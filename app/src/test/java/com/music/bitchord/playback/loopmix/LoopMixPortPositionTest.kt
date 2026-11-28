@@ -100,4 +100,12 @@ class LoopMixPortPositionTest {
         assertNull(port.presentedSeconds(1_020_000_000L, playing = true))
         assertEquals(5.019, port.presentedSeconds(1_019_000_000L, playing = true)!!, 1e-9)
     }
+
+    @Test
+    fun aReadingTakenAfterTheQueryTimeGivesNoSample() {
+        val port = LoopMixPort()
+        // Published at 1.010 s, after a drop the sink applied at 1.005 s; asked about 1.000 s.
+        port.publishPosition(5_050_000L, 1_010_000_000L, port.generation)
+        assertNull(port.presentedSeconds(1_000_000_000L, playing = true))
+    }
 }
