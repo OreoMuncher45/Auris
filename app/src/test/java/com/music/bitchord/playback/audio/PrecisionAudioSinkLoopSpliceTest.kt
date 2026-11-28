@@ -348,4 +348,13 @@ class PrecisionAudioSinkLoopSpliceTest {
         assertTrue(feed(5_000_000L, 240))
         assertTrue("bit-perfect output after the flush is the song's own", delegate.written.last().all { it.toInt() == 1000 })
     }
+
+    @Test
+    fun theLoopLimiterHoldsOnlyOnBlocksTheDeckWasMixedInto() {
+        configure()
+        arm() // pre-roll: rendered, not mixed in
+        assertFalse("the limiter held on dry pre-roll", chain.mixing)
+        feed(crossingUs, 240)
+        assertTrue("the crossing block carries the mix", chain.mixing)
+    }
 }

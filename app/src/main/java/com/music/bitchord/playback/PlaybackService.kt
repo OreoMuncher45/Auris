@@ -8759,7 +8759,9 @@ class PlaybackService : MediaLibraryService() {
     private fun observeSettings() {
         scope.launch {
             AppSettings.smartFadeEnabled.collect { enabled ->
-                if (!enabled) crossfade?.onAutomixDisabled()
+                // On: the ticker may have stopped while paused with Automix off,
+                // so the marker is planned now rather than when playback resumes.
+                if (enabled) crossfade?.onAutomixEnabled() else crossfade?.onAutomixDisabled()
             }
         }
         scope.launch {
@@ -9668,6 +9670,8 @@ class PlaybackService : MediaLibraryService() {
         val currentSong = player?.currentMediaItem?.toSong() ?: run {
             serviceLyrics.clear()
             stopLyricsTicker()
+            // The queue emptied: the last track's line is no longer the session's.
+            lastPublishedSubtitle = null
             return
         }
 
@@ -9680,7 +9684,11 @@ class PlaybackService : MediaLibraryService() {
         // Another track's lines go now, not when this lookup answers: until
         // then the ticker would read them at this track's position.
         val trackId = currentSong.videoId
-        if (serviceLyrics.lookUp(trackId)) updateLyricSubtitle()
+        serviceLyrics.lookUp(trackId)
+        // Published for every new track, paused or not, and even when there were
+        // no lines to drop: its artist stands in until its lyrics answer, rather
+        // than the previous track's line staying up under it.
+        updateLyricSubtitle()
 
         val trackDurationMs = (player?.duration ?: 0L).takeIf { it > 0 } ?: 0L
 
