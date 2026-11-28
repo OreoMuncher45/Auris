@@ -16,6 +16,9 @@ class SpokenOrLiveTest {
         assertFalse(isSpokenOrLiveForTest("Live in Love", "Some Artist"))
         assertFalse(isSpokenOrLiveForTest("Live on the Edge", "Some Artist"))
         assertFalse(isSpokenOrLiveForTest("Song (We Live in Harmony)", "Some Artist"))
+        assertFalse(isSpokenOrLiveForTest("Live and Let Die", "Wings"))
+        assertFalse(isSpokenOrLiveForTest("Medley - Live and Let Die", "Some Artist"))
+        assertFalse(isSpokenOrLiveForTest("Song (Live and Let Die Cover)", "Some Artist"))
     }
 
     @Test
