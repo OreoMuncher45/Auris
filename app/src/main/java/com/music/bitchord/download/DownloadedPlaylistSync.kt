@@ -178,7 +178,10 @@ object DownloadedPlaylistSync {
      * the next like simply stops arriving, as with any playlist's switch.
      */
     fun setKeepLiked(context: Context, on: Boolean) {
-        AppSettings.setDownloadLikedSongs(on)
+        // Under [likedSwitchLock], so it cannot land between the reconcile's
+        // read and its write; that lock is held only for those, never across
+        // a sync's enqueue, so this caller does not wait on one.
+        synchronized(likedSwitchLock) { AppSettings.setDownloadLikedSongs(on) }
         // The saved Liked Music record only exists once the download index has
         // loaded; set before that, the load would bring back its old switch.
         // Applied from the preference as it stands then, so quick toggles end
@@ -208,19 +211,32 @@ object DownloadedPlaylistSync {
     private fun reconcileLikedSwitch() {
         Downloads.withCollectionsHeld {
             val record = Downloads.collectionFor(YtMusicRepository.LIKED_MUSIC) ?: return@withCollectionsHeld
-            when (
-                likedSwitchReconciliation(
-                    recordOn = record.autoDownload,
-                    settingOn = AppSettings.downloadLikedSongs.value,
-                    settingChosen = AppSettings.downloadLikedSongsChosen,
-                )
-            ) {
-                LikedSwitchFix.SETTING_ON -> AppSettings.setDownloadLikedSongs(true)
-                LikedSwitchFix.RECORD_OFF -> Downloads.setAutoDownloadNewSongs(record.id, false)
-                LikedSwitchFix.NONE -> Unit
+            // The setting is read and written under [likedSwitchLock], so an
+            // explicit toggle from [setKeepLiked] lands wholly before or after.
+            synchronized(likedSwitchLock) {
+                when (
+                    likedSwitchReconciliation(
+                        recordOn = record.autoDownload,
+                        settingOn = AppSettings.downloadLikedSongs.value,
+                        settingChosen = AppSettings.downloadLikedSongsChosen,
+                    )
+                ) {
+                    LikedSwitchFix.SETTING_ON -> AppSettings.setDownloadLikedSongs(true)
+                    LikedSwitchFix.RECORD_OFF -> Downloads.setAutoDownloadNewSongs(record.id, false)
+                    LikedSwitchFix.RECORD_ON -> Downloads.setAutoDownloadNewSongs(record.id, true)
+                    LikedSwitchFix.NONE -> Unit
+                }
             }
         }
     }
+
+    /**
+     * Guards the keep-liked setting's read-and-apply in [reconcileLikedSwitch]
+     * against an explicit toggle in [setKeepLiked]. Taken inside the
+     * collections lock there and alone in [setKeepLiked], so never in the
+     * other order.
+     */
+    private val likedSwitchLock = Any()
 
     /** When each playlist was last looked at, so one is not walked twice. */
     private val refreshedAt = ConcurrentHashMap<String, Long>()
@@ -513,7 +529,7 @@ internal fun <S> admitForListener(
 }
 
 /** What [likedSwitchReconciliation] changes so the record and the setting agree. */
-internal enum class LikedSwitchFix { NONE, SETTING_ON, RECORD_OFF }
+internal enum class LikedSwitchFix { NONE, SETTING_ON, RECORD_OFF, RECORD_ON }
 
 /**
  * How a Liked Music record's switch and the keep-liked setting are brought into
@@ -523,12 +539,14 @@ internal enum class LikedSwitchFix { NONE, SETTING_ON, RECORD_OFF }
  * writes it first and the record after, so a record left On under an explicit
  * Off is an Off whose second half never landed, and is finished. A setting
  * never chosen leaves the record's switch as the only choice made, so it wins.
- * A record Off under a setting On is not a disagreement the sync acts on: the
- * setting already keeps the songs coming.
+ * A setting On over a record Off is an On whose record update never landed
+ * (the process ended in between): the record follows it, or the page would
+ * show Off and its tap could only ask for On again.
  */
 internal fun likedSwitchReconciliation(recordOn: Boolean, settingOn: Boolean, settingChosen: Boolean): LikedSwitchFix =
     when {
-        !recordOn || settingOn -> LikedSwitchFix.NONE
+        recordOn == settingOn -> LikedSwitchFix.NONE
+        settingOn -> LikedSwitchFix.RECORD_ON
         settingChosen -> LikedSwitchFix.RECORD_OFF
         else -> LikedSwitchFix.SETTING_ON
     }
