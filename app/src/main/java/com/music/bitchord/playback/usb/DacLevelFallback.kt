@@ -16,6 +16,19 @@ package com.music.bitchord.playback.usb
 internal object DacLevelFallback {
     const val RETRY_MS = 1_000L
 
+    /**
+     * The gain the writer applies to every chunk it sends while a refused
+     * level is pending: the DAC is still at [dacAtDb] (its last accepted
+     * level, or its own read level), and the listener asked for [targetDb].
+     * Below 1 only when the DAC is louder than asked; a refused raise leaves
+     * the output quieter than asked, which needs nothing. Applied as each
+     * chunk is sent, so it covers the PCM already queued at gain 1 as well.
+     */
+    fun pendingAttenuation(targetDb: Double, dacAtDb: Double?): Float {
+        if (dacAtDb == null || !targetDb.isFinite() || !dacAtDb.isFinite() || targetDb >= dacAtDb) return 1f
+        return Math.pow(10.0, (targetDb - dacAtDb) / 20.0).toFloat().coerceIn(0f, 1f)
+    }
+
     /** When to write the level again after a write the DAC refused at [nowMs]. */
     fun retryAt(nowMs: Long): Long = nowMs + RETRY_MS
 
