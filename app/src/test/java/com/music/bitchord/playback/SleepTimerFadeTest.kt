@@ -164,8 +164,11 @@ class SleepTimerFadeTest {
         )
         assertEquals(SleepTimer.CastFade.PAUSED, result)
         assertEquals("not 30 s early", 30_000L, pausedAt)
-        // One refused ask, no fade after it, and nothing to restore.
-        assertEquals(1, volume.asked.size)
+        // One refused fade step and no fade after it. That step may still have
+        // reached the receiver, so the original level is asked back, retried
+        // as a refused restore is.
+        assertEquals(1 + SleepTimer.CAST_RESTORE_ATTEMPTS, volume.asked.size)
+        assertEquals(List(SleepTimer.CAST_RESTORE_ATTEMPTS) { 0.8 }, volume.asked.drop(1))
     }
 
     @Test
