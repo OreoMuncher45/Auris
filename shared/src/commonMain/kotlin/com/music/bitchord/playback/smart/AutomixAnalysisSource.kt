@@ -103,7 +103,18 @@ object AutomixAnalysisSource {
      * Automix: its independently cached copy must always be YouTube Opus,
      * even while playback is JioSaavn or a lossless upgrade.
      */
-    fun opusUri(videoId: String): String = "bitchord://watch?v=$videoId&$OPUS_QUERY_PARAMETER=1"
+    fun opusUri(videoId: String, rendition: String? = this.rendition()): String =
+        "bitchord://watch?v=$videoId&$OPUS_QUERY_PARAMETER=1" + (rendition?.let { "&$RENDITION_PARAMETER=$it" } ?: "")
+
+    /**
+     * The rendition an Opus read was asked under, carried in its address so
+     * the resolver serves that rendition or none: a round keyed under one
+     * rendition must not write another's bytes into its entry after a switch.
+     */
+    const val RENDITION_PARAMETER = "automix_rendition"
+
+    /** Whether an Opus read asked under [marker] (null: the ordinary one) is still the current rendition. */
+    fun renditionIsCurrent(marker: String?): Boolean = marker == rendition()
 
     fun requestsYouTubeOpus(marker: String?): Boolean = marker == "1"
 

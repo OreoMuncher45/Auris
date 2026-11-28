@@ -73,12 +73,16 @@ class PrecisionAudioSinkLoopSpliceTest {
     /** An exclusive route that counts the times a sink tries to open it. */
     private class CountingSession : ExclusiveSession {
         var opens = 0
+        /** Whether opening succeeds, as a granted DAC's would. */
+        var opensSucceed = false
+        var writes = 0
+        private var open = false
         override val pathLabel = "test"
         override val pathDetail = "test"
         override val transport = TransportType.DIRECT_USB
         override val lastFailureReason: String? = null
         override fun canOpen() = true
-        override fun configure(format: Format, bitDepthHint: Int?): Boolean { opens++; return false }
+        override fun configure(format: Format, bitDepthHint: Int?): Boolean { opens++; open = opensSucceed; return open }
         override fun currentRateHz() = 48_000
         override fun activeWireBits() = 16
         override fun failureIsRetryable() = false
@@ -88,7 +92,11 @@ class PrecisionAudioSinkLoopSpliceTest {
         override fun usesHardwareVolume() = false
         override fun softwareGain() = 1f
         override fun hardwareOutputLevelDb(): Double? = null
-        override fun write(buffer: ByteBuffer, presentationTimeUs: Long, isFloatBuffer: Boolean) = false
+        override fun write(buffer: ByteBuffer, presentationTimeUs: Long, isFloatBuffer: Boolean): Boolean {
+            writes++
+            buffer.position(buffer.limit())
+            return true
+        }
         override fun isStreamAlive() = false
         override fun restartIfStopped() = false
         override fun getCurrentPositionUs() = 0L
@@ -217,8 +225,9 @@ class PrecisionAudioSinkLoopSpliceTest {
         ShadowSystemClock.advanceBy(Duration.ofSeconds(10))
         feed(crossingUs + 5_000L, 240)
         assertEquals("the route was opened over the crossing", 0, session.opens)
-        // Once the controller retires the mix, the route is taken.
+        // Once the controller retires the mix and its recovery seek flushes the sink, the route is taken.
         port.disarm()
+        sink.flush()
         ShadowSystemClock.advanceBy(Duration.ofSeconds(10))
         feed(crossingUs + 10_000L, 240)
         ShadowSystemClock.advanceBy(Duration.ofSeconds(10))
@@ -268,5 +277,28 @@ class PrecisionAudioSinkLoopSpliceTest {
         sink.flush()
         assertTrue(feed(5_000_000L, 240))
         assertEquals(before + 1, delegate.written.size)
+    }
+
+    @Test
+    fun theRouteIsNotOpenedOverTheHeldBufferBetweenRetirementAndTheRecoveryFlush() {
+        session.opensSucceed = true
+        configure()
+        arm()
+        assertFalse(feed(crossingUs, 1_920)) // through the loop start: taken over
+        assertTrue(port.tookOver)
+        bitPerfect = true
+        // The controller retires the mix on bit-perfect; its recovery seek is still in flight.
+        port.disarm()
+        val delegateWrites = delegate.written.size
+        ShadowSystemClock.advanceBy(Duration.ofSeconds(10))
+        assertFalse("the held pre-takeover buffer was consumed", feed(crossingUs, 1_920))
+        assertEquals("the exclusive route opened before the recovery flush", 0, session.opens)
+        assertEquals("the held buffer reached the DAC", 0, session.writes)
+        assertEquals("the held buffer reached the delegate", delegateWrites, delegate.written.size)
+        // The seek lands: from the flush on, the route is taken.
+        sink.flush()
+        ShadowSystemClock.advanceBy(Duration.ofSeconds(10))
+        feed(5_000_000L, 240)
+        assertEquals(1, session.opens)
     }
 }
