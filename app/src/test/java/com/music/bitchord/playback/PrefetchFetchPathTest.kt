@@ -63,4 +63,17 @@ class PrefetchFetchPathTest {
         AudioCache.fetch(id, 0, length.toLong())
         assertEquals(length.toLong(), cache.getCachedBytes(id, 0, length.toLong()))
     }
+
+    @Test
+    fun aRenditionThatFlipsBetweenReadsStillGivesAMatchingKeyAndAddress() {
+        // The rendition switches on every read, as a Premium toggle landing
+        // between two reads would: the key and the address must still agree.
+        var reads = 0
+        AutomixAnalysisSource.rendition = { if (reads++ % 2 == 0) null else "premium" }
+        repeat(4) {
+            val (key, uri) = AudioCache.readAheadTarget(id)
+            val addressed = uri.getQueryParameter(AutomixAnalysisSource.RENDITION_PARAMETER)?.ifEmpty { null }
+            assertEquals("key $key against address $uri", AutomixAnalysisSource.playbackKey(id, addressed), key)
+        }
+    }
 }
