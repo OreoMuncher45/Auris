@@ -959,22 +959,12 @@ class ExclusiveUsbOutput(
                         softwareGainValue = 1f
                         return
                     }
-                    // Software gain only scales on top of the DAC's level, which
-                    // may be a faded one (the sleep fade rides on it): back to
-                    // the DAC's base first, or try the level again.
-                    when (DacLevelFallback.afterFailedWrite(base, control::setDb)) {
-                        DacLevelFallback.Outcome.SOFTWARE_FROM_BASE -> {
-                            Log.w(TAG, "Feature Unit SET_CUR failed; DAC at its base, perceptual software gain from here")
-                            lastWrittenDb = base
-                            hardwareVolume = false
-                        }
-                        DacLevelFallback.Outcome.RETRY_HARDWARE -> {
-                            Log.w(TAG, "Feature Unit SET_CUR failed twice; keeping the level pending")
-                            volumeRetryAtMs = SystemClock.elapsedRealtime() + DAC_LEVEL_RETRY_MS
-                            volumeDirty = true
-                            return
-                        }
-                    }
+                    // Kept on the hardware path and written again shortly, never
+                    // switched to software gain mid-stream: see [DacLevelFallback].
+                    Log.w(TAG, "Feature Unit SET_CUR failed; keeping the level pending")
+                    volumeRetryAtMs = DacLevelFallback.retryAt(SystemClock.elapsedRealtime())
+                    volumeDirty = true
+                    return
                 } else {
                     // The DAC is already where it should be — at full volume
                     // with the knob where the listener left it, nothing is
@@ -1125,7 +1115,7 @@ class ExclusiveUsbOutput(
 
     private fun maybeApplyVolume() {
         if (!volumeDirty) return
-        if (SystemClock.elapsedRealtime() < volumeRetryAtMs) return
+        if (!DacLevelFallback.mayRetry(volumeRetryAtMs, SystemClock.elapsedRealtime())) return
         withLockUnlessStopping {
             if (!volumeDirty) return
             volumeDirty = false
@@ -1322,7 +1312,6 @@ class ExclusiveUsbOutput(
 
     private companion object {
         const val TAG = "ExclusiveUsb"
-        const val DAC_LEVEL_RETRY_MS = 1_000L
         const val VOLUME_CHANGED_ACTION = "android.media.VOLUME_CHANGED_ACTION"
         const val EXTRA_VOLUME_STREAM_TYPE = "android.media.EXTRA_VOLUME_STREAM_TYPE"
         const val KEY_BLOCK_PREFIX = "blocked_dac_"

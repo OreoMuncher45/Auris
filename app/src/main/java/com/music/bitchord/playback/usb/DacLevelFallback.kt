@@ -2,21 +2,23 @@ package com.music.bitchord.playback.usb
 
 /**
  * What a USB output does when writing the listener's level to the DAC's
- * Feature Unit fails. The app's software gain can only scale on top of
- * whatever the DAC is left at, so the DAC goes back to its own base level
- * first; if even that write fails, the hardware path stays and the level is
- * tried again, rather than leaving a faded level on the DAC under the
- * restored software gain.
+ * Feature Unit fails: it keeps the hardware path and tries the level again,
+ * spaced [RETRY_MS] apart so a DAC refusing writes doesn't put two control
+ * transfers in front of every chunk the writer sends.
+ *
+ * It does not switch to software gain mid-stream. PCM already copied into
+ * the queue, and the URBs already submitted, were scaled for the hardware
+ * path (gain 1); putting the DAC back to its base level under them would
+ * play them above the listener's level until newly scaled PCM arrived. And
+ * a software gain kept over the DAC's last accepted level would leave a
+ * faded level (the sleep fade rides on it) in place after a restore.
  */
 internal object DacLevelFallback {
-    enum class Outcome {
-        /** The DAC is back at its base level: software gain from here. */
-        SOFTWARE_FROM_BASE,
+    const val RETRY_MS = 1_000L
 
-        /** The DAC took nothing: keep the hardware path and write the level again. */
-        RETRY_HARDWARE,
-    }
+    /** When to write the level again after a write the DAC refused at [nowMs]. */
+    fun retryAt(nowMs: Long): Long = nowMs + RETRY_MS
 
-    fun afterFailedWrite(baseDb: Double, setDb: (Double) -> Boolean): Outcome =
-        if (setDb(baseDb)) Outcome.SOFTWARE_FROM_BASE else Outcome.RETRY_HARDWARE
+    /** Whether the level pending since a refused write may be tried at [nowMs]. */
+    fun mayRetry(retryAtMs: Long, nowMs: Long): Boolean = nowMs >= retryAtMs
 }
