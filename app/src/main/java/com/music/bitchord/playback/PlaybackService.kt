@@ -2664,6 +2664,26 @@ class PlaybackService : MediaLibraryService() {
                 }
             }
 
+            // The track may have moved on while the standby aligned. Both
+            // adoption paths below hand playback to the standby's copy of the
+            // track the swap began on, so neither may run for another one: the
+            // standby is retired and the active player, with whatever gain the
+            // sleep fade gave it, is left alone.
+            if (!versionSwapStillCurrent(
+                    activeIsPlaying = player === activePlayer,
+                    indexAtStart = currentIndex,
+                    indexNow = activePlayer.currentMediaItemIndex,
+                    mediaIdAtStart = currentItem.mediaId,
+                    mediaIdNow = activePlayer.currentMediaItem?.mediaId,
+                )
+            ) {
+                standbyPlayer.stop()
+                standbyPlayer.clearMediaItems()
+                standbyPlayer.volume = 1f
+                swappingMediaId = null
+                return@launch
+            }
+
             // The sleep timer's fade started while the standby got ready: it
             // owns the volume now, so the swap goes in at the faded level
             // instead of morphing a full-volume copy in under it.
@@ -8039,7 +8059,10 @@ class PlaybackService : MediaLibraryService() {
                     val fadeMs = if (AppSettings.sleepTimerFadeOut.value) SleepTimer.FADE_OUT_DURATION_MS else 0L
                     val wait = deadline - SystemClock.elapsedRealtime() - fadeMs
                     if (wait > 0) delay(wait)
-                    if (castPlayback.active) {
+                    // Fades the receiver over what is left before [deadline] and
+                    // pauses it there. True when the timer is done with; false
+                    // when playback is back on the phone, whose path takes over.
+                    suspend fun castFade(): Boolean {
                         // The receiver is what is playing, and the phone's
                         // player is held paused: the fade is the song's own
                         // volume on the receiver, put back after the pause.
@@ -8055,10 +8078,10 @@ class PlaybackService : MediaLibraryService() {
                         if (fade == SleepTimer.CastFade.PAUSE_FAILED) {
                             TrackLog.d("BitChordSleepTimer", "the Cast receiver never confirmed the sleep timer's pause")
                         }
-                        when (SleepTimer.afterCastFade(fade, castActiveNow = castPlayback.active)) {
+                        return when (SleepTimer.afterCastFade(fade, castActiveNow = castPlayback.active)) {
                             SleepTimer.AfterCastFade.CANCEL -> {
                                 SleepTimer.cancel()
-                                return@collectLatest
+                                true
                             }
                             // The listener paused: the timer still stands. Whatever
                             // is playing at the deadline (resumed, or moved) is paused then.
@@ -8067,14 +8090,15 @@ class PlaybackService : MediaLibraryService() {
                                 if (left > 0) delay(left)
                                 pauseSleepTimerOutput()
                                 SleepTimer.cancel()
-                                return@collectLatest
+                                true
                             }
                             // On the phone now (moved during the fade, the pause or the
                             // restore): the local path below fades and pauses it at the
                             // same deadline.
-                            SleepTimer.AfterCastFade.CONTINUE_LOCAL -> Unit
+                            SleepTimer.AfterCastFade.CONTINUE_LOCAL -> false
                         }
                     }
+                    if (castPlayback.active && castFade()) return@collectLatest
                     if (fadeMs > 0) {
                         // No new blend from here on — see [SleepTimer.fadingOut].
                         // One already running owns the volumes until it lands,
@@ -8095,6 +8119,18 @@ class PlaybackService : MediaLibraryService() {
                         }
                         val span = deadline - SystemClock.elapsedRealtime()
                         while (span > 0) {
+                            // Casting began mid-fade: what the listener hears is
+                            // the receiver now. The phone's player goes back to
+                            // full (it is held paused while casting) and the
+                            // receiver is faded over what is left of the span,
+                            // to the same deadline.
+                            if (castPlayback.active) {
+                                sleepFadeGain = null
+                                SleepFadeLevel.gain = 1f
+                                faded?.volume = 1f
+                                faded = null
+                                if (castFade()) return@collectLatest
+                            }
                             val left = (deadline - SystemClock.elapsedRealtime()).coerceAtLeast(0L)
                             val gain = SleepTimer.fadeVolume(left, span)
                             sleepFadeGain = gain
@@ -8940,7 +8976,9 @@ class PlaybackService : MediaLibraryService() {
     private fun observeSettings() {
         scope.launch {
             AppSettings.smartFadeEnabled.collect { enabled ->
-                if (!enabled) crossfade?.onAutomixDisabled()
+                // On: the ticker may have stopped while paused with Automix off,
+                // so the marker is planned now rather than when playback resumes.
+                if (enabled) crossfade?.onAutomixEnabled() else crossfade?.onAutomixDisabled()
             }
         }
         scope.launch {
@@ -9849,6 +9887,8 @@ class PlaybackService : MediaLibraryService() {
         val currentSong = player?.currentMediaItem?.toSong() ?: run {
             serviceLyrics.clear()
             stopLyricsTicker()
+            // The queue emptied: the last track's line is no longer the session's.
+            lastPublishedSubtitle = null
             return
         }
 
@@ -9861,7 +9901,11 @@ class PlaybackService : MediaLibraryService() {
         // Another track's lines go now, not when this lookup answers: until
         // then the ticker would read them at this track's position.
         val trackId = currentSong.videoId
-        if (serviceLyrics.lookUp(trackId)) updateLyricSubtitle()
+        serviceLyrics.lookUp(trackId)
+        // Published for every new track, paused or not, and even when there were
+        // no lines to drop: its artist stands in until its lyrics answer, rather
+        // than the previous track's line staying up under it.
+        updateLyricSubtitle()
 
         val trackDurationMs = (player?.duration ?: 0L).takeIf { it > 0 } ?: 0L
 

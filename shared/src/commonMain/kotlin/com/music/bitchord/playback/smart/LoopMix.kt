@@ -549,8 +549,13 @@ object LoopMix {
      * [OPEN_LINE_CERTAIN_SEC] for sure and the rest left to the vocal mask. That
      * can only make a loop pickier, never let a word through: a cap short of the
      * next line let a line still being sung clear a loop on the lyrics alone.
+     *
+     * [background] vocals are sung stretches too, kept apart from the lead
+     * lines: mixed in as lines, a background start would cut short a lead
+     * line with no stated end and let the rest of it pass as clear. One with
+     * no stated end is taken as sung until the next lead line.
      */
-    fun sungSpans(lines: List<Line>): List<Span> {
+    fun sungSpans(lines: List<Line>, background: List<Line> = emptyList()): List<Span> {
         val sorted = lines.sortedBy { it.timeMs }
         val spans = ArrayList<Span>()
         for ((index, line) in sorted.withIndex()) {
@@ -567,7 +572,19 @@ object LoopMix {
             val certain = if (stated) end else min(end, start + OPEN_LINE_CERTAIN_SEC)
             spans += Span(start - LYRIC_LEAD_SEC, end + LYRIC_TAIL_SEC, certain + LYRIC_TAIL_SEC)
         }
-        return spans
+        for (line in background) {
+            if (line.blank) continue
+            val start = line.timeMs / 1000.0
+            val stated = line.endMs != null && line.endMs > line.timeMs
+            val end = if (stated) {
+                line.endMs!! / 1000.0
+            } else {
+                sorted.firstOrNull { it.timeMs > line.timeMs }?.timeMs?.let { it / 1000.0 } ?: Double.POSITIVE_INFINITY
+            }
+            val certain = if (stated) end else min(end, start + OPEN_LINE_CERTAIN_SEC)
+            spans += Span(start - LYRIC_LEAD_SEC, end + LYRIC_TAIL_SEC, certain + LYRIC_TAIL_SEC)
+        }
+        return spans.sortedBy { it.start }
     }
 
     // ---- Putting it on the clock -----------------------------------------------------------

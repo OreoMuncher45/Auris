@@ -570,4 +570,22 @@ class LoopMixTest {
         val second = CurveWindow(1.05, LEVEL_FRAME_RATE, FloatArray(10) { 0.5f })
         assertFalse(LoopMix.meanRms(listOf(first, second), 0.0, 2.0).isNaN())
     }
+
+    @Test
+    fun aBackgroundVocalIsASungStretchOfItsOwn() {
+        // Lead lines at 10 s and 30 s (stated ends); a background vocal 20-24 s between them.
+        val lead = listOf(LoopMix.Line(10_000, 14_000, blank = false), LoopMix.Line(30_000, 34_000, blank = false))
+        val background = listOf(LoopMix.Line(20_000, 24_000, blank = false))
+        val spans = LoopMix.sungSpans(lead, background)
+        assertTrue(spans.any { it.start <= 20.0 && it.end >= 24.0 }, "the background vocal is not a sung span: $spans")
+    }
+
+    @Test
+    fun aBackgroundVocalDoesNotShortenALeadLineWithNoStatedEnd() {
+        // The lead line at 10 s has no end: sung until the next lead line at 30 s.
+        val lead = listOf(LoopMix.Line(10_000, null, blank = false), LoopMix.Line(30_000, 34_000, blank = false))
+        val background = listOf(LoopMix.Line(12_000, 13_000, blank = false))
+        val leadSpan = LoopMix.sungSpans(lead, background).first { kotlin.math.abs(it.start - (10.0 - 0.0)) < 1.0 }
+        assertTrue(leadSpan.end >= 30.0, "the lead line was cut short at ${leadSpan.end}")
+    }
 }
