@@ -612,13 +612,15 @@ object AudioCache {
                         // answer here when the source above it has nothing, and a
                         // complete ordinary copy would then serve a Premium request
                         // without ever resolving Premium.
-                        altKeyOf(videoId, atmosKeySuffix()).let { if (reopen) it else completeSibling(videoId, it) ?: it }
+                        altKeyOf(videoId, atmosKeySuffix()).let {
+                            if (reopen) keptOnReopen(request, videoId, it) else completeSibling(videoId, it) ?: it
+                        }
                     // YouTube's own copy, under the rendition the resolver
                     // serves now: Premium's higher rung is another encoding,
                     // and filling one entry from both splices two files.
                     // See [AutomixAnalysisSource.rendition].
                     else -> AutomixAnalysisSource.playbackKey(videoId).let { own ->
-                        if (reopen) own else completeSibling(videoId, own) ?: own
+                        if (reopen) keptOnReopen(request, videoId, own) else completeSibling(videoId, own) ?: own
                     }
                 }.also { key ->
                     if (request != null && !reopen) request.pin(videoId, key)
@@ -645,6 +647,22 @@ object AudioCache {
             }
             ?: spec.key
             ?: spec.uri.toString()
+    }
+
+    /**
+     * The key a reopen of [request] reads: the one it first opened on. When the
+     * settings now name another ([recomputed]: Premium switched on mid-play, a
+     * source ranked above YouTube), the reopen still reads the entry it opened
+     * on, whose cached bytes are the encoding its extractor is parsing, and
+     * that entry is frozen for this request: a fill there would be the other
+     * rendition's bytes, so it is refused, the open fails, and the player's
+     * recovery reopens fresh under the new key. Neither the entry nor the
+     * stream ever mixes two renditions.
+     */
+    private fun keptOnReopen(request: BorrowedEntries?, videoId: String, recomputed: String): String {
+        val opened = request?.pinnedFor(videoId) ?: return recomputed
+        if (opened != recomputed) request.freeze(opened)
+        return opened
     }
 
     /**
@@ -2337,26 +2355,54 @@ object AudioCache {
         val total = runCatching { StreamResolver.contentLength(videoId) }.getOrNull()
             ?: return false
 
-        // The entry [fetch] writes this track to, resolved once: under a
-        // rendition (Premium) the write lands on `<id>#<rendition>`, and checked
-        // against the bare id the pass never saw its own bytes and kept
-        // re-fetching the first range.
-        val key = AutomixAnalysisSource.playbackKey(videoId)
-        var position = 0L
-        while (position < total) {
+        // The entry this pass writes, resolved once and pinned for every
+        // write and every check: YouTube's own entry under the current
+        // rendition, or its substitution-capable bucket, as [keyFactory] files a
+        // YouTube winner. Left to the key factory, the write landed on
+        // `<id>#<rendition>` while the checks (here and in [fetch]) read the
+        // bare id, so the pass never saw its own bytes and kept re-fetching.
+        val key = prefetchKeyOf(videoId)
+        val watch = Uri.parse("bitchord://watch?v=$videoId")
+        return cacheRangesOnce(
+            key = key,
+            total = total,
+            chunk = CHUNK_BYTES,
             // Checked per chunk, not just once per pass: a track long enough
             // to need several chunks can lose the race partway through one,
             // and a queue change mid-pass is exactly the "the player has it
             // now" case the guard in [fetchWhole] exists for.
-            if (pendingQueue.firstOrNull() != videoId) return false
-            val length = minOf(CHUNK_BYTES, total - position)
-            if (cache.getCachedBytes(key, position, length) < length) {
-                fetch(videoId, position, length)
-                // Written nowhere means the entry is held elsewhere; the rest
-                // of this pass would be just as wasted. See [fetch] for why
-                // this can be true even though the fetch just above returned
-                // without error.
-                if (cache.getCachedBytes(key, position, length) < length) return false
+            stillWanted = { pendingQueue.firstOrNull() == videoId },
+            cachedAt = { position, length -> cache.getCachedBytes(key, position, length) },
+            fetchRange = { position, length -> fetch(key, watch, position, length, pinKey = true) },
+        )
+    }
+
+    /** The entry [cacheWholeOnce] fills for [videoId]; see there. */
+    internal fun prefetchKeyOf(videoId: String): String =
+        if (SourceResolver.canSubstituteForYouTube()) altKeyOf(videoId, atmosKeySuffix()) else AutomixAnalysisSource.playbackKey(videoId)
+
+    /**
+     * Fills [key] a [chunk] at a time up to [total], checking and writing that
+     * one key throughout. Stops (false) once [stillWanted] says no, or when a
+     * range written nowhere shows the entry is held elsewhere: the rest of the
+     * pass would be just as wasted. See [fetch] for why that can be true even
+     * though a fetch returned without error.
+     */
+    internal suspend fun cacheRangesOnce(
+        key: String,
+        total: Long,
+        chunk: Long,
+        stillWanted: () -> Boolean,
+        cachedAt: (position: Long, length: Long) -> Long,
+        fetchRange: suspend (position: Long, length: Long) -> Unit,
+    ): Boolean {
+        var position = 0L
+        while (position < total) {
+            if (!stillWanted()) return false
+            val length = minOf(chunk, total - position)
+            if (cachedAt(position, length) < length) {
+                fetchRange(position, length)
+                if (cachedAt(position, length) < length) return false
             }
             position += length
         }
