@@ -206,7 +206,7 @@ internal class PlaybackStreamResolver(
             // resolve, as before the light read, rather than leaving the
             // analyser with no copy to measure. Whichever answers is the one
             // pinned for the round, so its later opens read that same stream.
-            val light = AnalysisReadPins.streamFor(
+            val light = AnalysisReadPins.lightRead(
                 rowId,
                 capped = {
                     try {
@@ -227,13 +227,12 @@ internal class PlaybackStreamResolver(
                     }
                 },
             )
-            // Neither answered: the ordinary path below says why.
-            if (light != null) {
-                return dataSpec.buildUpon()
-                    .setUri(Uri.parse(light.url))
-                    .setHttpRequestHeaders(light.headers)
-                    .build()
-            }
+            // Neither answering has already failed the read: the ordinary path
+            // below is never a light read's, since what it serves is not pinned.
+            return dataSpec.buildUpon()
+                .setUri(Uri.parse(light.url))
+                .setHttpRequestHeaders(light.headers)
+                .build()
         }
         if (!directYouTube) {
             // An upgraded item carries a marker and its stream has
