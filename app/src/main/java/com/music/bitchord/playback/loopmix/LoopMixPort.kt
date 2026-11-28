@@ -202,9 +202,11 @@ class LoopMixPort {
             // pause or a gap) says nothing about this one.
             if (position == C.TIME_UNSET || taken != generation) return null
             val elapsed = if (playing) (nowNanos - at) / 1e9 else 0.0
-            // Projected across a shift's boundary, or through inserted silence,
-            // the track would not have moved as the clock did: no sample.
-            if (elapsed > 0 && elapsed * 1e6 > steady) return null
+            // Projected onto or across a shift's boundary, or through inserted
+            // silence, the track would not have moved as the clock did: no
+            // sample. Exclusive at the boundary: a drop applies at that instant
+            // ([com.music.bitchord.playback.audio.ShiftTimeline.trackPositionUs]).
+            if (elapsed > 0 && elapsed * 1e6 >= steady) return null
             return position / 1e6 + elapsed
         }
         return null
