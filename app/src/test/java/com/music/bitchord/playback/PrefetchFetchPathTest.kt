@@ -39,6 +39,9 @@ class PrefetchFetchPathTest {
     }
 
     @After fun tearDown() {
+        // The collector init() starts on the cache-size setting, stopped before
+        // the cache goes, so none outlives its test.
+        kotlinx.coroutines.runBlocking { AudioCache.cancelBackgroundWorkForTest() }
         AutomixAnalysisSource.rendition = { null }
         AudioCache::class.java.getDeclaredField("upstreamFactory").apply { isAccessible = true }.set(AudioCache, null)
         cache.release()

@@ -74,4 +74,35 @@ class AnalysisStoreEntryTest {
             kotlin.test.assertTrue(restored[1] > restored[0])
         }
     }
+
+    @Test
+    fun aWindowStartsExactlyWhereItDidAfterAReload() {
+        withStore { store, _ ->
+            // Starting between milliseconds: rounded, the restored window ended
+            // early and a loop at the edge of its coverage lost part of its end.
+            val window = CurveWindow(10.0004, 44100.0 / 1024, FloatArray(172) { 0.5f })
+            store.save("t", analysis().copy(levelWindows = listOf(window)))
+            val restored = assertNotNull(store.load("t")).levelWindows.single()
+            assertEquals(window.startTime, restored.startTime)
+            assertEquals(window.endTime, restored.endTime)
+        }
+    }
+
+    @Test
+    fun twoIdsWithOneHashEachRestoreTheirOwnAnalysis() {
+        withStore { store, _ ->
+            // "Aa" and "BB" share String.hashCode() and length: under the old
+            // file name the second save replaced the first.
+            check("Aa".hashCode() == "BB".hashCode())
+            store.save("Aa", analysis().copy(bpm = 100.0), "Aa#analysis")
+            store.save("BB", analysis().copy(bpm = 140.0), "BB#analysis")
+
+            val a = assertNotNull(store.loadEntry("Aa"))
+            val b = assertNotNull(store.loadEntry("BB"))
+            assertEquals(100.0, a.analysis.bpm)
+            assertEquals("Aa#analysis", a.measuredOn)
+            assertEquals(140.0, b.analysis.bpm)
+            assertEquals("BB#analysis", b.measuredOn)
+        }
+    }
 }

@@ -104,12 +104,13 @@ private val SPOKEN_TEXT = Regex(
  */
 private val LIVE_TEXT = Regex(
     // A bracketed tag: "(Live)", "(Acoustic Live)", "(Live Acoustic)", "[Live at Wembley]", "(Live Version)",
-    // "(Live 2016)", "(Live, 2016)", "(Live and Acoustic)", "(Live Remaster)".
+    // "(Live 2016)", "(Live, 2016)", "(Live and Acoustic)", "(Live Remaster)". "And" only before a
+    // recognised modifier: "Live and Let Die" is a song title, not a label.
     // "(Live: Wembley)" too: a colon after the word is a label, never a title.
-    """[(\[]\s*(?:(?:acoustic|unplugged|stripped|solo|piano|radio|remastered|remaster|full\s+band)\s+)?live(?:\s*,?\s+(?:(?:at|from|in|on|and|version|session|recording|performance|edit|acoustic|remaster|remastered)|\d{4})\b[^)\]]*|\s*:[^)\]]*)?\s*[)\]]""" +
+    """[(\[]\s*(?:(?:acoustic|unplugged|stripped|solo|piano|radio|remastered|remaster|full\s+band)\s+)?live(?:\s*,?\s+(?:(?:at|from|in|on|version|session|recording|performance|edit|acoustic|remaster|remastered|and\s+(?:acoustic|unplugged|stripped|remaster|remastered|orchestral))|\d{4})\b[^)\]]*|\s*:[^)\]]*)?\s*[)\]]""" +
         // A dash suffix: "Song - Live", "Song – Live from the Garden", "Song - Live 2016", "Song - Live Remaster",
         // "Song - Live: Wembley".
-        """|[-–—]\s*live(?:\s*,?\s+(?:(?:at|from|in|on|and|version|session|recording|performance|edit|acoustic|remaster|remastered)|\d{4})\b.*|\s*:.*)?\s*$""",
+        """|[-–—]\s*live(?:\s*,?\s+(?:(?:at|from|in|on|version|session|recording|performance|edit|acoustic|remaster|remastered|and\s+(?:acoustic|unplugged|stripped|remaster|remastered|orchestral))|\d{4})\b.*|\s*:.*)?\s*$""",
     RegexOption.IGNORE_CASE,
 )
 
@@ -190,12 +191,16 @@ data class TransitionPlan(
     val incomingCueTime: Double = 0.0,
     /** Where the incoming track's arrangement lands, on its own timeline. */
     val incomingHandoffTime: Double = 0.0,
+    /**
+     * The speed the incoming track plays at through the blend, to meet the
+     * outgoing tempo: above 1 for a slower incoming song, below 1 for a faster
+     * one (a trusted 120 to 130 BPM pair plays the incoming song at about
+     * 0.923). The only deck that changes speed.
+     */
     val incomingPlaybackRate: Double = 1.0,
     /**
-     * Advanced Automix: the speed-up the *outgoing* track is brought up to
-     * over its last beats before the blend, when it is the slower of the two.
-     * Tempo only ever moves up, so at most one of this and
-     * [incomingPlaybackRate] is above 1, and neither is ever below it.
+     * The outgoing track's speed through the blend. Kept at 1: an audible
+     * deck never changes speed, so the incoming one does all the matching.
      */
     val outgoingPlaybackRate: Double = 1.0,
     val handoffStartSeconds: Double = 0.0,
@@ -486,9 +491,16 @@ private fun capIncomingSkip(plan: TransitionPlan, nextAnalysis: TrackAnalysis, n
 }
 
 /** [cue] pulled back by whole incoming bars to within [latestIncomingCue]; unchanged when it already is. */
+/**
+ * Whether [cue] is inside the incoming song's skip cap: the one test both the
+ * cap ([cappedIncomingCue]) and the blend's phase search apply, so a cue the
+ * search accepts is never one the cap then moves.
+ */
+internal fun withinSkipCap(cue: Double, nextLength: Double): Boolean = cue <= latestIncomingCue(nextLength)
+
 private fun cappedIncomingCue(cue: Double, nextAnalysis: TrackAnalysis, nextLength: Double): Double {
     val latest = latestIncomingCue(nextLength)
-    if (cue <= latest) return cue
+    if (withinSkipCap(cue, nextLength)) return cue
     val beat = nextAnalysis.beatInterval.orZero().takeIf { it > 0 }
         ?: if (nextAnalysis.bpm.orZero() > 0) 60 / nextAnalysis.bpm else 0.0
     val over = cue - latest
@@ -505,7 +517,11 @@ private fun incomingStartPoint(analysis: TrackAnalysis): Double =
 // Apple-style Automix: fixed-length phrase mixes (8 or 16 bars)
 // ---------------------------------------------------------------------------
 
-/** The two phrase lengths the listener may fix; see [planTransition]'s `phraseBars`. */
+/**
+ * The two phrase lengths [planTransition]'s `phraseBars` accepts. A planner
+ * option only: no playback caller passes it (both pass the default 0, the
+ * adaptive plan), so these run from tests until a setting is wired to it.
+ */
 const val PHRASE_BARS_SHORT = 8
 const val PHRASE_BARS_LONG = 16
 
@@ -1105,7 +1121,17 @@ fun planWsolaTransition(
         incomingDropTime + ARRANGEMENT_OVERLAP_BEATS * incomingBeatSeconds
     val maxIncomingHandoff = incomingLength - MIN_CLEARANCE_SECONDS
     if (maxIncomingHandoff < incomingDropTime) return WsolaPlanResult.Refused("incoming-too-short")
-    val incomingHandoffTime = min(requestedIncomingHandoff, maxIncomingHandoff)
+    // Clamped for a short incoming song, the handoff steps back whole bars
+    // from the drop's, never to an arbitrary point: the cue follows it, and a
+    // phrase switch shares one grid. One that would step back past the drop
+    // leaves the pair to the adaptive plan.
+    val incomingBar = 4 * incomingBeatSeconds
+    val incomingHandoffTime = if (requestedIncomingHandoff <= maxIncomingHandoff + 1e-9) {
+        requestedIncomingHandoff
+    } else {
+        requestedIncomingHandoff - ceil((requestedIncomingHandoff - maxIncomingHandoff) / incomingBar - 1e-9) * incomingBar
+    }
+    if (incomingHandoffTime < incomingDropTime - 1e-9) return WsolaPlanResult.Refused("incoming-too-short")
     val incomingCueTime = incomingHandoffTime - overlapSeconds
     if (incomingCueTime < audibleStart - 0.05) return WsolaPlanResult.Refused("incoming-no-runway")
 
@@ -1312,7 +1338,11 @@ private class PairTraits(analysis: TrackAnalysis, nextAnalysis: TrackAnalysis) {
      * trust is the head grid's own where the model measured one.
      */
     val phaseLockable = currentBpm > 0 && nextBpm > 0 && !tempoFar && !openingTempoDisagrees(nextAnalysis) &&
-        analysis.beatConfidence.orZero() >= MIN_BEATMATCH_CONFIDENCE &&
+        // The outgoing side on its exit region's own grid, where the model
+        // measured one, as the incoming side is judged on its opening: a hole
+        // at the exit barely moves the whole window's score, and a blend
+        // phase-locked across it would land off the beat.
+        (analysis.tailBeats?.confidence ?: analysis.beatConfidence.orZero()) >= MIN_BEATMATCH_CONFIDENCE &&
         (nextAnalysis.headBeats?.confidence ?: nextAnalysis.beatConfidence.orZero()) >= MIN_BEATMATCH_CONFIDENCE
 
     /** Whether the outgoing grid is trusted enough to place a transition's edges on. */
@@ -1671,7 +1701,8 @@ private fun planTransitionInner(
         )
     }
 
-    // Apple-style Automix: when the listener fixed the phrase length, a
+    // Apple-style Automix: when a fixed phrase length is asked for (a planner
+    // option; no playback caller passes one yet), a
     // bar-aligned mix of exactly that many bars takes priority. A null answer
     // means the evidence will not support it, so the adaptive plan below runs
     // unchanged.
@@ -1767,6 +1798,8 @@ private fun mixPlan(
     mixOutType: String,
     nextLength: Double,
     traits: PairTraits?,
+    /** Plan the pair as unmatched: a blend that found no cue in phase is replanned so (see below). */
+    forceUnmatched: Boolean = false,
 ): TransitionPlan {
     val currentBpm = analysis.bpm.orZero()
     val nextBpm = nextAnalysis.bpm.orZero()
@@ -1800,11 +1833,12 @@ private fun mixPlan(
     // Advanced blends beat on beat, so it needs both grids trusted: one it
     // can't trust is what the policy's DJ_ASSISTED tier (and its filter
     // sweep) is for.
-    val sameBeatBlend =
+    val sameBeatBlend = !forceUnmatched && (
         traits == null && currentBpm > 0 && nextBpm > 0 && !openingUntrusted &&
             abs(1 - normalizedTempoRatio(currentBpm, nextBpm)) <= 0.05 &&
             (analysis.beatConfidence.orZero() >= MIN_DJ_CONFIDENCE || incomingOpening >= MIN_DJ_CONFIDENCE) ||
             traits?.phaseLockable == true
+    )
     val outgoingArrangementOverlap =
         if (sameBeatBlend && mixOutType == "content_end") {
             min(ARRANGEMENT_OVERLAP_BEATS * 60 / currentBpm, MAX_DISCARDED_MUSIC_SECONDS)
@@ -1935,22 +1969,33 @@ private fun mixPlan(
             val offset = ((transitionStart - line) % outgoingBar) * incomingPlaybackRate
             fun phasedOn(grid: List<Double>?): Double? = grid?.let { bars ->
                 nearestValue(
+                    // Inside the skip cap too: a cue the cap would move later is no
+                    // longer in phase when it is moved.
                     bars.filter { it.isFinite() }.map { it + offset }.filter {
-                        it >= rawIncomingCueTime - 0.05 && it + span <= maxIncomingHandoff + 0.05
+                        it >= rawIncomingCueTime - 0.05 && it + span <= maxIncomingHandoff + 0.05 &&
+                            withinSkipCap(it, nextLength)
                     },
                     unsnappedCue,
                     incomingBar / 2,
                 )
             }
             // A cue past the measured opening has no bar line of it near: the
-            // whole track's grid is the one that applies there.
-            phasedOn(nextAnalysis.headBeats?.downbeats) ?: phasedOn(nextAnalysis.downbeats)
+            // whole track's grid is the one that applies there, if the model
+            // trusts it at the floor the pair was judged on.
+            val wholeTrackTrusted = nextAnalysis.beatConfidence.orZero() >=
+                (if (traits != null) MIN_BEATMATCH_CONFIDENCE else MIN_DJ_CONFIDENCE)
+            phasedOn(nextAnalysis.headBeats?.downbeats)
+                ?: phasedOn(nextAnalysis.downbeats.takeIf { wholeTrackTrusted })
         }
-        if (phased != null) {
-            blendInPhase = true
-            finalIncomingCueTime = phased
-            scheduledHandoffTime = incomingHandoffTime + (finalIncomingCueTime - unsnappedCue)
+        // No cue in phase on a grid it may trust: not a beat-matched blend.
+        // Planned again as the unmatched pair it is, from the mix anchor, so its
+        // end, handoff and overlap are the unmatched ones too.
+        if (phased == null) {
+            return mixPlan(analysis, nextAnalysis, mixAnchor, mixOutType, nextLength, traits, forceUnmatched = true)
         }
+        blendInPhase = true
+        finalIncomingCueTime = phased
+        scheduledHandoffTime = incomingHandoffTime + (finalIncomingCueTime - unsnappedCue)
     }
     if (!blendInPhase) {
         // An unmatched pair, or a matched one whose beats could not be put in

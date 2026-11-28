@@ -102,7 +102,14 @@ class AnalysisStore(
         if (trackId.isBlank()) return null
         if (known[trackId] == false) return null
         val file = File(directory, fileNameFor(trackId))
-        return synchronized(files) { loadLocked(trackId, file) }
+        return synchronized(files) {
+            // An entry under the old hash-based name cannot say whose it is:
+            // two ids can share a hash and a length, and the second save then
+            // replaced the first. It is dropped unread, and the track measured
+            // again once.
+            File(directory, legacyFileNameFor(trackId)).takeIf { it.exists() }?.delete()
+            loadLocked(trackId, file)
+        }
     }
 
     private fun loadLocked(trackId: String, file: File): Entry? {
@@ -116,6 +123,9 @@ class AnalysisStore(
             // way, and a wrong beat grid is worse than none — so it is dropped
             // and re-earned rather than migrated.
             require(stored.version == SCHEMA_VERSION) { "schema ${stored.version}" }
+            // Whose analysis this is, as stored with it: one track never
+            // restores another's grid and copy.
+            require(stored.trackId == trackId) { "stored for another track" }
             Entry(stored.toAnalysis(trackId).copy(measuredOn = stored.measuredOn), stored.measuredOn)
         }
             .onFailure {
@@ -137,7 +147,10 @@ class AnalysisStore(
     fun save(trackId: String, analysis: TrackAnalysis, measuredOn: String? = null) {
         if (trackId.isBlank() || !analysis.isUsable) return
         val encoded = runCatching {
-            json.encodeToString(Stored.serializer(), Stored.of(analysis).copy(measuredOn = measuredOn ?: analysis.measuredOn))
+            json.encodeToString(
+                Stored.serializer(),
+                Stored.of(analysis).copy(measuredOn = measuredOn ?: analysis.measuredOn, trackId = trackId),
+            )
         }
             .onFailure { AnalysisLog.warn("Could not store analysis for $trackId", it) }
             .getOrNull() ?: return
@@ -204,7 +217,20 @@ class AnalysisStore(
     }
 
     /** Hashed rather than used raw: a track id is not guaranteed to be a legal filename. */
-    private fun fileNameFor(trackId: String): String = "${trackId.hashCode().toUInt()}_${trackId.length}.json"
+    /**
+     * A collision-resistant name for [trackId]'s entry (a track id is not
+     * guaranteed to be a legal filename, so it is hashed). SHA-256, not
+     * [String.hashCode]: YouTube ids all share one length, and 32-bit hashes
+     * collide across a large library, which let one track's save replace
+     * another's. The id itself is stored in the entry and checked on load.
+     */
+    private fun fileNameFor(trackId: String): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(trackId.toByteArray(Charsets.UTF_8))
+        return digest.joinToString("", limit = 16, truncated = "") { "%02x".format(it) } + ".json"
+    }
+
+    /** The name entries used before [fileNameFor]: see [loadEntry]. */
+    private fun legacyFileNameFor(trackId: String): String = "${trackId.hashCode().toUInt()}_${trackId.length}.json"
 
     /**
      * The persisted subset, kept separate from [TrackAnalysis] so that adding a
@@ -217,6 +243,8 @@ class AnalysisStore(
     @Serializable
     private data class Stored(
         val version: Int = SCHEMA_VERSION,
+        /** The id this entry was saved for; see [fileNameFor]. Absent from entries of older builds. */
+        val trackId: String? = null,
         val duration: Double = 0.0,
         val bpm: Double = 0.0,
         val beatInterval: Double = 0.0,
@@ -366,7 +394,10 @@ class AnalysisStore(
             fun of(window: CurveWindow, keepingSidesOf: Double? = null, scale: Int = 100): StoredCurve {
                 val threshold = keepingSidesOf?.let { (it * scale).roundToInt() }
                 return StoredCurve(
-                    round(window.startTime),
+                    // Unrounded: a millisecond off the start moves the restored
+                    // window's end, and a loop whose coverage sits at the bar
+                    // could pass before a reload and fail after it.
+                    window.startTime,
                     window.frameRate,
                     window.values.map { value ->
                         // A NaN from the model would throw in roundToInt and lose the

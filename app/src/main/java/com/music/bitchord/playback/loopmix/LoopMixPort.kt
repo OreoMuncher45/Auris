@@ -201,6 +201,9 @@ class LoopMixPort {
             // A reading from an earlier arm (this player's last mix, before a
             // pause or a gap) says nothing about this one.
             if (position == C.TIME_UNSET || taken != generation) return null
+            // Taken after the moment asked about: projecting it backwards could
+            // cross a shift the sink applied in between.
+            if (at > nowNanos) return null
             val elapsed = if (playing) (nowNanos - at) / 1e9 else 0.0
             // Projected onto or across a shift's boundary, or through inserted
             // silence, the track would not have moved as the clock did: no
