@@ -640,6 +640,15 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // forward. Skipped entirely for a local file, which is `usableComplete`
         // from the first tick: the head pass exists to get ahead of a download,
         // and there is no download to get ahead of.
+        // A borrowed recording (a source track's matched YouTube copy) is
+        // measured only against a known length: with none, its head could be a
+        // different cut, so the head pass waits until the track's duration is
+        // known. Checked before anything is claimed or queued, so the wait costs
+        // the tick nothing. See [borrowedHeadAllowed].
+        if (!usableComplete && !borrowedHeadAllowed(analysisUri.toString(), uri.toString(), durationSeconds)) {
+            cache.requestAnalysisHead(analysisUri)
+            return
+        }
         val headRendition = if (usableComplete) null else headWorthTrying(trackId, analysisUri, durationSeconds)
         if (!usableComplete && headRendition == null) {
             // Nothing on disk worth decoding, so ask for something. Every other
@@ -717,7 +726,8 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                         // (a fallback, with a YouTube match found while it ran):
                         // an interim answer too, superseded by the match's copy.
                         // Read under the same guard the match is recorded under.
-                        val superseded = sourceAnalysisUris[trackId]?.let { it != analysisUri } == true
+                        val settled = sourceAnalysisUris[trackId]
+                        val superseded = settled?.let { it != analysisUri } == true
                         if (superseded ||
                             (outcome.incomplete && incompleteRetries.merge(trackId, 1, Int::plus)!! <= MAX_INCOMPLETE_RETRIES)
                         ) {
@@ -740,9 +750,13 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                         // failed search's backoff: restored after a restart it
                         // would look settled, and the search would never run
                         // again. A confirmed no-match is settled and is stored.
-                        val transientFallback = sourceFallbackUris[trackId]?.let { it == analysisUri } == true &&
-                            sourceAnalysisUris[trackId] == null
-                        whole.takeIf { outcome.persist && !transientFallback }
+                        // Nor once a match superseded it mid-pass: restored after a
+                        // restart, either would look settled and stop the search
+                        // (or skip the match) for good. See [persistableSourceResult].
+                        val transientFallback = sourceFallbackUris[trackId]?.let { it == analysisUri } == true
+                        whole.takeIf {
+                            persistableSourceResult(outcome.persist, analysisUri, settled, transientFallback)
+                        }
                         }
                         stored?.let { if (!released) store.save(trackId, it, measuredOn) }
                         restoreAttempted.add(trackId)
@@ -2637,3 +2651,34 @@ internal fun collapseSeam(times: List<Double>, tolerance: Double): List<Double> 
     }
     return kept
 }
+
+/**
+ * Whether a whole-track result of a source-backed track may be stored: its
+ * pass allowed it ([persist]), and it was measured on the settled address.
+ * Not while [settled] names another address (a YouTube match found while the
+ * pass ran), and not when the pass read a fallback during a failed search's
+ * backoff with nothing settled ([transientFallback]): restored after a
+ * restart, either would look settled and keep the track off its match. A
+ * confirmed no-match settles on the source's own address, which was what was
+ * analysed, and is stored. Tracks with nothing to settle ([settled] null, not
+ * a fallback) are stored as before.
+ */
+internal fun persistableSourceResult(
+    persist: Boolean,
+    analysed: Any,
+    settled: Any?,
+    transientFallback: Boolean,
+): Boolean {
+    if (!persist) return false
+    if (settled != null) return settled == analysed
+    return !transientFallback
+}
+
+/**
+ * Whether the head pass may read [analysisUri] for the track playing at
+ * [playingUri]: always for the track's own audio, and for a borrowed recording
+ * (a matched copy, another address) only once [durationSeconds] is known, so
+ * the copy's length can be checked against it.
+ */
+internal fun borrowedHeadAllowed(analysisUri: String, playingUri: String, durationSeconds: Double): Boolean =
+    analysisUri == playingUri || (durationSeconds.isFinite() && durationSeconds > 0)
