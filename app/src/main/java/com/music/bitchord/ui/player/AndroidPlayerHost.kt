@@ -20,6 +20,8 @@ import com.music.bitchord.data.canvas.CanvasRepository
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsTranslation
+import com.music.bitchord.ui.replay.year.BestPartStart
+import com.music.bitchord.ui.replay.year.BestParts
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.Song
@@ -65,6 +67,14 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
 
     override fun onAutoMixScrubIntent() = AutoMixVisualFeed.cancel()
 
+    @Composable
+    override fun autoMixIncomingReveal(
+        eased: () -> Float,
+        reducedMotion: () -> Boolean,
+        generation: Long,
+        blur: Boolean,
+    ): Modifier = androidAutoMixIncomingReveal(eased, reducedMotion, generation, blur)
+
     override val settings: PlayerSettingsSource = object : PlayerSettingsSource {
         override val animatedCanvas get() = AppSettings.animatedCanvas
         override val audioQualityCellular get() = AppSettings.audioQualityCellular
@@ -72,6 +82,7 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
         override val canvasOverCellular get() = AppSettings.canvasOverCellular
         override val fullBleedArtwork get() = AppSettings.fullBleedArtwork
         override val zoomOutAlbumArt get() = AppSettings.zoomOutAlbumArt
+        override val showTotalDuration get() = AppSettings.showTotalDuration
         override val hideSongStatus get() = AppSettings.hideSongStatus
         override val hideStatusBar get() = AppSettings.hideStatusBarInPlayer
         override val hideVolumeBar get() = AppSettings.hideVolumeBar
@@ -89,12 +100,14 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
         override val reduceAnimation get() = AppSettings.reduceAnimation
         override val reduceDynamicBlur get() = AppSettings.reduceDynamicBlur
         override val showNerdStats get() = AppSettings.showNerdStats
+        override val showBestPart get() = AppSettings.showBestPart
         override val showNextTrackStatus get() = AppSettings.showNextTrackStatus
         override val showUpgradeBadge get() = AppSettings.showUpgradeBadge
         override val showLosslessBadge get() = AppSettings.showLosslessBadge
         override val showHiResBadge get() = AppSettings.showHiResBadge
         override val smartAnalysis get() = AppSettings.smartAnalysis
         override val smartFadeEnabled get() = AppSettings.smartFadeEnabled
+        override val autoMixArtwork get() = AppSettings.autoMixArtwork
         override val smartMixInProgress get() = AppSettings.smartMixInProgress
         override val smartMixBlend get() = AppSettings.smartMixBlend
         override val smartTransitionWindow get() = AppSettings.smartTransitionWindow
@@ -114,6 +127,19 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
     override fun cachedCanvas(song: Song): CanvasArtwork? = CanvasRepository.cached(song)
 
     override suspend fun canvasFor(song: Song): CanvasArtwork? = CanvasRepository.canvasFor(song)
+
+    override suspend fun bestPartMs(
+        song: Song,
+        durationMs: Long,
+        lyrics: suspend () -> List<LyricLine>?,
+    ): Long? {
+        // A file on the phone has no replay curve, and its own chorus is not
+        // what the button promises.
+        if (song.localUri != null) return null
+        return BestParts.startFor(app, song, durationMs, lyrics)
+            .takeIf { it.source != BestPartStart.Source.FALLBACK }
+            ?.startMs
+    }
 
     @Composable
     override fun CanvasVideo(spec: CanvasVideoSpec, modifier: Modifier) = AndroidCanvasVideo(spec, modifier)

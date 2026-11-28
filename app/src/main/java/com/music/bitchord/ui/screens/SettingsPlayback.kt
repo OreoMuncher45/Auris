@@ -19,6 +19,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.VolumeOff
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.DownloadDone
+import androidx.compose.material.icons.rounded.Downloading
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.MusicOff
@@ -42,6 +45,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
@@ -54,6 +59,7 @@ import com.music.bitchord.data.settings.AutomixPerformanceMode
 import com.music.bitchord.data.settings.HomeProvider
 import com.music.bitchord.data.sources.DeviceCodecs
 import com.music.bitchord.playback.AudioOutputStatus
+import com.music.bitchord.playback.smart.AutomixModels
 import kotlin.math.roundToInt
 
 /** The Playback category: crossfade and Automix, the home provider, and how the queue behaves. */
@@ -69,6 +75,8 @@ internal fun PlaybackSettings(
     // than describe a transition that will not happen (GitHub #60).
     val bitPerfect by AppSettings.bitPerfect.collectAsStateWithLifecycle()
     val automixPerformance by AppSettings.automixPerformanceMode.collectAsStateWithLifecycle()
+    val automixModels by AutomixModels.state.collectAsStateWithLifecycle()
+    var confirmDeleteAutomixModel by remember { mutableStateOf(false) }
     val skipSilence by AppSettings.skipSilence.collectAsStateWithLifecycle()
     val spatialAudio by AppSettings.spatialAudio.collectAsStateWithLifecycle()
     val simulatedAtmos by AppSettings.simulatedAtmos.collectAsStateWithLifecycle()
@@ -125,7 +133,14 @@ internal fun PlaybackSettings(
             }
         }
         val automixTitle = stringResource(R.string.automix)
-        row(automixTitle, "crossfade", "smart fade", "mix") {
+        val artTransitionTitle = stringResource(R.string.automix_art_transition)
+        val miniArtTransitionTitle = stringResource(R.string.automix_mini_art_transition)
+        row(
+            automixTitle, "crossfade", "smart fade", "mix",
+            // Searchable with Automix off too: a search for them finds the
+            // row whose switch reveals them.
+            artTransitionTitle, miniArtTransitionTitle,
+        ) {
             SettingsRow(
                 icon = Icons.Rounded.AutoAwesome,
                 title = automixTitle,
@@ -144,6 +159,81 @@ internal fun PlaybackSettings(
                 },
                 onClick = { AppSettings.setSmartFadeEnabled(!smartFade) },
             )
+            // The artwork switches belong to Automix and only mean anything
+            // while it is on. Ported from BitChord.
+            if (smartFade) {
+                val artwork by AppSettings.autoMixArtwork.collectAsStateWithLifecycle()
+                SettingsSubRow(
+                    title = artTransitionTitle,
+                    subtitle = stringResource(R.string.automix_art_transition_subtitle),
+                    checked = artwork.artTransition,
+                    onCheckedChange = AppSettings::setAutoMixArtTransition,
+                )
+                SettingsSubRow(
+                    title = miniArtTransitionTitle,
+                    subtitle = stringResource(R.string.automix_mini_art_transition_subtitle),
+                    checked = artwork.miniPlayerTransition,
+                    onCheckedChange = AppSettings::setAutoMixMiniPlayerTransition,
+                )
+            }
+        }
+        // The weights Automix analyses with live outside the APK (see
+        // AutomixModels): switching Automix on fetches them by itself, and
+        // this row lets them be fetched ahead of time, retried after a
+        // failure, or removed to free the space. Ported from BitChord.
+        val automixModelTitle = stringResource(R.string.automix_model)
+        row(automixModelTitle, "automix", "model", "download", "storage", "free space") {
+            val modelMb = (AutomixModels.totalBytes / 1_000_000).toInt()
+            when (val model = automixModels) {
+                is AutomixModels.State.Downloading -> SettingsRow(
+                    icon = Icons.Rounded.Downloading,
+                    title = automixModelTitle,
+                    subtitle = stringResource(
+                        R.string.automix_models_downloading,
+                        modelMb,
+                        (model.fraction * 100).toInt(),
+                    ),
+                )
+                // The action sits under the description rather than on the
+                // right, where it squeezed the title and the text.
+                AutomixModels.State.Failed -> SettingsRow(
+                    icon = Icons.Rounded.Download,
+                    title = automixModelTitle,
+                    subtitleContent = {
+                        SubtitleWithAction(
+                            stringResource(R.string.automix_models_failed),
+                            stringResource(R.string.retry),
+                        )
+                    },
+                    onClick = AutomixModels::download,
+                    trailing = {},
+                )
+                AutomixModels.State.Ready -> SettingsRow(
+                    icon = Icons.Rounded.DownloadDone,
+                    title = automixModelTitle,
+                    subtitleContent = {
+                        SubtitleWithAction(
+                            stringResource(R.string.automix_model_ready, modelMb),
+                            stringResource(R.string.delete),
+                            actionColor = MaterialTheme.colorScheme.error,
+                        )
+                    },
+                    onClick = { confirmDeleteAutomixModel = true },
+                    trailing = {},
+                )
+                AutomixModels.State.Missing -> SettingsRow(
+                    icon = Icons.Rounded.Download,
+                    title = automixModelTitle,
+                    subtitleContent = {
+                        SubtitleWithAction(
+                            stringResource(R.string.automix_model_missing),
+                            stringResource(R.string.automix_model_download, modelMb),
+                        )
+                    },
+                    onClick = AutomixModels::download,
+                    trailing = {},
+                )
+            }
         }
         val automixPerformanceTitle = stringResource(R.string.automix_performance)
         row(automixPerformanceTitle, "cpu", "battery") {
@@ -318,6 +408,24 @@ internal fun PlaybackSettings(
         }
     }
 
+    // Deleting also turns Automix off: left on, its next analysis pass would
+    // simply download the model again.
+    if (confirmDeleteAutomixModel) {
+        ConfirmationAlert(
+            title = stringResource(R.string.automix_model_delete_title),
+            description = stringResource(
+                R.string.automix_model_delete_warning,
+                (AutomixModels.totalBytes / 1_000_000).toInt(),
+            ),
+            confirmLabel = stringResource(R.string.delete),
+            onConfirm = {
+                confirmDeleteAutomixModel = false
+                AppSettings.setSmartFadeEnabled(false)
+                AutomixModels.delete()
+            },
+            onDismiss = { confirmDeleteAutomixModel = false },
+        )
+    }
     if (showUnsupportedAtmosWarning) {
         ConfirmationAlert(
             title = stringResource(R.string.unsupported_dolby_atmos),
@@ -387,6 +495,28 @@ internal fun ColumnScope.HomeProviderMenu(close: () -> Unit) {
     )
 }
 
+
+/** A row's description with its one action under it, in the accent colour unless told otherwise. */
+@Composable
+private fun SubtitleWithAction(
+    subtitle: String,
+    action: String,
+    actionColor: Color = MaterialTheme.colorScheme.primary,
+) {
+    Text(
+        text = subtitle,
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 5,
+    )
+    Text(
+        text = action,
+        style = MaterialTheme.typography.bodyMedium,
+        fontWeight = FontWeight.Medium,
+        color = actionColor,
+        modifier = Modifier.padding(top = 6.dp),
+    )
+}
 
 /** The Automix performance picker, opened on its row, with its warning kept whole at the head. */
 @Composable

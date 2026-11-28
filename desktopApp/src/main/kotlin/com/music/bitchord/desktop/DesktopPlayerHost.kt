@@ -185,6 +185,7 @@ internal object DesktopPlayerSettings : PlayerSettingsSource {
     override val canvasOverCellular = MutableStateFlow(true)
     override val fullBleedArtwork = MutableStateFlow(false)
     override val zoomOutAlbumArt = MutableStateFlow(false)
+    override val showTotalDuration = MutableStateFlow(false)
     override val hideSongStatus = MutableStateFlow(false)
     // A desktop window has no status bar to hide.
     override val hideStatusBar = MutableStateFlow(false)
@@ -210,6 +211,8 @@ internal object DesktopPlayerSettings : PlayerSettingsSource {
     override val reduceAnimation = MutableStateFlow(false)
     override val reduceDynamicBlur = MutableStateFlow(false)
     override val showNerdStats = MutableStateFlow(false)
+    /** The desktop has no Best Part lookup; see [com.music.bitchord.ui.player.PlayerHost.bestPartMs]. */
+    override val showBestPart = MutableStateFlow(false)
     override val showNextTrackStatus = MutableStateFlow(true)
     override val showUpgradeBadge = MutableStateFlow(true)
     override val showLosslessBadge = MutableStateFlow(true)

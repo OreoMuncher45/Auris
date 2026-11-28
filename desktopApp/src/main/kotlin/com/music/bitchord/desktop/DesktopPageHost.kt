@@ -28,6 +28,7 @@ import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.EntityType
 import com.music.bitchord.data.model.MoodGenre
 import com.music.bitchord.data.model.PlaybackSourceType
+import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchHistoryEntity
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
@@ -364,6 +365,10 @@ internal fun DesktopPageHost(
                 searchState.filter = it
                 if (searchState.query.isNotBlank()) search()
             },
+            // Library searches the signed-in account's own songs; signed out it
+            // has nothing to answer with, so the pill isn't offered.
+            availableFilters = SearchFilter.entries
+                .filter { !it.requiresAuth || youtubeSignedIn },
             results = when {
                 searchState.loading -> UiState.Loading
                 searchState.error != null -> UiState.Error(searchState.error!!)

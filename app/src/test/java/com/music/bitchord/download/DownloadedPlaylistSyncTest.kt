@@ -93,4 +93,30 @@ class DownloadedPlaylistSyncTest {
         val playlist = SavedCollection(id = "PL1", title = "A playlist", playlist = true)
         assertTrue("downloading a playlist is asking for it to stay whole", playlist.autoDownload)
     }
+
+    @Test
+    fun `a playlist track that reached the device another way is filed, not fetched`() {
+        val remote = listOf(song("refused"), song("recorded"), song("gone"), song("away"))
+        val unrecorded = onDiskNotRecorded(
+            remote,
+            onDisk = setOf("refused", "recorded", "gone"),
+            deletedByHand = setOf("gone"),
+            alreadyRecorded = setOf("recorded"),
+        ).map { it.videoId }
+        // On disk and not in the record: filed. Already recorded, deleted by
+        // hand, or not on the device at all: left alone.
+        assertEquals(listOf("refused"), unrecorded)
+    }
+
+    @Test
+    fun `a track admitted on a later pass keeps its place in the playlist`() {
+        val remote = listOf(song("A"), song("B"), song("C"))
+        // B was refused on the first fill; A is recorded; now B arrives.
+        assertEquals(
+            listOf("A", "B"),
+            recordOrder(remote, recorded = listOf("A"), added = listOf(song("B")), refused = emptySet()).map { it.videoId },
+        )
+        // A refused track is not handed over, and with nothing added nothing is.
+        assertTrue(recordOrder(remote, listOf("A"), listOf(song("B")), refused = setOf("B")).isEmpty())
+    }
 }

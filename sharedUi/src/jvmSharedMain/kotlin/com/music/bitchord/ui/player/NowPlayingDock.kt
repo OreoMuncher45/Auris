@@ -253,14 +253,16 @@ internal class DockFrame {
  * Horizontal fling skips tracks; the artwork follows the finger through
  * [motion] so the gesture has something to hold on to.
  *
- * Stands down while the pipeline or cast dialog is up or a panel's list is
- * scrolling, and answers [onBlockedControl] instead of skipping while a party
+ * Stands down while the pipeline or cast dialog is up, a panel's list is
+ * scrolling, or the queue is open — its rows swipe sideways themselves, and a
+ * swipe on a row must never skip the track — and answers [onBlockedControl] instead of skipping while a party
  * host has locked the controls.
  */
 internal fun Modifier.skipSwipeGesture(
     pipelineOpen: Boolean,
     castOpen: Boolean,
     panelScrolling: Boolean,
+    queueOpen: Boolean,
     controlsLocked: Boolean,
     swipeThreshold: Float,
     haptics: Haptics,
@@ -268,8 +270,8 @@ internal fun Modifier.skipSwipeGesture(
     onNext: () -> Unit,
     onPrevious: () -> Unit,
     motion: TrackChangeMotion,
-): Modifier = pointerInput(pipelineOpen, castOpen, panelScrolling, controlsLocked) {
-        if (pipelineOpen || castOpen || panelScrolling) return@pointerInput
+): Modifier = pointerInput(pipelineOpen, castOpen, panelScrolling, queueOpen, controlsLocked) {
+        if (pipelineOpen || castOpen || panelScrolling || queueOpen) return@pointerInput
         var total = 0f
         // One per gesture block, fed the changes the detector already hands
         // over: the release's speed is what lets a quick flick skip.
