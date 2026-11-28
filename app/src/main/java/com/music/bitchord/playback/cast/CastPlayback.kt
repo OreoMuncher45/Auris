@@ -104,6 +104,19 @@ class CastPlayback(
 
     /** The listener wants sound; what [playWhenReady] reports. */
     private var wantsPlay = false
+        set(value) {
+            field = value
+            intentChanges++
+        }
+
+    /** Counts every change to [wantsPlay], so a failed pause can tell whether anything newer spoke since. */
+    private var intentChanges = 0
+
+    /**
+     * A stream volume the sleep timer could not put back, with the client it
+     * belongs to: applied on the next [play] on that same session only.
+     */
+    private var pendingRestore: Pair<RemoteMediaClient, Double>? = null
 
     /** A track is on its way to the receiver and nothing has come back yet. */
     private var loading = false
@@ -167,6 +180,10 @@ class CastPlayback(
         if (!active) return
         wantsPlay = true
         finished = false
+        pendingRestore?.let { (owner, level) ->
+            pendingRestore = null
+            if (owner === client) owner.setStreamVolume(level.coerceIn(0.0, 1.0))
+        }
         client?.play()
         sink?.onRemotePlaybackChanged()
     }
@@ -186,11 +203,29 @@ class CastPlayback(
     suspend fun pauseAndConfirm(): Boolean {
         if (!active) return false
         val client = client ?: return false
+        val before = wantsPlay
         wantsPlay = false
+        val asked = intentChanges
         val confirmed = try {
             withTimeoutOrNull(STREAM_VOLUME_TIMEOUT_MS) { client.pause().awaitResult() }?.status?.isSuccess == true
         } catch (_: IllegalArgumentException) {
             false
+        }
+        if (confirmed) {
+            // A track still on its way to the receiver was asked for with
+            // autoplay: dropped here, so it cannot start after the pause the
+            // timer was promised. A load already handed over is paused again.
+            if (loading) {
+                loadJob?.cancel()
+                loadGeneration++
+                loading = false
+                if (this.client === client) client.pause()
+            }
+        } else if (this.client === client && intentChanges == asked) {
+            // Refused, and nothing newer since: the receiver is still playing,
+            // so the phone must not report it paused (a move back to the phone
+            // would then not resume).
+            wantsPlay = before
         }
         sink?.onRemotePlaybackChanged()
         return confirmed
@@ -220,6 +255,10 @@ class CastPlayback(
                 } catch (_: IllegalArgumentException) {
                     false
                 }
+            }
+
+            override fun restoreLater(level: Double) {
+                if (this@CastPlayback.client === client) pendingRestore = client to level
             }
         }
     }
@@ -323,6 +362,7 @@ class CastPlayback(
 
     /** Lets go of the receiver without touching the phone's player. */
     fun release() {
+        pendingRestore = null
         loadJob?.cancel()
         reconcileJob?.cancel()
         client?.unregisterCallback(callback)

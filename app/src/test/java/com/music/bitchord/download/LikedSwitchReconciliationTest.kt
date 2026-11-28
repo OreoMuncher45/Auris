@@ -29,6 +29,22 @@ class LikedSwitchReconciliationTest {
     fun `agreement and a setting already on change nothing`() {
         assertEquals(LikedSwitchFix.NONE, likedSwitchReconciliation(recordOn = true, settingOn = true, settingChosen = true))
         assertEquals(LikedSwitchFix.NONE, likedSwitchReconciliation(recordOn = false, settingOn = false, settingChosen = true))
-        assertEquals(LikedSwitchFix.NONE, likedSwitchReconciliation(recordOn = false, settingOn = true, settingChosen = false))
+    }
+
+    /** An On whose record update never landed: the page showed Off and its tap could only ask for On again. */
+    @Test
+    fun `an on setting over an off record turns the record on`() {
+        assertEquals(LikedSwitchFix.RECORD_ON, likedSwitchReconciliation(recordOn = false, settingOn = true, settingChosen = true))
+        assertEquals(LikedSwitchFix.RECORD_ON, likedSwitchReconciliation(recordOn = false, settingOn = true, settingChosen = false))
+    }
+
+    @Test
+    fun `a collection listing changes only when its tracks or their order do`() {
+        val ids = listOf("a", "b")
+        assertEquals(false, Downloads.collectionListingChanged(ids, ids))
+        assertEquals(false, Downloads.collectionListingChanged(ids, listOf("a", "b")))
+        assertEquals(true, Downloads.collectionListingChanged(ids, listOf("a", "b", "c")))
+        assertEquals(true, Downloads.collectionListingChanged(ids, listOf("b", "a")))
+        assertEquals(true, Downloads.collectionListingChanged(ids, null))
     }
 }

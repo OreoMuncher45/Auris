@@ -50,4 +50,16 @@ class LoopAlignmentStateTest {
         assertFalse(LoopAlignmentState.stallInvalidates(Player.STATE_BUFFERING, loopActive = true, handedOff = true))
         assertFalse(LoopAlignmentState.stallInvalidates(Player.STATE_BUFFERING, loopActive = false, handedOff = false))
     }
+
+    @Test
+    fun anUnconfirmedAttemptIsRetriedWhileAttemptsRemain() {
+        assertTrue(LoopAlignmentState.retryAfterAttempt(confirmed = false, attempts = 1))
+        assertTrue(LoopAlignmentState.retryAfterAttempt(confirmed = false, attempts = LoopAlignmentState.MAX_ATTEMPTS - 1))
+        assertFalse(LoopAlignmentState.retryAfterAttempt(confirmed = false, attempts = LoopAlignmentState.MAX_ATTEMPTS))
+    }
+
+    @Test
+    fun aConfirmedAlignmentIsNeverRestarted() {
+        assertFalse(LoopAlignmentState.retryAfterAttempt(confirmed = true, attempts = 1))
+    }
 }

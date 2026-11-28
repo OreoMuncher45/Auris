@@ -1245,6 +1245,7 @@ object Downloads {
             // A declined update writes nothing, here or to disk.
             if (map === before) return
             _collections.value = map
+            dropChangedCollectionListings(before, map)
             if (::prefs.isInitialized) {
                 synchronized(recordLock) {
                     persistLocked(
@@ -1256,6 +1257,25 @@ object Downloads {
     }
 
     private val collectionLock = Any()
+
+    /** Whether a collection's tracks or their order differ; by reference first, as most records are untouched. */
+    internal fun collectionListingChanged(old: List<String>?, new: List<String>?): Boolean = old !== new && old != new
+
+    /**
+     * Forget the cached song list of each collection whose tracks or order
+     * changed. That cache is keyed by [listingGeneration], which moves only
+     * with the files: a record that gained a track already on disk would go
+     * on reading back the old list. Compares lists by reference first, so an
+     * update that touched one record costs one comparison per other record.
+     */
+    private fun dropChangedCollectionListings(before: Map<String, SavedCollection>, after: Map<String, SavedCollection>) {
+        if (collectionSongsCache.isEmpty()) return
+        for (id in collectionSongsCache.keys) {
+            val old = before[id]?.videoIds
+            val new = after[id]?.videoIds
+            if (collectionListingChanged(old, new)) collectionSongsCache.remove(id)
+        }
+    }
 
     /**
      * Runs [block] with the collection records held still: no switch change,
