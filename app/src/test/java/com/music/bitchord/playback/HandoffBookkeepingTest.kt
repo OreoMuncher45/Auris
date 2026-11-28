@@ -14,4 +14,20 @@ class HandoffBookkeepingTest {
     fun aLateHandoffLeavesTheNaturalAdvanceAsTheOneBooking() {
         assertFalse(HandoffBookkeeping.booksTrackChange(late = true))
     }
+
+    @Test
+    fun aLateHandoffGoesOnlyToAWorkingStandbyWhilePlaybackRuns() {
+        assertTrue(HandoffBookkeeping.lateHandoffAllowed(standbyFailed = false, standbyIdle = false, advancedPlayerPlaying = true))
+    }
+
+    @Test
+    fun aFailedOrIdleStandbyLeavesTheNaturalAdvance() {
+        assertFalse(HandoffBookkeeping.lateHandoffAllowed(standbyFailed = true, standbyIdle = false, advancedPlayerPlaying = true))
+        assertFalse(HandoffBookkeeping.lateHandoffAllowed(standbyFailed = false, standbyIdle = true, advancedPlayerPlaying = true))
+    }
+
+    @Test
+    fun anAdvanceTheSleepTimerPausedIsNotHandedToAPlayingStandby() {
+        assertFalse(HandoffBookkeeping.lateHandoffAllowed(standbyFailed = false, standbyIdle = false, advancedPlayerPlaying = false))
+    }
 }

@@ -10134,7 +10134,9 @@ class PlaybackService : MediaLibraryService() {
         // is the listener's own business, and the lifecycle paths that call it
         // are not asking to move the party.
         override fun stop() {
-            crossfade.cancelAutoMixVisual()
+            // Before the player stops: a transition (a loop mix's deck build
+            // included) is cancelled outright, with no recovery seek.
+            crossfade.onStopped()
             if (locked()) { super.stop(); return }
             onUserIntent()
             super.stop()

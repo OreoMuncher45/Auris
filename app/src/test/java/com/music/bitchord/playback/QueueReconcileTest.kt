@@ -108,8 +108,9 @@ class QueueReconcileTest {
     }
 
     @Test
-    fun theIncomingEntryIsStillComparedOnlyOnWhatItPlays() {
-        // A retitled incoming entry plays the same thing: the handoff goes ahead.
+    fun aRetitledIncomingEntryKeepsTheLiveQueueInsteadOfHandingOff() {
+        // Edited after arming: the standby plays its old copy and can't take the
+        // edit in place, so no handoff rather than a lost edit.
         val held = listOf(Row("a", "A"), Row("b", "B"))
         val live = listOf(Row("a", "A"), Row("b", "B (Live)"))
         val plan = QueueReconcile.plan(
@@ -118,6 +119,19 @@ class QueueReconcileTest {
             samePlayable = { x, y -> x.id == y.id },
             sameRow = { x, y -> x == y },
         )
-        assertEquals(QueueReconcile.Same, plan)
+        assertEquals(QueueReconcile.Bail, plan)
+    }
+
+    @Test
+    fun aMatchingIncomingEntryStillHandsOffWithAnEditedSuffix() {
+        val held = listOf(Row("a", "A"), Row("b", "B"), Row("c", "C"))
+        val live = listOf(Row("a", "A"), Row("b", "B"), Row("c", "C (Remastered)"), Row("d", "D"))
+        val plan = QueueReconcile.plan(
+            live, 1, held, 1,
+            same = { x, y -> x.id == y.id },
+            samePlayable = { x, y -> x.id == y.id },
+            sameRow = { x, y -> x == y },
+        )
+        assertEquals(QueueReconcile.ReplaceFrom(2), plan)
     }
 }

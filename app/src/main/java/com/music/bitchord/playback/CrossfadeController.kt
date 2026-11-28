@@ -23,6 +23,7 @@ import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.model.QueueEntryIdentity
 import com.music.bitchord.playback.loopmix.LoopAlignmentState
 import com.music.bitchord.playback.loopmix.LoopArmGate
+import com.music.bitchord.playback.loopmix.LoopClockWait
 import com.music.bitchord.playback.loopmix.LoopNextEntry
 import com.music.bitchord.playback.loopmix.LoopMixPort
 import com.music.bitchord.playback.loopmix.LoopMixRenderer
@@ -546,6 +547,9 @@ class CrossfadeController(
     private var bailStartedAt = 0L
     private var armDeadline = 0L
 
+    /** How long an attached loop mix has gone without a usable outgoing clock; see [LoopClockWait]. */
+    private val loopClock = LoopClockWait()
+
     /** Length of the fade-out driven by [Phase.SLEEP_FADE], in ms. Fixed when it begins. */
     private var sleepFadeMs = 0L
 
@@ -708,6 +712,15 @@ class CrossfadeController(
     }
 
     fun cancelAutoMixVisual() = AutoMixVisualFeed.cancel(visualGeneration)
+
+    /**
+     * Playback was stopped: whatever transition is in flight is dropped, a
+     * loop mix's deck build included, without the recovery seek a bail would
+     * otherwise make. Media3 can be idle with playWhenReady still true after a
+     * stop, and a build that returned then would pass the arming checks and
+     * prepare the standby on a stopped session.
+     */
+    fun onStopped() = bail(recover = false)
 
     /**
      * Automix switched off: its artwork reveal, its seek-bar marker and the
@@ -877,6 +890,17 @@ class CrossfadeController(
             Phase.FADING -> {
                 val out = outgoing ?: return bail()
                 val into = incoming ?: return bail()
+                if (!HandoffBookkeeping.lateHandoffAllowed(
+                        standbyFailed = into.playerError != null,
+                        standbyIdle = into.playbackState == Player.STATE_IDLE,
+                        advancedPlayerPlaying = out.playWhenReady,
+                    )
+                ) {
+                    // The advance the outgoing player made stands: bail() puts it
+                    // back to full volume and ramps the standby away.
+                    TrackLog.d(TAG, "outgoing ran on into the next track; keeping that advance, not a standby that can't take it")
+                    return bail()
+                }
                 TrackLog.d(TAG, "outgoing ran on into the next track before the handoff")
                 out.volume = 0f
                 handOff(out, into, late = true)
@@ -2415,7 +2439,11 @@ class CrossfadeController(
                     val began = SystemClock.elapsedRealtime()
                     val bins = ((to - from) * MIX_WAVE_BINS_PER_SECOND).toInt().coerceIn(64, MIX_WAVE_MAX_BINS)
                     val bands = runCatching { mixWaveform(item, durationMs, from, to, bins) }
-                        .onFailure { TrackLog.w(TAG, "mix waveform failed for ${item.mediaId}", it) }
+                        // The id redacted, and the exception by type only: a local
+                        // track's id, and the message about it, can be its file path.
+                        .onFailure {
+                            TrackLog.w(TAG, "mix waveform failed for ${TrackLog.idForLog(item.mediaId)}: ${it::class.java.simpleName}")
+                        }
                         .getOrNull()
                     TrackLog.d(
                         TAG,
@@ -3114,6 +3142,7 @@ class CrossfadeController(
         out.removeListener(loopStallListener)
         out.addListener(loopStallListener)
         loopSession = session
+        loopClock.start(SystemClock.elapsedRealtime())
         loopIncomingStarted = false
         lastLoopPositionMs = -1L
         lastLoopPositionIncoming = false
@@ -3166,7 +3195,11 @@ class CrossfadeController(
             }
             return
         }
-        val m = session.mixSeconds(System.nanoTime(), out.isPlaying) ?: return
+        val m = session.mixSeconds(System.nanoTime(), out.isPlaying)
+        // No usable clock for too long: the takeover can't be timed, so the
+        // pair takes the ordinary blend rather than waiting on it forever.
+        if (loopClock.expired(m, SystemClock.elapsedRealtime())) return loopFallBack("no clock from the outgoing sink")
+        if (m == null) return
         if (m > 1.0) loopBail("the sink never reached the loop")
     }
 
