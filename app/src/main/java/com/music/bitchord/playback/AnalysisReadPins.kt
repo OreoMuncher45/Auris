@@ -35,6 +35,21 @@ internal object AnalysisReadPins {
         fallback: () -> SourceStream?,
     ): SourceStream? = get(id) ?: (capped() ?: fallback())?.also { put(id, it) }
 
+    /**
+     * [streamFor], for a light read that must not be served any other way:
+     * neither answering fails the read. The ordinary resolve it would otherwise
+     * fall through to (an upgrade, another resolution) is not pinned for the
+     * round, and a later open could then read a different stream and append it
+     * to the bytes already written. Failing ends the round short; its retry
+     * resolves afresh.
+     */
+    inline fun lightRead(
+        id: String,
+        capped: () -> SourceStream?,
+        fallback: () -> SourceStream?,
+    ): SourceStream = streamFor(id, capped, fallback)
+        ?: throw java.io.IOException("no copy answered the analysis read for $id; the round retries")
+
     fun get(id: String): SourceStream? = pins[id]
 
     fun put(id: String, stream: SourceStream) {
