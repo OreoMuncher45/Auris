@@ -74,4 +74,17 @@ class AnalysisStoreEntryTest {
             kotlin.test.assertTrue(restored[1] > restored[0])
         }
     }
+
+    @Test
+    fun aWindowStartsExactlyWhereItDidAfterAReload() {
+        withStore { store, _ ->
+            // Starting between milliseconds: rounded, the restored window ended
+            // early and a loop at the edge of its coverage lost part of its end.
+            val window = CurveWindow(10.0004, 44100.0 / 1024, FloatArray(172) { 0.5f })
+            store.save("t", analysis().copy(levelWindows = listOf(window)))
+            val restored = assertNotNull(store.load("t")).levelWindows.single()
+            assertEquals(window.startTime, restored.startTime)
+            assertEquals(window.endTime, restored.endTime)
+        }
+    }
 }

@@ -1322,7 +1322,11 @@ private class PairTraits(analysis: TrackAnalysis, nextAnalysis: TrackAnalysis) {
      * trust is the head grid's own where the model measured one.
      */
     val phaseLockable = currentBpm > 0 && nextBpm > 0 && !tempoFar && !openingTempoDisagrees(nextAnalysis) &&
-        analysis.beatConfidence.orZero() >= MIN_BEATMATCH_CONFIDENCE &&
+        // The outgoing side on its exit region's own grid, where the model
+        // measured one, as the incoming side is judged on its opening: a hole
+        // at the exit barely moves the whole window's score, and a blend
+        // phase-locked across it would land off the beat.
+        (analysis.tailBeats?.confidence ?: analysis.beatConfidence.orZero()) >= MIN_BEATMATCH_CONFIDENCE &&
         (nextAnalysis.headBeats?.confidence ?: nextAnalysis.beatConfidence.orZero()) >= MIN_BEATMATCH_CONFIDENCE
 
     /** Whether the outgoing grid is trusted enough to place a transition's edges on. */

@@ -17,11 +17,38 @@ internal fun heavyPlaybackTier(): Boolean = SourceResolver.requestForNow().let {
  * read-ahead pass began. The refusal fails the open; the round or pass ends
  * short, and its retry is admitted afresh under the current routing.
  */
-internal fun checkCapturedRouting(uri: Uri, heavyTierNow: () -> Boolean = ::heavyPlaybackTier) {
+internal fun checkCapturedRouting(
+    uri: Uri,
+    heavyTierNow: () -> Boolean = ::heavyPlaybackTier,
+    substitutingNow: () -> Boolean = SourceResolver::canSubstituteForYouTube,
+) {
     val renditionMark = uri.getQueryParameter(AutomixAnalysisSource.RENDITION_PARAMETER)
     val readMark = uri.getQueryParameter(AutomixAnalysisSource.ANALYSIS_READ_PARAMETER)
-    if (renditionMark == null && readMark == null) return
+    val routeMark = uri.getQueryParameter(ROUTE_PARAMETER)
+    if (renditionMark == null && readMark == null && routeMark == null) return
     if (!AutomixAnalysisSource.routingMatches(renditionMark, readMark, heavyTierNow)) {
         throw java.io.IOException("a read admitted under another rendition or tier; its round retries")
     }
+    // A read-ahead fill keyed for YouTube's own copy must not be raced to a
+    // source that came up meanwhile (or the other way round).
+    if (routeMark != null && (routeMark == ROUTE_SUBSTITUTED) != substitutingNow()) {
+        throw java.io.IOException("a read-ahead admitted under another route; its pass retries")
+    }
 }
+
+/**
+ * The route a read-ahead pass was admitted under: whether a source ranked
+ * above YouTube could serve the track ([ROUTE_SUBSTITUTED]), or YouTube's own
+ * copy alone.
+ */
+internal const val ROUTE_PARAMETER = "automix_route"
+internal const val ROUTE_SUBSTITUTED = "sub"
+private const val ROUTE_YOUTUBE = "yt"
+
+/** [uri] carrying the read-ahead route it was admitted under. */
+internal fun withRoute(uri: String, substituted: Boolean): String =
+    if ("$ROUTE_PARAMETER=" in uri) {
+        uri
+    } else {
+        uri + (if ('?' in uri) "&" else "?") + "$ROUTE_PARAMETER=${if (substituted) ROUTE_SUBSTITUTED else ROUTE_YOUTUBE}"
+    }

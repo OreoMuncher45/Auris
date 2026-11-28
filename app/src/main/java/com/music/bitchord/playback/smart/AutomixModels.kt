@@ -179,35 +179,45 @@ object AutomixModels {
 
     /** The bundled copy, unpacked once; a copy cut short by a crash is the wrong size and unpacked again. */
     private fun unpacked(model: Model, file: File): String {
-        if (!extractedIsCurrent(file, model)) {
-            // Gone before the new file goes in: a kill part way leaves no
-            // record claiming the old file is current.
-            digestFileOf(file).delete()
-            val source = assets ?: throw FileNotFoundException("AutomixModels.install was never called")
-            // Unpacked aside and renamed into place, so a reader opening the
-            // model while another call unpacks it sees the old whole file or
-            // the new one, never one being truncated and rewritten.
-            val staging = File(file.parentFile, "${model.fileName}.unpack-${System.nanoTime()}")
-            try {
-                source.open(model.fileName).use { input ->
-                    staging.outputStream().use { output -> input.copyTo(output) }
+        synchronized(model) {
+            // One extraction per model at a time, so the stages found here are no
+            // other caller's: a stage left by a process killed mid-copy (up to the
+            // model's whole size) is removed before anything is checked, and never
+            // piles up across launches.
+            file.parentFile?.listFiles { stage -> stage.name.startsWith("${model.fileName}.unpack-") }
+                ?.forEach { it.delete() }
+            if (!extractedIsCurrent(file, model)) {
+                // Gone before the new file goes in: a kill part way leaves no
+                // record claiming the old file is current.
+                digestFileOf(file).delete()
+                val source = assets ?: throw FileNotFoundException("AutomixModels.install was never called")
+                // Unpacked aside and renamed into place, so a reader opening the
+                // model while another call unpacks it sees the old whole file or
+                // the new one, never one being truncated and rewritten.
+                val staging = File(file.parentFile, "${model.fileName}.unpack-${System.nanoTime()}")
+                try {
+                    source.open(model.fileName).use { input ->
+                        staging.outputStream().use { output -> input.copyTo(output) }
+                    }
+                    if (staging.renameTo(file)) {
+                        // Only once these weights are the file in place: written
+                        // after a failed move, the new digest would vouch for the
+                        // old weights of the same size, and they would never be
+                        // unpacked again.
+                        digestFileOf(file).writeText(model.sha256)
+                    } else if (!extractedIsCurrent(file, model)) {
+                        // A failed move leaves the old file, which may be the old
+                        // weights at the same size: returned only if the file in
+                        // place is this build's (another caller's install), never
+                        // just because its size matches.
+                        throw java.io.IOException("could not move ${model.fileName} into place")
+                    }
+                } finally {
+                    staging.delete()
                 }
-                if (staging.renameTo(file)) {
-                    // Only once these weights are the file in place: written
-                    // after a failed move, the new digest would vouch for the
-                    // old weights of the same size, and they would never be
-                    // unpacked again.
-                    digestFileOf(file).writeText(model.sha256)
-                } else if (file.length() != model.bytes) {
-                    throw java.io.IOException("could not move ${model.fileName} into place")
-                }
-                // A failed move over a file of the right size (another call's,
-                // most likely) leaves no digest, so the next call checks again.
-            } finally {
-                staging.delete()
             }
+            return file.absolutePath
         }
-        return file.absolutePath
     }
 
     /**

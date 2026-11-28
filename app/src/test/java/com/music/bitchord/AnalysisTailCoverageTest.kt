@@ -16,7 +16,9 @@ class AnalysisTailCoverageTest {
 
     private fun covered(length: Long, prefix: Long, tailFrom: Long?) =
         AudioCache.headAndTailCovered(length, prefix, cap, tail) { from, bytes ->
-            if (tailFrom != null && from >= tailFrom) bytes else 0L
+            // Contiguous bytes from [from], cached only in [tailFrom, length):
+            // a read at or past the end gets nothing, as the cache would answer.
+            if (tailFrom == null || from < tailFrom) 0L else maxOf(0L, minOf(from + bytes, length) - from)
         }
 
     @Test
