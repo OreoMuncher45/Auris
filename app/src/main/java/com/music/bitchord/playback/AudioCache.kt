@@ -467,6 +467,15 @@ object AudioCache {
     }
 
     /**
+     * What every analysis round of [videoId] does first: a catalogue or
+     * source row's light read is resolved afresh, since the last round's
+     * pinned stream may have expired. See [AnalysisReadPins].
+     */
+    internal fun startAnalysisRound(videoId: String) {
+        if (isCatalogueRow(videoId)) AnalysisReadPins.forget(videoId)
+    }
+
+    /**
      * The key analysis admission files [mediaId]'s round under: the video id
      * for a YouTube row, `<source>|<track>` for a source-backed one (see
      * [sourceBaseKey]).
@@ -667,6 +676,11 @@ object AudioCache {
                 val request = if (rendition == null) openingRequest.get() else null
                 val reopen = request?.pinnedFor(videoId) != null
                 val lent = if (reopen) request?.lentFor(videoId) else null
+                // One reading of the YouTube rendition for this whole choice:
+                // the preferred key, its siblings and the online gate all name
+                // the same one, so a switch mid-choice cannot lend another
+                // rendition's complete copy.
+                val youTubeRendition = AutomixAnalysisSource.rendition()
                 when {
                     rendition != null -> "$videoId#$rendition"
                     lent != null -> lent
@@ -675,15 +689,15 @@ object AudioCache {
                         // answer here when the source above it has nothing, and a
                         // complete ordinary copy would then serve a Premium request
                         // without ever resolving Premium.
-                        altKeyOf(videoId, atmosKeySuffix()).let {
-                            if (reopen) keptOnReopen(request, videoId, it) else completeSibling(videoId, it) ?: it
+                        altKeyOf(videoId, atmosKeySuffix(), youTubeRendition).let {
+                            if (reopen) keptOnReopen(request, videoId, it) else completeSibling(videoId, it, youTubeRendition) ?: it
                         }
                     // YouTube's own copy, under the rendition the resolver
                     // serves now: Premium's higher rung is another encoding,
                     // and filling one entry from both splices two files.
                     // See [AutomixAnalysisSource.rendition].
-                    else -> AutomixAnalysisSource.playbackKey(videoId).let { own ->
-                        if (reopen) keptOnReopen(request, videoId, own) else completeSibling(videoId, own) ?: own
+                    else -> AutomixAnalysisSource.playbackKey(videoId, youTubeRendition).let { own ->
+                        if (reopen) keptOnReopen(request, videoId, own) else completeSibling(videoId, own, youTubeRendition) ?: own
                     }
                 }.also { key ->
                     if (request != null && !reopen) request.pin(videoId, key)
@@ -760,11 +774,16 @@ object AudioCache {
      * callback keeps current, so no open pays a ConnectivityManager binder
      * call.
      */
-    private fun completeSibling(videoId: String, preferred: String): String? {
+    private fun completeSibling(
+        videoId: String,
+        preferred: String,
+        rendition: String? = AutomixAnalysisSource.rendition(),
+    ): String? {
         if (!::cache.isInitialized) return null
         return chooseCompleteSibling(
             videoId = videoId,
             preferred = preferred,
+            rendition = rendition,
             holdsBytes = { cache.getCachedSpans(it).isNotEmpty() },
             offline = ::isOffline,
             isComplete = ::isComplete,
@@ -884,13 +903,15 @@ object AudioCache {
         offline: () -> Boolean,
         isComplete: (String) -> Boolean,
         isKeptOrigin: (String) -> Boolean,
+        rendition: String? = AutomixAnalysisSource.rendition(),
     ): String? {
         if (holdsBytes(preferred)) return null
-        val siblings = siblingKeysOf(videoId)
+        // All under the one [rendition] [preferred] was named under.
+        val siblings = siblingKeysOf(videoId, rendition)
         if (offline()) return siblings.firstOrNull { it != preferred && isComplete(it) }
         // Online only for YouTube's own entry (the current rendition's), never
         // a substitute bucket: see the paragraph above.
-        if (preferred != AutomixAnalysisSource.playbackKey(videoId)) return null
+        if (preferred != AutomixAnalysisSource.playbackKey(videoId, rendition)) return null
         return siblings.firstOrNull { it != preferred && isComplete(it) && isKeptOrigin(it) }
     }
 
@@ -912,8 +933,12 @@ object AudioCache {
      * rendition's YouTube entry is never offered: each rendition reads only
      * its own audio.
      */
-    internal fun siblingKeysOf(videoId: String): List<String> =
-        listOf(AutomixAnalysisSource.playbackKey(videoId), altKeyOf(videoId, ""), altKeyOf(videoId, "-noatmos"))
+    internal fun siblingKeysOf(videoId: String, rendition: String? = AutomixAnalysisSource.rendition()): List<String> =
+        listOf(
+            AutomixAnalysisSource.playbackKey(videoId, rendition),
+            altKeyOf(videoId, "", rendition),
+            altKeyOf(videoId, "-noatmos", rendition),
+        )
 
     /**
      * The substitution-capable bucket for [videoId] under the current
@@ -3113,7 +3138,7 @@ object AudioCache {
                 var complete = false
                 // Each round reads its light copy from one stream, resolved
                 // afresh: the last round's may have expired. See [AnalysisReadPins].
-                if (isCatalogueRow(videoId)) AnalysisReadPins.forget(videoId)
+                startAnalysisRound(videoId)
                 // Published only while this round still owns the track: a wipe
                 // or removal that has taken its snapshot has reset the size,
                 // and a stale one left behind reads as a finished head later.
