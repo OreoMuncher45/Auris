@@ -453,6 +453,17 @@ internal class PlaybackStreamResolver(
         } catch (e: TimeoutCancellationException) {
             throw java.io.IOException("Automix Opus resolution timed out for $videoId", e)
         }
+        // Checked again now the resolve has returned: it reads the Premium
+        // setting during its own walk, so a switch between the check above and
+        // that read hands back the other rendition's URL, whose bytes would land
+        // under the key the round captured. Refused the same way; the round
+        // retries under the current rendition.
+        if (!AutomixAnalysisSource.renditionIsCurrent(
+                dataSpec.uri.getQueryParameter(AutomixAnalysisSource.RENDITION_PARAMETER),
+            )
+        ) {
+            throw java.io.IOException("analysis read for $videoId resolved under a rendition switched mid-resolve")
+        }
         val headers = StreamResolver.mediaHeadersFor(streamUrl)
         return dataSpec.buildUpon()
             .setUri(Uri.parse(streamUrl))
@@ -726,6 +737,23 @@ internal class PlaybackStreamResolver(
                     .setUri(Uri.parse(playbackPin.url))
                     .setHttpRequestHeaders(playbackPin.headers)
                     .build()
+            }
+            // No pin either: the row resolved at the playback tier, as before the
+            // light read (a source holding it only lossless still has a copy to
+            // measure), and pinned for the round the same way. The capped lookup
+            // above kept its ceiling; this is the stated fallback, not an
+            // over-cap answer to it.
+            if (lightRead) {
+                val playbackCopy = runBlocking(about) {
+                    withTimeoutOrNull(SUBSTITUTE_TIMEOUT_MS) { SourceResolver.substituteForYouTube(target, playbackRequest) }
+                }
+                if (playbackCopy != null) {
+                    AnalysisReadPins.put(videoId, playbackCopy)
+                    return dataSpec.buildUpon()
+                        .setUri(Uri.parse(playbackCopy.url))
+                        .setHttpRequestHeaders(playbackCopy.headers)
+                        .build()
+                }
             }
             throw java.io.IOException(
                 "no enabled source could serve '${target.title}'",

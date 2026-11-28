@@ -353,6 +353,10 @@ object SourceResolver {
             // A capped request (the analyser's light read) takes only an answer
             // under its ceiling: see [withinCeiling]. Unchanged for playback.
             accept = { _, answer -> withinCeiling(answer, request) },
+            // And only the same artist's recording, as resolve's capped
+            // fallback requires: a title and a runtime alone can match another
+            // artist's, and the mix would be planned on the wrong song.
+            requireSharedArtist = request is StreamRequest.Capped && target.artist.isNotBlank(),
         ) ?: return null
         // Says what was found, not what the caller will do with it. This
         // line used to read "substituted" unconditionally, including for
