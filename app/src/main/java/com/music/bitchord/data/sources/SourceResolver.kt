@@ -257,8 +257,13 @@ object SourceResolver {
         // Sources that serve no audio are left out of the walk: a metadata
         // catalogue cannot answer a stream, and asking one spends a search
         // and a call to be told what was already known — that it cannot.
-        val (fallbackSource, stream) =
-            bestAcross(
+        // The ceiling is applied while the race picks its winner, not after:
+        // an over-cap answer that happened to finish first would otherwise beat
+        // an in-cap one still on its way. For any request without a ceiling
+        // every answer is accepted, as before. With an over-cap pinned answer
+        // held back, the search is bounded so the held answer is returned well
+        // inside the caller's own resolve timeout instead of being lost to it.
+        suspend fun search() = bestAcross(
                 active.filterNot { it.configId == configId }.filter { it.servesAudio },
                 target,
                 request,
@@ -272,7 +277,10 @@ object SourceResolver {
                 // measuring that would plan the mix on the wrong song. Playback
                 // fallbacks keep their rule.
                 requireSharedArtist = request is StreamRequest.Capped && target.artist.isNotBlank(),
-            )?.takeIf { (_, stream) -> overCeiling == null || withinCeiling(stream, request) }
+                accept = { _, answer -> withinCeiling(answer, request) },
+            )
+        val (fallbackSource, stream) =
+            (if (overCeiling != null) withTimeoutOrNull(CAPPED_FALLBACK_WAIT_MS) { search() } else search())
                 ?: return overCeiling
         TrackLog.d(TAG, "fallback: '${target.title}' served by ${fallbackSource.displayName}")
         return stream
@@ -283,6 +291,13 @@ object SourceResolver {
      * answer is lossy and, where its rate is known, at or under `maxKbps`.
      * Every other request has no ceiling to break.
      */
+    /**
+     * How long a capped resolve holding an over-ceiling answer searches the
+     * other sources before returning that answer: well inside the caller's
+     * resolve timeout, so the held answer is never lost to it.
+     */
+    private const val CAPPED_FALLBACK_WAIT_MS = 20_000L
+
     internal fun withinCeiling(stream: SourceStream, request: StreamRequest): Boolean {
         if (request !is StreamRequest.Capped) return true
         if (stream.format.isLossless == true || stream.format.isDolbyAtmos) return false
@@ -335,6 +350,13 @@ object SourceResolver {
             target,
             request,
             strictLength = target.durationSec != null,
+            // A capped request (the analyser's light read) takes only an answer
+            // under its ceiling: see [withinCeiling]. Unchanged for playback.
+            accept = { _, answer -> withinCeiling(answer, request) },
+            // And only the same artist's recording, as resolve's capped
+            // fallback requires: a title and a runtime alone can match another
+            // artist's, and the mix would be planned on the wrong song.
+            requireSharedArtist = request is StreamRequest.Capped && target.artist.isNotBlank(),
         ) ?: return null
         // Says what was found, not what the caller will do with it. This
         // line used to read "substituted" unconditionally, including for
@@ -1492,6 +1514,11 @@ object SourceResolver {
         val wantsAtmos = DeviceCodecs.playsDolbyAtmos && request.wantsAtmos
         val ordered = preferred(matches, target, wantsLossless, wantsAtmos)
         var settleFor: SourceStream? = null
+        // A capped request's over-ceiling answers, held while later rows are
+        // tried: the first row's 256 kbps must not end the walk when a later
+        // row of the same source answers within the cap. The lightest of them
+        // is returned only if no row fits; see [withinCeiling].
+        var overCeiling: SourceStream? = null
         for (match in ordered.take(STREAM_ATTEMPTS)) {
             val trackId = SourceRegistry.parseTrackKey(match.videoId)?.second ?: match.videoId
             val opened = attempt(source) { source.stream(trackId, request) } ?: continue
@@ -1513,6 +1540,16 @@ object SourceResolver {
                     "${source.displayName} offered ${served.summary} for '${match.title}'; " +
                         "over this lossy request — passing",
                 )
+                continue
+            }
+            if (!withinCeiling(stream, request)) {
+                TrackLog.d(
+                    TAG,
+                    "${source.displayName} offered ${served.summary} for '${match.title}'; over the cap — trying further",
+                )
+                if (overCeiling == null || (served.kbps ?: Int.MAX_VALUE) < (overCeiling.format.kbps ?: Int.MAX_VALUE)) {
+                    overCeiling = stream
+                }
                 continue
             }
             if (!wantsLossless || served.isLossless == true || served.isDolbyAtmos || served.statesNothingLossy) {
@@ -1539,7 +1576,7 @@ object SourceResolver {
             // first.
             settleFor = betterOf(settleFor, stream.copy(belowRequest = true))
         }
-        return settleFor
+        return settleFor ?: overCeiling
     }
 
     /**

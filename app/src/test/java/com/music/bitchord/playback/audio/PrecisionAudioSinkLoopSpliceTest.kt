@@ -175,12 +175,21 @@ class PrecisionAudioSinkLoopSpliceTest {
     @Test
     fun aDisarmThatWinsLeavesTheSongUntouched() {
         configure()
-        // The controller disarms while the sink is rendering the first audible block.
+        // The controller disarms while the sink is rendering the first audible
+        // block: enabled only once the pre-roll is through, so the disarm races
+        // the takeover itself, not an arm already gone.
+        var disarmOnRender = false
+        var disarmedDuringRender = false
         arm(LoopMixPort.Render { _, out, offset, frames ->
-            port.disarm()
+            if (disarmOnRender && !disarmedDuringRender) {
+                port.disarm()
+                disarmedDuringRender = true
+            }
             out.fill(0.25f, offset, offset + 2 * frames); true
         })
+        disarmOnRender = true
         feed(crossingUs, 240)
+        assertTrue("the audible render never ran", disarmedDuringRender)
         assertFalse(port.tookOver)
         assertArrayEquals("mixed audio reached the delegate after the disarm won", ShortArray(480) { 1000 }, delegate.written.last())
     }
@@ -300,5 +309,52 @@ class PrecisionAudioSinkLoopSpliceTest {
         ShadowSystemClock.advanceBy(Duration.ofSeconds(10))
         feed(5_000_000L, 240)
         assertEquals(1, session.opens)
+    }
+
+    @Test
+    fun aRenderThatFailsMidCrossingHoldsTheOutputUntilTheFlush() {
+        configure()
+        var fail = false
+        arm(LoopMixPort.Render { _, out, offset, frames ->
+            if (fail) return@Render false
+            out.fill(0.25f, offset, offset + 2 * frames); true
+        })
+        feed(crossingUs, 240) // the crossing starts: committed and heard
+        assertTrue(port.tookOver)
+        val before = delegate.written.size
+        fail = true
+        // Still before the loop start: the song must not come back mid-crossing.
+        assertFalse(feed(crossingUs + 5_000L, 240))
+        assertEquals("the song came back mid-crossing", before, delegate.written.size)
+        assertFalse(feed(crossingUs + 5_000L, 240))
+        assertEquals(before, delegate.written.size)
+        sink.flush()
+        assertTrue(feed(5_000_000L, 240))
+        assertEquals(before + 1, delegate.written.size)
+    }
+
+    @Test
+    fun bitPerfectStopsAnIncomingArmThatHadStartedAndHoldsUntilTheFlush() {
+        configure()
+        port.armIncoming(LoopMixPort.InArm(handoverUs = 2_000_000L))
+        feed(900_000L, 240) // muted ahead of the handover: started on this sink
+        assertTrue(delegate.written.last().all { it.toInt() == 0 })
+        val before = delegate.written.size
+        bitPerfect = true
+        assertFalse("a bit-perfect buffer was muted or written mid-arm", feed(905_000L, 240))
+        assertTrue(port.interrupted)
+        assertEquals(before, delegate.written.size)
+        sink.flush()
+        assertTrue(feed(5_000_000L, 240))
+        assertTrue("bit-perfect output after the flush is the song's own", delegate.written.last().all { it.toInt() == 1000 })
+    }
+
+    @Test
+    fun theLoopLimiterHoldsOnlyOnBlocksTheDeckWasMixedInto() {
+        configure()
+        arm() // pre-roll: rendered, not mixed in
+        assertFalse("the limiter held on dry pre-roll", chain.mixing)
+        feed(crossingUs, 240)
+        assertTrue("the crossing block carries the mix", chain.mixing)
     }
 }
